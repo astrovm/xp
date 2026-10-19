@@ -888,7 +888,7 @@ export async function writeVersionMetadata(
 
 export async function createPrecacheManifest(
   contentDir: string,
-  urlPrefix = "",
+  urlPrefix: string,
 ): Promise<PrecacheEntry[]> {
   const root = resolve(contentDir);
   const ignores = PRECACHE_IGNORES.map((pattern) => new Bun.Glob(pattern));
