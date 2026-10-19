@@ -156,6 +156,7 @@
     let reloadTargetVersion = null;
     let failedUpdateInstalls = 0;
     let missingFileCheck = null;
+    let installRetryPending = false;
 
     const versionedServiceWorkerUrl = (version) => {
       if (serviceWorkerUrl.includes("{version}")) {
@@ -236,9 +237,11 @@
 
     const retryFailedUpdate = () => {
       failedUpdateInstalls += 1;
+      installRetryPending = true;
       const applying = applyTargetVersion !== null;
       const reload = reloadTargetVersion !== null;
       (environment.setTimeout || setTimeout)(() => {
+        installRetryPending = false;
         if (!state.enabled) return;
         void checkForUpdates({
           applyAutomatically: true,
@@ -517,8 +520,13 @@
         workerState: worker.state,
         error: null,
       });
+      let installed = false;
       worker.addEventListener("statechange", () => {
         if (!state.enabled) return;
+        // A worker that installed and later turns redundant was replaced by a
+        // newer one, which tracks its own state.
+        if (worker.state === "redundant" && installed) return;
+        installed ||= worker.state !== "redundant";
         setState({ workerState: worker.state });
         if (worker.state === "installed" && isUpdate) {
           failedUpdateInstalls = 0;
@@ -634,10 +642,18 @@
         throw new Error("This browser can't work offline.");
       }
       await prefetchShell(targetVersion);
-      const nextRegistration = await navigatorObject.serviceWorker.register(
-        versionedServiceWorkerUrl(targetVersion),
-        { scope: "/", updateViaCache: "none" },
-      );
+      let nextRegistration;
+      try {
+        nextRegistration = await navigatorObject.serviceWorker.register(
+          versionedServiceWorkerUrl(targetVersion),
+          { scope: "/", updateViaCache: "none" },
+        );
+      } catch (error) {
+        // A deploy between the version check and this request removes the
+        // worker it names; the next check finds the newer one.
+        if (failedUpdateInstalls < INSTALL_RETRIES) retryFailedUpdate();
+        throw error;
+      }
       trackRegistration(nextRegistration, inspectWaiting);
       if (nextRegistration.active) {
         setState({
@@ -1166,8 +1182,12 @@
           }
         } catch (error) {
           setState({
-            phase: previousPhase === "ready" ? "ready" : "error",
-            error: error.message,
+            phase: installRetryPending
+              ? "updating"
+              : previousPhase === "ready"
+                ? "ready"
+                : "error",
+            error: installRetryPending ? null : error.message,
             downloadMetadataError: state.downloadBytes === null,
           });
           throw error;

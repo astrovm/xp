@@ -1158,6 +1158,38 @@ describe("offline manager", () => {
     expect(manager.getSnapshot().error).toMatch(/Select Repair/);
   });
 
+  test("retries when the new worker is already gone", async () => {
+    const h = makeEnvironment({ remoteVersion: "26.07.30-bbbbbbb" });
+    const register = h.serviceWorker.register;
+    h.serviceWorker.register = async () => {
+      throw new TypeError("A bad HTTP response code (404) was received");
+    };
+    const manager = createManager({
+      currentVersion: manifest.version,
+      environment: h.environment,
+    });
+    await manager.updateNow().catch(() => {});
+    expect(manager.getSnapshot()).toMatchObject({
+      phase: "updating",
+      error: null,
+    });
+    for (let attempt = 2; attempt <= 3; attempt += 1) {
+      h.timers
+        .findLast(({ delay }) => delay === 2000 * (attempt - 1))
+        .callback();
+      await flushUntil(() =>
+        h.timers.some(({ delay }) => delay === 2000 * attempt),
+      );
+    }
+    h.timers.findLast(({ delay }) => delay === 6000).callback();
+    await flushUntil(() => manager.getSnapshot().phase === "error");
+    expect(manager.getSnapshot().error).toMatch(/bad HTTP response code/);
+
+    h.serviceWorker.register = register;
+    await manager.updateNow();
+    expect(h.serviceWorker.registerCalls).toHaveLength(1);
+  });
+
   test("a finished install resets the retries, and turning offline off cancels one", async () => {
     const registration = new Registration({
       active: new Worker("activated", manifest.version),
@@ -1168,18 +1200,31 @@ describe("offline manager", () => {
       remoteVersion: "26.07.30-bbbbbbb",
     });
     const manager = await createInitializedManager(h.environment);
+    const retryWith = async (delay, nextWorker) => {
+      registration.installing = nextWorker;
+      h.timers.findLast((timer) => timer.delay === delay).callback();
+      await flushUntil(() => manager.getSnapshot().phase === "updating");
+    };
     registration.installing.transition("redundant");
-    const installing = new Worker("installing");
-    registration.installing = installing;
-    h.timers.findLast(({ delay }) => delay === 2000).callback();
-    await flushUntil(() => manager.getSnapshot().phase === "updating");
-    installing.transition("installed");
-    installing.transition("redundant");
+    const installed = new Worker("installing");
+    await retryWith(2000, installed);
+    installed.transition("installed");
+    // A replaced worker isn't a failure.
+    installed.transition("redundant");
+    expect(manager.getSnapshot().workerState).toBe("installed");
+    expect(h.timers.filter(({ delay }) => delay === 2000)).toHaveLength(1);
+
+    const failing = new Worker("installing");
+    registration.installing = failing;
+    registration.dispatch("updatefound");
+    failing.transition("redundant");
     expect(h.timers.filter(({ delay }) => delay === 2000)).toHaveLength(2);
 
     // A retry whose check fails waits for the next one.
+    const offline = new Worker("installing");
+    await retryWith(2000, offline);
+    offline.transition("redundant");
     h.environment.navigator.onLine = false;
-    installing.transition("redundant");
     h.timers.findLast(({ delay }) => delay === 4000).callback();
     await flush();
     h.environment.navigator.onLine = true;
