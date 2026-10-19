@@ -1686,6 +1686,11 @@ describe("offline manager edge cases", () => {
     registration.dispatch("updatefound");
     worker.transition("installed");
     await new Promise((resolve) => setTimeout(resolve, 5));
+    // The retry waits on the global timer and finds offline use turned off.
+    const failing = new Worker("installing");
+    registration.installing = failing;
+    registration.dispatch("updatefound");
+    failing.transition("redundant");
     manager.setAutomaticUpdatesEnabled(false);
     await manager.downloadGame("doom");
     expect([...h.bundledCache.values.keys()]).toContain(
@@ -2642,6 +2647,21 @@ describe("offline manager missing files", () => {
     });
     await flush();
     expect(countVersionFetches(h)).toBe(checks + 3);
+  });
+
+  test("keeps the reload offer when the update check after it fails", async () => {
+    const h = makeEnvironment();
+    const manager = await createInitializedManager(h.environment);
+    h.serviceWorker.register = async () => {
+      throw new TypeError("A bad HTTP response code (404) was received");
+    };
+    h.setRemote({ version: nextVersion });
+    manager.reportMissingFile();
+    await flushUntil(() => manager.getSnapshot().phase === "updating");
+    expect(manager.getSnapshot()).toMatchObject({
+      reloadRequired: true,
+      phase: "updating",
+    });
   });
 
   test("checks again after a failed check and works with offline use off", async () => {

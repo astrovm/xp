@@ -5,6 +5,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -307,6 +308,14 @@ describe("contentAddress", () => {
     expect(await read(root, result.files.get("site.json")!)).toBe(
       `{"url":"https://xp.example/${wasm}"}`,
     );
+  });
+
+  test("names files without an extension and skips links", async () => {
+    const root = await site({ LICENSE: "license", "index.html": "LICENSE" });
+    await symlink(join(root, "LICENSE"), join(root, "link"));
+    const result = await address(root, { fixed: ["index.html"] });
+    expect(result.files.get("LICENSE")).toBe(`LICENSE.${fileHash("license")}`);
+    expect(result.files.has("link")).toBeFalse();
   });
 
   test("rejects missing packages and fixed files", async () => {
