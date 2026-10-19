@@ -90,12 +90,10 @@ describe("reVCDOS", () => {
       const game = new Window({
         url: `http://127.0.0.1/iframe/revcdos/game.html${query}`,
       });
-      game.document.write(
-        (await file("site/iframe/revcdos/game.html").text()).replace(
-          /<script[\s\S]*?<\/script>/g,
-          "",
-        ),
-      );
+      // Markup set this way never runs its scripts. Only the two below run.
+      game.document.documentElement.innerHTML = await file(
+        "site/iframe/revcdos/game.html",
+      ).text();
       game.eval(await file("site/iframe/revcdos/idbfs.js").text());
       try {
         game.eval(await file("site/iframe/revcdos/game.js").text());
