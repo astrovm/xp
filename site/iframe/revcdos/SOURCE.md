@@ -29,3 +29,7 @@ The build copies its browser bundle into `vendor/webtorrent/`.
 
 The DOS.Zone Team attribution, in-game logo, and `jsdos-cloud-sdk.js` cloud-save
 integration required by the upstream project are preserved.
+
+Astro XP starts the game with `fullscreen=0`, so it opens in its window. The
+window's fullscreen button still works. `game.js` is changed to lock the mouse
+for the camera in a window too.

@@ -230,7 +230,8 @@
       const startGame = (message, session = false) => {
         selection.textContent = message;
         gameFrame = document.createElement("iframe");
-        gameFrame.src = session ? "game.html?session=1" : "game.html";
+        // reVC opens in its window. The window's own button goes fullscreen.
+        gameFrame.src = `game.html?fullscreen=0${session ? "&session=1" : ""}`;
         gameFrame.allow = "fullscreen";
         gameFrame.title = "reVC";
         setup.replaceWith(gameFrame);
