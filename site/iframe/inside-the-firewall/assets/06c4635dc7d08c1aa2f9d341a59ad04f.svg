@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="121" height="54.29383087158203" viewBox="-0.48199999891221523 -0.7198286801576614 121 54.29383087158203">
-  <!-- Exported by Scratch - http://scratch.mit.edu/ -->
-  <g id="ID0.7185861649923027">
-    <path id="ID0.8208005237393081" fill="#00CC44" d="M 93.874 0.787 L 26.161 0.787 C 11.745 0.787 0.018 12.515 0.018 26.93 C 0.018 41.347 11.746 53.074 26.161 53.074 L 93.874 53.074 C 108.289 53.074 120.018 41.346 120.018 26.93 C 120.018 12.515 108.289 0.787 93.874 0.787 Z " stroke-width="1"/>
-    <path id="ID0.767010445240885" fill="#FE9501" d="M 115.514 26.93 C 115.514 38.882 105.826 48.571 93.874 48.571 L 26.161 48.571 C 14.209 48.571 4.52 38.882 4.52 26.93 L 4.52 26.93 C 4.52 14.979 14.209 5.29 26.161 5.29 L 93.874 5.29 C 105.826 5.29 115.514 14.979 115.514 26.93 L 115.514 26.93 Z " stroke-width="1"/>
-  </g>
-  <text id="ID0.6631839699111879" fill="#006220" text-anchor="start" font-family="Sans Serif" font-size="22" transform="matrix(1.63085 0 0 1.63085 21.2617 -2.74255)" stroke-width="1" alignment-baseline="text-before-edge" xml:space="preserve"><tspan x="0" style="white-space: pre" dy="1.13em">Play</tspan></text>
-</svg>

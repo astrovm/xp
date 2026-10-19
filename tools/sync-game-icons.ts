@@ -9,12 +9,12 @@ const PROJECT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ICONS_DIR = join(PROJECT_DIR, "site", "assets", "icons");
 const GAMES_PATH = join(PROJECT_DIR, "site", "js", "games.js");
 const SOURCES_PATH = join(ICONS_DIR, "SOURCES.json");
-const FIREWALL_PATH = join(
+const FIREWALL_ICON_PATH = join(
   PROJECT_DIR,
   "site",
   "iframe",
   "inside-the-firewall",
-  "index.html",
+  "icon.png",
 );
 const FLASHPOINT_IMAGE_ROOT = "https://infinity.unstable.life/images/Logos";
 
@@ -91,14 +91,6 @@ async function writeIcon(
   };
 }
 
-async function bundledFirewallIcon(): Promise<Buffer> {
-  const html = await readFile(FIREWALL_PATH, "utf8");
-  const match =
-    /<link rel="icon"[^>]+href="data:image\/png;base64,([^"]+)"/.exec(html);
-  if (!match)
-    throw new Error("Inside the Firewall bundled favicon was not found");
-  return Buffer.from(match[1], "base64");
-}
 
 function addIconMetadata(gameSource: string, gameId: string): string {
   const iconValue = `icon: "assets/icons/${gameId}.png"`;
@@ -137,8 +129,8 @@ async function main() {
   const gameId = "inside-the-firewall";
   sources[gameId] = await writeIcon(
     gameId,
-    await bundledFirewallIcon(),
-    "iframe/inside-the-firewall/index.html#bundled-favicon",
+    await readFile(FIREWALL_ICON_PATH),
+    "iframe/inside-the-firewall/icon.png",
   );
   gameSource = addIconMetadata(gameSource, gameId);
   await writeFile(
