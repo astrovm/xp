@@ -1128,22 +1128,60 @@ describe("offline manager", () => {
     expect(inconsistentManager.getSnapshot().error).toMatch(/Select Repair/);
   });
 
-  test("reports an error suggesting repair when an installing worker becomes redundant", async () => {
-    const failedWorker = new Worker("installing");
-    const failedRegistration = new Registration({
+  test("retries a failed update three times before suggesting repair", async () => {
+    const registration = new Registration({
       active: new Worker("activated", manifest.version),
-      installing: failedWorker,
+      installing: new Worker("installing"),
     });
-    const failedUpdate = makeEnvironment({
-      registration: failedRegistration,
+    const h = makeEnvironment({
+      registration,
       remoteVersion: "26.07.30-bbbbbbb",
     });
-    const failedManager = await createInitializedManager(
-      failedUpdate.environment,
-    );
-    failedWorker.transition("redundant");
-    expect(failedManager.getSnapshot().phase).toBe("error");
-    expect(failedManager.getSnapshot().error).toMatch(/Select Repair/);
+    const manager = await createInitializedManager(h.environment);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      registration.installing.transition("redundant");
+      expect(manager.getSnapshot()).toMatchObject({
+        phase: "updating",
+        workerState: "failed",
+        error: null,
+      });
+      const retry = h.timers.findLast(({ delay }) => delay === 2000 * attempt);
+      registration.installing = new Worker("installing");
+      const checks = countVersionFetches(h);
+      retry.callback();
+      await flushUntil(() => countVersionFetches(h) > checks);
+      await flushUntil(() => manager.getSnapshot().phase === "updating");
+      expect(countVersionFetches(h)).toBe(checks + 1);
+    }
+    registration.installing.transition("redundant");
+    expect(manager.getSnapshot().phase).toBe("error");
+    expect(manager.getSnapshot().error).toMatch(/Select Repair/);
+  });
+
+  test("a finished install resets the retries, and turning offline off cancels one", async () => {
+    const registration = new Registration({
+      active: new Worker("activated", manifest.version),
+      installing: new Worker("installing"),
+    });
+    const h = makeEnvironment({
+      registration,
+      remoteVersion: "26.07.30-bbbbbbb",
+    });
+    const manager = await createInitializedManager(h.environment);
+    registration.installing.transition("redundant");
+    const installing = new Worker("installing");
+    registration.installing = installing;
+    h.timers.findLast(({ delay }) => delay === 2000).callback();
+    await flushUntil(() => manager.getSnapshot().phase === "updating");
+    installing.transition("installed");
+    installing.transition("redundant");
+    expect(h.timers.filter(({ delay }) => delay === 2000)).toHaveLength(2);
+
+    await manager.setOfflineEnabled(false);
+    const checks = countVersionFetches(h);
+    h.timers.findLast(({ delay }) => delay === 2000).callback();
+    await flush();
+    expect(countVersionFetches(h)).toBe(checks);
   });
 });
 
@@ -2360,5 +2398,217 @@ describe("offline manager version reporting", () => {
       availableVersion: version,
       availableRevision: null,
     });
+  });
+});
+
+const shellCacheModule = require("../site/js/shell-cache.js");
+const nextVersion = "26.07.30-bbbbbbb";
+const workerScript = (entries) =>
+  `self.__ASTRO_XP_VERSION__="${nextVersion}";\nself.__ASTRO_XP_PRECACHE__=${JSON.stringify(entries)};\nimportScripts("js/shell-cache.12345678.js");\n`;
+const shellEntries = [
+  { integrity: "sha384-a", revision: "aaaaaaaa", url: "js/a.aaaaaaaa.js" },
+  { integrity: "sha384-b", revision: "bbbbbbbb", url: "css/b.bbbbbbbb.css" },
+  {
+    fixed: true,
+    integrity: "sha384-i",
+    revision: "iiiiiiii",
+    url: "index.html",
+  },
+];
+
+// Serves a worker script and its files to the page-side download.
+const withShellDownloads = (
+  h,
+  { script = workerScript(shellEntries) } = {},
+) => {
+  const requested = [];
+  const versionFetch = h.environment.fetch;
+  h.environment.AstroShellCache = shellCacheModule;
+  h.environment.fetch = async (input, options) => {
+    if (typeof input === "object") {
+      requested.push(new URL(input.url).pathname);
+      return new Response(`body of ${input.url}`);
+    }
+    const path = new URL(input, "https://xp.example/").pathname;
+    if (path.startsWith("/sw.")) {
+      requested.push(path);
+      expect(options.cache).toBe("no-store");
+      return typeof script === "function" ? script() : new Response(script);
+    }
+    return versionFetch(input, options);
+  };
+  return requested;
+};
+
+describe("offline manager page-side download", () => {
+  test("stores the new files before registering the new worker", async () => {
+    const h = makeEnvironment({
+      registration: new Registration({
+        active: new Worker(
+          "activated",
+          manifest.version,
+          "https://xp.example/sw.26.07.29-aaaaaaa.js",
+        ),
+      }),
+      remoteVersion: nextVersion,
+    });
+    const requested = withShellDownloads(h);
+    const register = h.serviceWorker.register;
+    let storedBeforeRegister = null;
+    h.serviceWorker.register = async (...args) => {
+      storedBeforeRegister ??= requested.length;
+      return register(...args);
+    };
+    await createInitializedManager(h.environment);
+    expect(requested).toEqual([
+      `/sw.${nextVersion}.js`,
+      "/js/a.aaaaaaaa.js",
+      "/css/b.bbbbbbbb.css",
+    ]);
+    expect(storedBeforeRegister).toBe(3);
+  });
+
+  test("skips the download when a worker of that version exists", async () => {
+    const h = makeEnvironment({
+      registration: new Registration({
+        active: new Worker(
+          "activated",
+          manifest.version,
+          "https://xp.example/sw.26.07.29-aaaaaaa.js",
+        ),
+        waiting: new Worker(
+          "installed",
+          nextVersion,
+          `https://xp.example/sw.${nextVersion}.js`,
+        ),
+      }),
+      remoteVersion: nextVersion,
+    });
+    const requested = withShellDownloads(h);
+    await createInitializedManager(h.environment);
+    await h.serviceWorker.register;
+    expect(requested).toEqual([]);
+  });
+
+  test("leaves the files to the worker when the page can't get them", async () => {
+    for (const script of [
+      () => new Response("", { status: 404 }),
+      () => new Response("importScripts();"),
+      () => {
+        throw new TypeError("offline");
+      },
+    ]) {
+      const h = makeEnvironment({
+        registration: new Registration({
+          active: new Worker("activated", manifest.version),
+        }),
+        remoteVersion: nextVersion,
+      });
+      withShellDownloads(h, { script });
+      await createInitializedManager(h.environment);
+      expect(h.serviceWorker.registerCalls).toHaveLength(1);
+    }
+  });
+
+  test("downloads on a first visit and without a versioned worker URL", async () => {
+    const activeRegistration = new Registration({
+      active: new Worker("activated", manifest.version),
+    });
+    // A worker URL without the version can't tell which release a worker runs.
+    const unversioned = makeEnvironment({ registration: activeRegistration });
+    const unversionedRequests = withShellDownloads(unversioned);
+    await createManager({
+      currentVersion: manifest.version,
+      environment: unversioned.environment,
+      serviceWorkerUrl: "/sw.js",
+    }).initialize();
+    expect(unversionedRequests[0]).toBe("/sw.js");
+
+    const first = makeEnvironment();
+    delete first.serviceWorker.getRegistration;
+    first.serviceWorker.register = async () => activeRegistration;
+    const firstRequests = withShellDownloads(first);
+    await createInitializedManager(first.environment);
+    expect(firstRequests[0]).toBe(`/sw.${manifest.version}.js`);
+  });
+
+  test("needs Cache Storage", async () => {
+    const h = makeEnvironment({
+      registration: new Registration({
+        active: new Worker("activated", manifest.version),
+      }),
+      remoteVersion: nextVersion,
+    });
+    const requested = withShellDownloads(h);
+    delete h.environment.caches;
+    await createInitializedManager(h.environment);
+    expect(requested).toEqual([]);
+  });
+});
+
+describe("offline manager missing files", () => {
+  const sendWorkerMessage = (h, data) =>
+    h.serviceWorker.listeners
+      .get("message")
+      .forEach((listener) => listener({ data }));
+  const dispatch = (h, name, event) =>
+    h.environment.listeners.get(name).forEach((listener) => listener(event));
+
+  test("asks for a reload when a newer release removed a file", async () => {
+    const h = makeEnvironment();
+    const manager = await createInitializedManager(h.environment);
+    const checks = countVersionFetches(h);
+
+    sendWorkerMessage(h, { type: "OTHER" });
+    sendWorkerMessage(h, undefined);
+    dispatch(h, "error", { target: h.environment });
+    dispatch(h, "error", { target: { src: "https://other.example/a.js" } });
+    dispatch(h, "error", { target: { src: "http://[" } });
+    dispatch(h, "error", { target: { src: "" } });
+    dispatch(h, "unhandledrejection", { reason: new Error("boom") });
+    dispatch(h, "unhandledrejection", { reason: undefined });
+    await flush();
+    expect(countVersionFetches(h)).toBe(checks);
+
+    // Same release: the file is just unreachable, so nothing to offer.
+    sendWorkerMessage(h, { type: "ASTRO_FILE_MISSING" });
+    sendWorkerMessage(h, { type: "ASTRO_FILE_MISSING" });
+    await flushUntil(() => countVersionFetches(h) > checks);
+    await flush();
+    expect(countVersionFetches(h)).toBe(checks + 1);
+    expect(manager.getSnapshot().reloadRequired).toBe(false);
+
+    h.setRemote({ version: nextVersion });
+    dispatch(h, "error", { target: { href: "css/apps/gone.12345678.css" } });
+    await flushUntil(() => manager.getSnapshot().reloadRequired);
+    expect(manager.getSnapshot().reloadRequired).toBe(true);
+    await flushUntil(() => countVersionFetches(h) > checks + 2);
+    expect(countVersionFetches(h)).toBe(checks + 3);
+
+    dispatch(h, "unhandledrejection", {
+      reason: new TypeError("Failed to fetch dynamically imported module"),
+    });
+    await flush();
+    expect(countVersionFetches(h)).toBe(checks + 3);
+  });
+
+  test("checks again after a failed check and works with offline use off", async () => {
+    const h = makeDisabledEnvironment();
+    const manager = await createInitializedManager(h.environment);
+    h.environment.navigator.onLine = false;
+    dispatch(h, "unhandledrejection", {
+      reason: new TypeError("Importing a module script failed."),
+    });
+    await flush();
+    expect(manager.getSnapshot().reloadRequired).toBe(false);
+
+    h.environment.navigator.onLine = true;
+    h.setRemote({ version: nextVersion });
+    const checks = countVersionFetches(h);
+    manager.reportMissingFile();
+    await flushUntil(() => manager.getSnapshot().reloadRequired);
+    expect(manager.getSnapshot().reloadRequired).toBe(true);
+    await flush();
+    expect(countVersionFetches(h)).toBe(checks + 1);
   });
 });

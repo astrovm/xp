@@ -29,6 +29,8 @@ A Windows XP-style desktop that runs in your browser. Play classic games and use
 - **Runtimes load on demand.** The shared Ruffle and ScummVM runtimes download only when a game needs them.
 - **Updates don't interrupt you.** They install in the background and leave the current page alone.
 - **Switching versions.** Reopen the site to get the new version, or press **Update Now** to reload right away.
+- **Updates download only what changed.** Every file is named after its content, so unchanged files are never downloaded again.
+- **Open tabs catch up.** If a new version removed a file an open tab still needs, a dialog offers to reload.
 - **Internet Games are stored separately.** They live in IndexedDB and Cache Storage.
 - **GameZIP titles install completely.** Legacy titles cache extra files as the game requests them.
 
@@ -178,7 +180,9 @@ CI needs these GitHub Actions secrets:
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID                                                                                 |
 | `CLOUDFLARE_API_TOKEN`  | Token with **Workers Scripts: Edit** on the account and **Workers Routes: Edit** on the `4st.li` zone |
 
-To deploy the site and Workers by hand, start from a clean checkout of a pushed commit. Browsers cache each release folder for a year, so uncommitted changes would stick under that commit's version.
+To deploy the site and Workers by hand, start from a clean checkout of a pushed commit. The version comes from that commit, so uncommitted changes would ship under a version that doesn't match them.
+
+Every file except `index.html`, `capture.html`, `sw.js`, `sw.<version>.js` and `version.json` is named after its content, and `_headers` lets browsers cache it for a year. The build fails if any other file keeps a plain name.
 
 ```bash
 bun run build

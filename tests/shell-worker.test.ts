@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const workerPath = require.resolve("../site/js/shell-worker.js");
+const shellCachePath = require.resolve("../site/js/shell-cache.js");
 const originalSelf = globalThis.self;
 const originalCaches = globalThis.caches;
 const originalFetch = globalThis.fetch;
@@ -18,10 +19,10 @@ afterEach(() => {
   globalThis.setTimeout = originalSetTimeout;
   globalThis.Request = OriginalRequest;
   delete require.cache[workerPath];
+  delete require.cache[shellCachePath];
 });
 
 const ORIGIN = "https://xp.example";
-const RELEASE = "releases/26.10.19-abcdef1";
 const sri = (content) =>
   `sha384-${createHash("sha384").update(content).digest("base64")}`;
 const entry = (
@@ -33,6 +34,7 @@ const entry = (
   revision,
   url,
 });
+const fixedEntry = (url, content) => ({ ...entry(url, content), fixed: true });
 const shellKey = (path, revision) => `${ORIGIN}${path}?__rev=${revision}`;
 
 // An in-memory CacheStorage that stores responses by absolute URL.
@@ -77,6 +79,7 @@ function loadWorker({ manifest, fetcher, version = "26.10.19-abcdef1" }) {
   const cacheStorage = createCaches();
   const requests = [];
   const calls = { claim: 0, skipWaiting: 0 };
+  const posted = [];
   globalThis.caches = cacheStorage.storage;
   globalThis.fetch = async (request) => {
     requests.push(request);
@@ -94,7 +97,13 @@ function loadWorker({ manifest, fetcher, version = "26.10.19-abcdef1" }) {
     __ASTRO_XP_PRECACHE__: manifest,
     __ASTRO_XP_VERSION__: version,
     location: new URL(`${ORIGIN}/sw.js`),
-    clients: { claim: async () => (calls.claim += 1) },
+    AstroShellCache: require(shellCachePath),
+    clients: {
+      claim: async () => (calls.claim += 1),
+      matchAll: async (options) => [
+        { options, postMessage: (data) => posted.push(data) },
+      ],
+    },
     skipWaiting: () => (calls.skipWaiting += 1),
     addEventListener: (type, listener) => listeners.set(type, listener),
   };
@@ -108,6 +117,7 @@ function loadWorker({ manifest, fetcher, version = "26.10.19-abcdef1" }) {
   return {
     cacheStorage,
     calls,
+    posted,
     requests,
     install: () => lifecycle("install"),
     activate: () => lifecycle("activate"),
@@ -127,11 +137,11 @@ const serveContent = (request) =>
   new Response(`body of ${new URL(request.url).pathname}`);
 
 describe("shell worker install", () => {
-  test("downloads in parallel and stores files without the release prefix", async () => {
+  test("downloads in parallel and checks each file's integrity", async () => {
     const manifest = Array.from({ length: 40 }, (_, index) =>
-      entry(`${RELEASE}/js/file-${index}.js`, `file ${index}`),
+      entry(`js/file-${index}.js`, `file ${index}`),
     );
-    manifest.push(entry("index.html", "index"));
+    manifest.push(fixedEntry("index.html", "index"));
     let active = 0;
     let peak = 0;
     const worker = loadWorker({
@@ -152,21 +162,21 @@ describe("shell worker install", () => {
     const first = worker.requests.find((request) =>
       request.url.endsWith("/file-0.js"),
     );
-    expect(first.url).toBe(`${ORIGIN}/${RELEASE}/js/file-0.js`);
+    expect(first.url).toBe(`${ORIGIN}/js/file-0.js`);
     expect(first.cache).toBe("default");
     expect(first.init.integrity).toBe(sri("file 0"));
     expect(first.init.credentials).toBe("same-origin");
     const index = worker.requests.find((request) =>
       request.url.endsWith("/index.html"),
     );
-    // The root page changes in place, so it skips the HTTP cache.
+    // Entry points change in place, so they skip the HTTP cache.
     expect(index.cache).toBe("reload");
     expect(
       await worker.cacheStorage.text(
         "astro-xp-shell-v1",
         shellKey("/js/file-0.js", "r-file-0"),
       ),
-    ).toBe(`body of /${RELEASE}/js/file-0.js`);
+    ).toBe(`body of /js/file-0.js`);
     expect(
       await worker.cacheStorage.text(
         "astro-xp-shell-v1",
@@ -178,8 +188,8 @@ describe("shell worker install", () => {
   test("downloads only files whose revision is not cached yet", async () => {
     const worker = loadWorker({
       manifest: [
-        entry(`${RELEASE}/js/same.js`, "same"),
-        entry(`${RELEASE}/js/changed.js`, "changed v2"),
+        entry(`js/same.js`, "same"),
+        entry(`js/changed.js`, "changed v2"),
       ],
       fetcher: serveContent,
     });
@@ -197,7 +207,7 @@ describe("shell worker install", () => {
     await worker.install();
 
     expect(worker.requests.map((request) => request.url)).toEqual([
-      `${ORIGIN}/${RELEASE}/js/changed.js`,
+      `${ORIGIN}/js/changed.js`,
     ]);
     expect(
       await worker.cacheStorage.text(
@@ -209,7 +219,7 @@ describe("shell worker install", () => {
 
   test("does nothing when every file is already cached", async () => {
     const worker = loadWorker({
-      manifest: [entry(`${RELEASE}/js/a.js`, "a")],
+      manifest: [entry(`js/a.js`, "a")],
       fetcher: serveContent,
     });
     await worker.cacheStorage.seed(
@@ -238,9 +248,9 @@ describe("shell worker install", () => {
   test("reuses matching files from the old Workbox precache", async () => {
     const worker = loadWorker({
       manifest: [
-        entry(`${RELEASE}/js/kept.js`, "kept"),
-        entry(`${RELEASE}/js/edited.js`, "edited new"),
-        entry("index.html", "index"),
+        entry(`js/kept.js`, "kept"),
+        entry(`js/edited.js`, "edited new"),
+        fixedEntry("index.html", "index"),
       ],
       fetcher: serveContent,
     });
@@ -270,7 +280,7 @@ describe("shell worker install", () => {
     await worker.install();
 
     expect(worker.requests.map((request) => request.url)).toEqual([
-      `${ORIGIN}/${RELEASE}/js/edited.js`,
+      `${ORIGIN}/js/edited.js`,
     ]);
     expect(
       await worker.cacheStorage.text(
@@ -288,7 +298,7 @@ describe("shell worker install", () => {
 
   test("falls back to a download when a legacy entry disappears", async () => {
     const worker = loadWorker({
-      manifest: [entry(`${RELEASE}/js/a.js`, "a")],
+      manifest: [entry(`js/a.js`, "a")],
       fetcher: serveContent,
     });
     const legacy = "astro-xp-precache-v2-https://xp.example/";
@@ -312,7 +322,7 @@ describe("shell worker install", () => {
 
   test("stores redirected pages as plain responses", async () => {
     const worker = loadWorker({
-      manifest: [entry(`${RELEASE}/capture.html`, "capture")],
+      manifest: [fixedEntry("capture.html", "capture")],
       fetcher: () => {
         const response = new Response("capture page", {
           headers: { "Content-Type": "text/html" },
@@ -346,7 +356,7 @@ describe("shell worker retries", () => {
   const retryWorker = (responses) => {
     const results = [...responses];
     return loadWorker({
-      manifest: [entry(`${RELEASE}/js/a.js`, "a")],
+      manifest: [entry(`js/a.js`, "a")],
       fetcher: (request) => {
         const next = results.shift();
         if (next instanceof Error) throw next;
@@ -375,7 +385,7 @@ describe("shell worker retries", () => {
           "astro-xp-shell-v1",
           shellKey("/js/a.js", "r-a"),
         ),
-      ).toBe(`body of /${RELEASE}/js/a.js`);
+      ).toBe(`body of /js/a.js`);
     }
   });
 
@@ -400,23 +410,19 @@ describe("shell worker retries", () => {
     expect(network.requests).toHaveLength(3);
 
     const server = retryWorker([500, 502, 503]);
-    await expect(server.install()).rejects.toThrow(
-      `${RELEASE}/js/a.js failed (503)`,
-    );
+    await expect(server.install()).rejects.toThrow(`js/a.js failed (503)`);
     expect(server.requests).toHaveLength(3);
   });
 
   test("does not retry a missing file", async () => {
     const worker = retryWorker([404]);
-    await expect(worker.install()).rejects.toThrow(
-      `${RELEASE}/js/a.js failed (404)`,
-    );
+    await expect(worker.install()).rejects.toThrow(`js/a.js failed (404)`);
     expect(worker.requests).toHaveLength(1);
   });
 
   test("stops starting downloads after one fails", async () => {
     const manifest = Array.from({ length: 40 }, (_, index) =>
-      entry(`${RELEASE}/js/file-${index}.js`, `file ${index}`),
+      entry(`js/file-${index}.js`, `file ${index}`),
     );
     const worker = loadWorker({
       manifest,
@@ -436,7 +442,7 @@ describe("shell worker retries", () => {
 describe("shell worker activation", () => {
   test("removes old files and the Workbox cache, then takes control", async () => {
     const worker = loadWorker({
-      manifest: [entry(`${RELEASE}/js/a.js`, "a")],
+      manifest: [entry(`js/a.js`, "a")],
       fetcher: serveContent,
     });
     const shell = "astro-xp-shell-v1";
@@ -471,10 +477,10 @@ describe("shell worker requests", () => {
   const routedWorker = async () => {
     const worker = loadWorker({
       manifest: [
-        entry(`${RELEASE}/js/a.js`, "a"),
-        entry(`${RELEASE}/capture.html`, "capture"),
-        entry(`${RELEASE}/js/uncached.js`, "uncached"),
-        entry("index.html", "index"),
+        entry(`js/a.js`, "a"),
+        fixedEntry("capture.html", "capture"),
+        entry(`js/uncached.js`, "uncached"),
+        fixedEntry("index.html", "index"),
       ],
       fetcher: () => new Response("from network"),
     });
@@ -493,15 +499,15 @@ describe("shell worker requests", () => {
     return worker;
   };
 
-  test("serves cached files for any release path", async () => {
+  test("serves cached files, also under an old release path", async () => {
     const worker = await routedWorker();
     for (const [url, body] of [
-      [`${ORIGIN}/${RELEASE}/js/a.js`, "a"],
+      [`${ORIGIN}/js/a.js`, "a"],
       [`${ORIGIN}/releases/older/js/a.js`, "a"],
       [`${ORIGIN}/js/a.js?v=1&utm_source=x&fbclid=y`, "a"],
       [`${ORIGIN}/`, "index"],
       [`${ORIGIN}/index.html`, "index"],
-      [`${ORIGIN}/${RELEASE}/capture`, "capture"],
+      [`${ORIGIN}/capture`, "capture"],
     ]) {
       expect(await (await worker.request(url)).text()).toBe(body);
     }
@@ -511,10 +517,16 @@ describe("shell worker requests", () => {
   test("uses the network when a listed file is not cached", async () => {
     const worker = await routedWorker();
     expect(
-      await (
-        await worker.request(`${ORIGIN}/${RELEASE}/js/uncached.js`)
-      ).text(),
+      await (await worker.request(`${ORIGIN}/js/uncached.js`)).text(),
     ).toBe("from network");
+    expect(worker.posted).toEqual([]);
+  });
+
+  test("tells open pages when a listed file is gone", async () => {
+    const worker = await routedWorker();
+    globalThis.fetch = async () => new Response("", { status: 404 });
+    expect((await worker.request(`${ORIGIN}/js/uncached.js`)).status).toBe(404);
+    expect(worker.posted).toEqual([{ type: "ASTRO_FILE_MISSING" }]);
   });
 
   test("leaves other requests to the browser", async () => {

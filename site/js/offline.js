@@ -1367,22 +1367,22 @@
     };
 
     // Files are named by content and each deploy removes the old ones, so a
-    // tab left open across a release can fail to load a file. One check per
-    // tab tells a missing file apart from a network problem.
+    // tab left open across a release can fail to load a file. The version
+    // check tells a newer release apart from a network problem.
     const reportMissingFile = () => {
       if (state.reloadRequired || missingFileCheck) return;
-      missingFileCheck = fetchVersion().then(
-        (metadata) => {
+      missingFileCheck = fetchVersion()
+        .then((metadata) => {
           if (metadata.version === currentVersion) return;
           setState({ reloadRequired: true });
           if (state.enabled) {
             void checkForUpdates({ applyAutomatically: true }).catch(() => {});
           }
-        },
-        () => {
+        })
+        .catch(() => {})
+        .finally(() => {
           missingFileCheck = null;
-        },
-      );
+        });
     };
 
     const sameOrigin = (url) => {
