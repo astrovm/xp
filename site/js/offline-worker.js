@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  // The generated Workbox worker imports this file. Workbox owns the small,
+  // The generated sw.js imports this file. shell-worker.js owns the small,
   // automatic application-shell precache; this handler serves only the
   // optional bundled games and shared Ruffle runtime selected by the user.
   const BUNDLED_GAME_CACHE = "astro-bundled-games-v1";
