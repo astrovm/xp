@@ -172,9 +172,32 @@ const projectStorageText = (state) => {
   return formatProjectBytes(state.usage);
 };
 
+// A newer release removed a file this tab needs. Asked once per tab.
+let reloadPromptShown = false;
+const promptReloadForUpdate = async (state) => {
+  if (!state.reloadRequired || reloadPromptShown) return;
+  reloadPromptShown = true;
+  const choice = await XPDialogs.message({
+    title: "Astro XP Update",
+    text: "A new version of Astro XP is out, so some files this page needs are gone.\n\nReload to update. Save your work first.",
+    icon: "info",
+    buttons: [
+      { id: "reload", label: "&Reload", isDefault: true },
+      { id: "later", label: "&Later", isCancel: true },
+    ],
+  });
+  if (choice !== "reload") return;
+  if (offlineManager.getSnapshot().enabled) {
+    offlineManager.updateNow().catch(() => window.location.reload());
+  } else {
+    window.location.reload();
+  }
+};
+
 // Runs once at startup. The development server serves no service worker.
 const initializeOfflineMode = () => {
   if (window.ASTRO_DEV) return offlineManagerInitialization;
+  offlineManager.subscribe((state) => void promptReloadForUpdate(state));
   offlineManagerInitialization = offlineManager.initialize().catch((error) => {
     console.error("Offline mode initialization failed:", error);
     throw error;

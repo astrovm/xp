@@ -854,3 +854,74 @@ test("installed game data reports listing failures but ignores failures of stale
   await flushShell();
   expect(status()).toBe("Storage is locked.");
 });
+
+test("offers a reload once when a newer release removed a file", async () => {
+  const calls = [];
+  let reloads = 0;
+  const s = await login(
+    await loadShell({
+      offlineMethods: {
+        updateNow: async () => {
+          calls.push("update");
+          throw new Error("offline");
+        },
+      },
+    }),
+  );
+  s.window.location.reload = () => {
+    reloads += 1;
+  };
+  const prompt = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+      dialog.textContent.includes("Reload to update"),
+    );
+  const press = async (label) => {
+    [...prompt().querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === label)
+      .click();
+    await flushShell();
+    await flushShell();
+  };
+  const state = async (updates) => {
+    Object.assign(s.offlineSnapshot, updates);
+    s.notifyOfflineListeners();
+    await flushShell();
+  };
+
+  await state({ reloadRequired: false });
+  expect(prompt()).toBeUndefined();
+  await state({ reloadRequired: true });
+  expect(prompt().getAttribute("role")).toBe("dialog");
+  await press("Reload");
+  // With offline use on, Update Now reloads; if it fails, a plain reload.
+  expect(calls).toEqual(["update"]);
+  expect(reloads).toBe(1);
+
+  await state({ reloadRequired: true });
+  expect(prompt()).toBeUndefined();
+});
+
+test("the reload prompt reloads directly with offline use off, or waits", async () => {
+  for (const [label, expected] of [
+    ["Reload", 1],
+    ["Later", 0],
+  ]) {
+    let reloads = 0;
+    const s = await login(
+      await loadShell({ offlineSettings: { enabled: false } }),
+    );
+    s.window.location.reload = () => {
+      reloads += 1;
+    };
+    Object.assign(s.offlineSnapshot, { reloadRequired: true });
+    s.notifyOfflineListeners();
+    await flushShell();
+    [...s.document.querySelectorAll(".xp-dialog .dlg-buttons button")]
+      .find((button) => button.textContent === label)
+      .click();
+    await flushShell();
+    await flushShell();
+    expect(reloads).toBe(expected);
+    cleanupShells();
+  }
+});

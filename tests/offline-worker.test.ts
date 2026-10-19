@@ -15,72 +15,66 @@ afterEach(() => {
   delete require.cache[workerPath];
 });
 
+const shellCache = require("../site/js/shell-cache.js");
+const workerClients = (posted) => ({
+  matchAll: async () => [{ postMessage: (data) => posted.push(data) }],
+});
+
 describe("offline service worker", () => {
-  test("prefers the network for optional runtime assets and falls back offline", async () => {
+  test("serves downloaded files first and reports missing ones", async () => {
     const listeners = new Map();
+    const posted = [];
     globalThis.self = {
+      AstroShellCache: shellCache,
+      clients: workerClients(posted),
       location: { origin: "https://xp.example" },
       addEventListener(type, listener) {
         listeners.set(type, listener);
       },
     };
-    const stale = new Response("stale runtime");
-    // Downloads are stored without the release prefix, so a file saved
-    // before an update is still found under the new release's URL.
+    // Downloads made before files were named by content were stored without
+    // the release prefix, so those copies are found too.
     globalThis.caches = {
       open: async () => ({
         match: async (key) =>
           key ===
           "https://xp.example/vendor/scummvm/2026.3.0/scummvm.12345678.wasm"
-            ? stale.clone()
+            ? new Response("downloaded runtime")
             : undefined,
       }),
     };
-    globalThis.fetch = async () => new Response("current runtime");
+    globalThis.fetch = async () => new Response("network runtime");
     require(workerPath);
-
-    const request = new Request(
-      "https://xp.example/releases/26.08.01-1234567/vendor/scummvm/2026.3.0/scummvm.12345678.wasm",
-    );
-    let responsePromise;
-    listeners.get("fetch")({
-      request,
-      respondWith(promise) {
-        responsePromise = promise;
-      },
-    });
-    expect(await (await responsePromise).text()).toBe("current runtime");
-
-    globalThis.fetch = async () => {
-      throw new TypeError("offline");
+    const respond = (url) => {
+      let responsePromise;
+      listeners.get("fetch")({
+        request: new Request(url),
+        respondWith(promise) {
+          responsePromise = promise;
+        },
+      });
+      return responsePromise;
     };
-    listeners.get("fetch")({
-      request,
-      respondWith(promise) {
-        responsePromise = promise;
-      },
-    });
-    expect(await (await responsePromise).text()).toBe("stale runtime");
+
+    for (const url of [
+      "https://xp.example/vendor/scummvm/2026.3.0/scummvm.12345678.wasm",
+      "https://xp.example/releases/26.08.01-1234567/vendor/scummvm/2026.3.0/scummvm.12345678.wasm",
+    ]) {
+      expect(await (await respond(url)).text()).toBe("downloaded runtime");
+    }
+    expect(
+      await (
+        await respond("https://xp.example/swf/game.0123456789abcdef/main.swf")
+      ).text(),
+    ).toBe("network runtime");
+    expect(posted).toEqual([]);
 
     globalThis.fetch = async () => new Response("gone", { status: 404 });
-    listeners.get("fetch")({
-      request,
-      respondWith(promise) {
-        responsePromise = promise;
-      },
-    });
-    expect(await (await responsePromise).text()).toBe("stale runtime");
-
-    const uncached = new Request(
-      "https://xp.example/releases/26.08.01-1234567/swf/missing.swf",
-    );
-    listeners.get("fetch")({
-      request: uncached,
-      respondWith(promise) {
-        responsePromise = promise;
-      },
-    });
-    expect((await responsePromise).status).toBe(404);
+    expect(
+      (await respond("https://xp.example/swf/game.0123456789abcdef/main.swf"))
+        .status,
+    ).toBe(404);
+    expect(posted).toEqual([{ type: "ASTRO_FILE_MISSING" }]);
   });
 });
 
@@ -114,6 +108,8 @@ function packedWorker() {
     },
   });
   globalThis.self = {
+    AstroShellCache: shellCache,
+    clients: workerClients([]),
     location: { origin: "https://xp.example" },
     addEventListener: (type, cb) => listeners.set(type, cb),
   };
@@ -153,7 +149,7 @@ test("packed reVCDOS assets normalize paths, serve byte ranges, invalidate and r
   };
   h.put(root + "manifest.json", manifest);
   h.put(root + "pack.bin", "0123456789");
-  const path = "/releases/v1/iframe/revcdos/local-assets/fetched/DATA.bin";
+  const path = "/iframe/revcdos.0123456789abcdef/local-assets/fetched/DATA.bin";
   expect(await (await h.request(path)).text()).toBe("234567");
   for (const [range, expected, header] of [
     ["bytes=1-3", "345", "bytes 1-3/6"],
@@ -196,7 +192,7 @@ test("packed reVCDOS assets normalize paths, serve byte ranges, invalidate and r
 test("ScummVM game files expose the index and safe ISO slices, refresh and reject invalid entries", async () => {
   const h = packedWorker(),
     root = "astro-xp-scummvm/",
-    path = "/releases/v1/iframe/scummvm/local-games/game/";
+    path = "/iframe/scummvm/local-games/game/";
   const manifest = {
     version: 1,
     isoFile: "game.iso",
@@ -228,13 +224,13 @@ test("ScummVM game files expose the index and safe ISO slices, refresh and rejec
   expect(await (await h.request(path + "DATA.DAT")).text()).toBe("cdef");
   h.notify({ type: "unrelated" });
 });
-test("worker ignores non-GET, cross-origin and unversioned requests and propagates uncached offline failures", async () => {
+test("worker ignores non-GET, cross-origin and shell requests and propagates uncached offline failures", async () => {
   const h = packedWorker();
   for (const [path, options] of [
-    ["/releases/v1/swf/a.swf", { method: "POST" }],
-    ["https://other.example/releases/v1/swf/a.swf", {}],
-    ["/swf/a.swf", {}],
-    ["/releases/v1/css/main.css", {}],
+    ["/swf/a.0123456789abcdef/a.swf", { method: "POST" }],
+    ["https://other.example/swf/a.0123456789abcdef/a.swf", {}],
+    ["/css/main.12345678.css", {}],
+    ["/js/main.12345678.js", {}],
   ])
     expect(h.request(path, options)).toBeUndefined();
   globalThis.caches = { open: async () => ({ match: async () => undefined }) };
@@ -242,6 +238,6 @@ test("worker ignores non-GET, cross-origin and unversioned requests and propagat
     throw new Error("offline");
   };
   await expect(
-    h.request("/releases/v1/js/core.ruffle.hash.js"),
+    h.request("/js/core.ruffle.0123456789abcdef0123.js"),
   ).rejects.toThrow("offline");
 });

@@ -206,6 +206,11 @@
     }
   };
 
+  const fetchFile = self.AstroShellCache.reportMissingFiles({
+    clients: self.clients,
+    fetch: (request) => fetch(request),
+  });
+
   self.addEventListener("message", (event) => {
     const packed = PACKED_GAMES.find(
       ({ message }) => message === event.data?.type,
@@ -222,7 +227,6 @@
     const url = new URL(event.request.url);
     if (url.origin !== self.location.origin) return;
     const path = releasePath(url.pathname);
-    if (path === url.pathname) return;
     const packedGame = PACKED_GAMES.find(({ route }) =>
       route.test(url.pathname),
     );
@@ -242,20 +246,13 @@
 
     event.respondWith(
       caches.open(BUNDLED_GAME_CACHE).then(async (cache) => {
-        // Downloads are cached without the release prefix (see offline.js).
+        // Downloads made before files were named by content were stored
+        // under release paths without the release prefix (see offline.js).
         const key = new URL(url.href);
         key.pathname = path;
+        // Paths are named by content, so a downloaded copy is always current.
         const cached = await cache.match(key.href, { ignoreSearch: true });
-        try {
-          const response = await fetch(event.request);
-          // Only one release is hosted, so a tab still on an older release
-          // gets 404s for files it may already have downloaded.
-          if (!response.ok && cached) return cached;
-          return response;
-        } catch (error) {
-          if (cached) return cached;
-          throw error;
-        }
+        return cached || fetchFile(event.request);
       }),
     );
   });

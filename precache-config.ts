@@ -29,6 +29,8 @@ export const PRECACHE_EXTENSIONS = [
 
 export const PRECACHE_IGNORES = [
   "version.json",
+  "sw.js",
+  "sw.*.js",
   // Asset provenance manifests; nothing loads them at runtime.
   "assets/*/SOURCES*.json",
   "swf/**",

@@ -11,7 +11,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import {
-  basename,
   dirname,
   extname,
   isAbsolute,
@@ -23,6 +22,11 @@ import {
 import { fileURLToPath } from "node:url";
 
 import { compress as compressWoff2 } from "wawoff2";
+import {
+  contentAddress,
+  type ContentAddressResult,
+  type ContentPackage,
+} from "./content-address";
 import {
   PRECACHE_EXTENSIONS,
   PRECACHE_IGNORES,
@@ -37,8 +41,12 @@ export const RUFFLE_PACKAGE = "@ruffle-rs/ruffle";
 export const FFLATE_JS_PATH = "vendor/fflate/index.js";
 export const JS_DOS_ROOT_PATH = "vendor/js-dos";
 export const WEBTORRENT_JS_PATH = "vendor/webtorrent/webtorrent.min.js";
-export const RELEASES_PATH = "releases";
 export const DEFAULT_UPDATE_STABILITY_DELAY_MS = 6 * 60 * 60 * 1000;
+export const SITE_ORIGIN = "https://xp.4st.li";
+/** Entry points fetched by a fixed URL; every other file is named by content. */
+export const FIXED_FILES = ["index.html", "capture.html"];
+const PINBALL_RUNTIME_PATH = "apps/pinball/runtime";
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 const NODE_MODULES = join(PROJECT_DIR, "node_modules");
 const FFLATE_SOURCE = join(NODE_MODULES, "fflate");
 const JS_DOS_SOURCE = join(NODE_MODULES, "js-dos");
@@ -57,13 +65,25 @@ const JS_DOS_RUNTIME_FILES = [
 export const PRECACHE_FILE_SUFFIXES = new Set(
   PRECACHE_EXTENSIONS.map((extension) => `.${extension}`),
 );
+// Ruffle's webpack chunks already carry a content hash, and ruffle.js loads
+// them by those names.
+export const isRuffleChunk = (path: string) =>
+  /^js\/(?:core\.ruffle\.[a-f0-9]{20}\.js|[a-f0-9]{20}\.wasm)(?:\.map)?$/.test(
+    path,
+  );
 const APP_VERSION_PATTERN = /const APP_VERSION = "[^"]+";/g;
 const VERSIONED_SERVICE_WORKER_MARKER =
   "\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n";
 
-const WORKER_SCRIPTS = ["offline-worker", "shell-worker"] as const;
+const WORKER_SCRIPTS = [
+  "shell-cache",
+  "offline-worker",
+  "shell-worker",
+] as const;
 
 export interface PrecacheEntry {
+  // Entry points keep their names, so their downloads skip the HTTP cache.
+  fixed?: true;
   integrity: string;
   revision: string;
   url: string;
@@ -133,10 +153,6 @@ export class BuildPaths {
     return join(this.root, "offline-games.json");
   }
 
-  get fflateJs() {
-    return join(this.root, ...FFLATE_JS_PATH.split("/"));
-  }
-
   get jsDosRoot() {
     return join(this.root, ...JS_DOS_ROOT_PATH.split("/"));
   }
@@ -176,36 +192,11 @@ async function walkFiles(root: string): Promise<string[]> {
   return files;
 }
 
-function releaseRelativePath(version: string): string {
+function versionedServiceWorkerName(version: string): string {
   if (!/^[a-zA-Z0-9._-]+$/.test(version)) {
     throw new Error(`Invalid release version: ${version}`);
   }
-  return `${RELEASES_PATH}/${version}`;
-}
-
-// Callers validate the version through releaseRelativePath first.
-function versionedServiceWorkerName(version: string): string {
   return `sw.${version}.js`;
-}
-
-export async function scopeReleaseReferences(
-  root: string,
-  version: string,
-): Promise<void> {
-  const releasePath = releaseRelativePath(version);
-  const referencePattern =
-    /(["'`(=]\s*)\/(apps|assets|css|dos|iframe|js|swf|vendor)\//g;
-  for (const path of await walkFiles(root)) {
-    if (
-      ![".css", ".html", ".js", ".json", ".mjs"].includes(extname(path)) ||
-      path.endsWith(`${sep}js${sep}offline-worker.js`)
-    ) {
-      continue;
-    }
-    const content = await readFile(path, "utf8");
-    const scoped = content.replace(referencePattern, `$1/${releasePath}/$2/`);
-    if (scoped !== content) await writeFile(path, scoped);
-  }
 }
 
 async function replaceExactlyOnce(
@@ -405,11 +396,10 @@ export async function compressFonts(
   return converted;
 }
 
-export async function updateHtml(
+export async function prepareEntryPoints(
   paths: BuildPaths,
   version: string,
-): Promise<Record<string, string>> {
-  console.log("Updating output with versioned asset filenames...");
+): Promise<void> {
   let mainJavaScript = await readFile(paths.mainJs, "utf8");
   mainJavaScript = await replaceExactlyOnce(
     mainJavaScript,
@@ -436,178 +426,56 @@ export async function updateHtml(
   );
   await writeFile(paths.html, html);
   await rm(startupRecoveryPath);
-
-  const staticPaths = [
-    ...(await walkFiles(join(paths.root, "assets"))),
-    ...(await walkFiles(join(paths.css, "fonts"))),
-    join(paths.root, "favicon.ico"),
-  ];
-  const staticAssets = new Map<string, string>();
-  await Promise.all(
-    staticPaths.map(async (sourcePath) => {
-      const relativePath = relative(paths.root, sourcePath)
-        .split(sep)
-        .join("/");
-      const extension = extname(relativePath);
-      const hash = await getShortHash(sourcePath);
-      const hashedRelativePath = `${relativePath.slice(
-        0,
-        -extension.length,
-      )}.${hash}${extension}`;
-      await rename(sourcePath, join(paths.root, hashedRelativePath));
-      staticAssets.set(relativePath, hashedRelativePath);
-    }),
-  );
-
-  const mutableAssets: Record<string, string> = {
-    ruffle: "js/ruffle.js",
-    gamesJs: "js/games.js",
-    flashUrlRouterJs: "js/flash-url-router.js",
-    storagePolicyJs: "js/storage-policy.js",
-    gameInstallerJs: "js/game-installer.js",
-    gameLibraryJs: "js/game-library.js",
-    gameDataJs: "js/game-data.js",
-    filesystemJs: "js/filesystem.js",
-    fileOperationsJs: "js/file-operations.js",
-    dialogsJs: "js/dialogs.js",
-    offlineJs: "js/offline.js",
-    offlineWorkerJs: "js/offline-worker.js",
-    shellWorkerJs: "js/shell-worker.js",
-    mainJs: "js/main.js",
-    mainCss: "css/main.css",
-  };
-  const entrypointMarkup = await readFile(paths.html, "utf8");
-  const entrypoints = [
-    ...entrypointMarkup.matchAll(
-      /\b(?:src|href)="((?:apps|js|css)\/[^"?]+\.(?:js|css))(?:\?v=[^"]+)?"/g,
-    ),
-  ].map((match) => match[1]);
-  for (const relativePath of new Set(entrypoints)) {
-    if (!Object.values(mutableAssets).includes(relativePath)) {
-      mutableAssets[`entry:${relativePath}`] = relativePath;
-    }
-  }
-  const applicationsDirectory = join(paths.root, "apps");
-  const applicationReferenceFiles = (
-    (await isDirectory(applicationsDirectory))
-      ? await walkFiles(applicationsDirectory)
-      : []
-  )
-    .filter((path) => [".css", ".html", ".js"].includes(extname(path)))
-    .map((path) => relative(paths.root, path).split(sep).join("/"));
-  const referenceFiles = [
-    ...new Set([
-      ...Object.values(mutableAssets).filter(
-        (path) =>
-          path !== "js/ruffle.js" &&
-          path !== "js/offline-worker.js" &&
-          path !== "js/shell-worker.js",
-      ),
-      ...applicationReferenceFiles,
-      "index.html",
-      ...((await isFile(paths.captureHtml)) ? ["capture.html"] : []),
-    ]),
-  ];
-  for (const referencePath of referenceFiles) {
-    const absolutePath = join(paths.root, referencePath);
-    let content = await readFile(absolutePath, "utf8");
-    for (const [originalPath, hashedPath] of staticAssets) {
-      content = content.replaceAll(originalPath, hashedPath);
-      const referenceDirectory = dirname(referencePath);
-      const originalRelativePath = relative(referenceDirectory, originalPath)
-        .split(sep)
-        .join("/");
-      const hashedRelativePath = relative(referenceDirectory, hashedPath)
-        .split(sep)
-        .join("/");
-      content = content.replaceAll(originalRelativePath, hashedRelativePath);
-    }
-    await writeFile(absolutePath, content);
-  }
-
-  const hashedAssets = Object.fromEntries(
-    await Promise.all(
-      Object.entries(mutableAssets).map(async ([name, relativePath]) => {
-        const sourcePath = join(paths.root, relativePath);
-        const hash = await getShortHash(sourcePath);
-        const extension = extname(relativePath);
-        const hashedRelativePath = `${relativePath.slice(
-          0,
-          -extension.length,
-        )}.${hash}${extension}`;
-        await rename(sourcePath, join(paths.root, hashedRelativePath));
-        return [name, hashedRelativePath];
-      }),
-    ),
-  ) as Record<string, string>;
-  const fflateHash = await getShortHash(paths.fflateJs);
-
-  let content = await readFile(paths.html, "utf8");
-  for (const [name, originalPath] of Object.entries(mutableAssets)) {
-    if (name === "offlineWorkerJs" || name === "shellWorkerJs") continue;
-    const pattern = new RegExp(
-      originalPath.replaceAll(".", "\\.") + '(?:\\?v=[^"]+)?"',
-      "g",
-    );
-    content = await replaceExactlyOnce(
-      content,
-      pattern,
-      `${hashedAssets[name]}"`,
-      `Could not update asset reference matching ${pattern.source}`,
-    );
-  }
-  const fflatePattern = new RegExp(
-    `${FFLATE_JS_PATH.replaceAll(".", "\\.")}(?:\\?v=[^"]+)?"?`,
-    "g",
-  );
-  content = await replaceExactlyOnce(
-    content,
-    fflatePattern,
-    `${FFLATE_JS_PATH}?v=${fflateHash}"`,
-    "Could not update fflate asset reference",
-  );
-  await writeFile(paths.html, content);
-
-  for (const relativePath of [
-    "iframe/pink-panther-hokus-pokus/index.html",
-    "iframe/pink-panther-passport-to-peril/index.html",
-    "iframe/revcdos/index.html",
-  ]) {
-    const absolutePath = join(paths.root, relativePath);
-    if (!(await isFile(absolutePath))) continue;
-    let iframe = await readFile(absolutePath, "utf8");
-    iframe = await replaceExactlyOnce(
-      iframe,
-      /\.\.\/\.\.\/js\/storage-policy\.js(?:\?v=[^"]+)?"?/g,
-      `../../${hashedAssets.storagePolicyJs}"`,
-      `Could not update storage policy reference in ${relativePath}`,
-    );
-    await writeFile(absolutePath, iframe);
-  }
-
-  if (await isFile(paths.captureHtml)) {
-    let capture = await readFile(paths.captureHtml, "utf8");
-    for (const [name, originalPath] of [
-      ["ruffle", "js/ruffle.js"],
-      ["gamesJs", "js/games.js"],
-      ["flashUrlRouterJs", "js/flash-url-router.js"],
-    ] as const) {
-      const pattern = new RegExp(
-        originalPath.replaceAll(".", "\\.") + '(?:\\?v[^"]+)?"',
-        "g",
-      );
-      capture = await replaceExactlyOnce(
-        capture,
-        pattern,
-        `${hashedAssets[name]}"`,
-        `Could not update capture reference for ${originalPath}`,
-      );
-    }
-    await writeFile(paths.captureHtml, capture);
-  }
-
   console.log(`  - Set deployment version to ${version}`);
-  return hashedAssets;
+}
+
+// Directories renamed as a whole: code inside them builds paths to their own
+// files, or the runtime finds them through ASTRO_GAME_ROOTS.
+async function contentPackages(paths: BuildPaths): Promise<ContentPackage[]> {
+  const packages: ContentPackage[] = [];
+  for (const type of ["swf", "iframe"]) {
+    const parent = join(paths.root, type);
+    if (!(await isDirectory(parent))) continue;
+    for (const entry of await readdir(parent, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name !== "scummvm") {
+        packages.push({ path: `${type}/${entry.name}`, mapped: true });
+      }
+    }
+  }
+  const versionedVendors = async (name: string) =>
+    (await readdir(join(paths.root, "vendor", name)).catch(() => [])).map(
+      (version) => `vendor/${name}/${version}`,
+    );
+  for (const path of [
+    JS_DOS_ROOT_PATH,
+    PINBALL_RUNTIME_PATH,
+    ...(await versionedVendors("pipes")),
+    ...(await versionedVendors("scummvm")),
+  ]) {
+    if (await isDirectory(join(paths.root, path))) packages.push({ path });
+  }
+  return packages.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function addressContent(
+  paths: BuildPaths,
+): Promise<ContentAddressResult> {
+  const result = await contentAddress(paths.root, {
+    fixed: (
+      await Promise.all(
+        FIXED_FILES.map(async (path) =>
+          (await isFile(join(paths.root, path))) ? path : null,
+        ),
+      )
+    ).filter((path) => path !== null),
+    packages: await contentPackages(paths),
+    namedByContent: isRuffleChunk,
+    unscanned: (path) =>
+      path.endsWith(".map") || /(^|\/)SOURCES[^/]*\.json$/.test(path),
+    origins: [SITE_ORIGIN],
+  });
+  console.log(`  - Named ${result.files.size} files by their content`);
+  return result;
 }
 
 export function isOptionalOfflinePath(relativePath: string): boolean {
@@ -626,14 +494,22 @@ export function isOptionalOfflinePath(relativePath: string): boolean {
 async function offlineFileEntry(
   root: string,
   path: string,
-  revision?: string,
 ): Promise<OfflineFile> {
-  const relativePath = relative(root, path).split(sep).join("/");
   const content = await readFile(path);
   return {
     bytes: content.byteLength,
     integrity: `sha384-${createHash("sha384").update(content).digest("base64")}`,
-    url: revision ? `${relativePath}?rev=${revision}` : relativePath,
+    url: relative(root, path).split(sep).join("/"),
+  };
+}
+
+async function offlinePackage(root: string, files: string[]) {
+  const entries = await Promise.all(
+    files.toSorted().map((path) => offlineFileEntry(root, path)),
+  );
+  return {
+    bytes: entries.reduce((total, entry) => total + entry.bytes, 0),
+    files: entries,
   };
 }
 
@@ -646,7 +522,7 @@ async function offlineRevision(root: string, files: string[]): Promise<string> {
   return digest.digest("hex").slice(0, 16);
 }
 
-async function prepareDoomPackage(paths: BuildPaths): Promise<void> {
+export async function prepareDoomPackage(paths: BuildPaths): Promise<void> {
   const iframeRoot = join(paths.root, "iframe", "doom");
   const dosRoot = join(paths.root, "dos", "doom");
   if (!(await isDirectory(iframeRoot)) || !(await isDirectory(dosRoot))) return;
@@ -663,49 +539,40 @@ async function prepareDoomPackage(paths: BuildPaths): Promise<void> {
   );
   await writeFile(indexPath, index);
   await rm(dosRoot, { recursive: true });
+  if (!(await readdir(join(paths.root, "dos"))).length) {
+    await rm(join(paths.root, "dos"), { recursive: true });
+  }
 }
 
-export async function versionGamePackages(
-  paths: BuildPaths,
-): Promise<VersionedGamePackages> {
-  await prepareDoomPackage(paths);
-  const gameIds = new Set<string>();
-  for (const parent of [join(paths.root, "swf"), join(paths.root, "iframe")]) {
-    if (!(await isDirectory(parent))) continue;
-    for (const entry of await readdir(parent, { withFileTypes: true })) {
-      if (entry.isDirectory()) gameIds.add(entry.name);
-    }
-  }
-  gameIds.delete("scummvm");
+const GAME_RUNTIMES: Record<string, string> = {
+  "pink-panther-hokus-pokus": "scummvm",
+  "pink-panther-passport-to-peril": "scummvm",
+};
 
-  const gameRuntimes: Record<string, string> = {
-    "pink-panther-hokus-pokus": "scummvm",
-    "pink-panther-passport-to-peril": "scummvm",
-  };
+// Games are the mapped packages. Their directory names end in the revision
+// that offline downloads are keyed by.
+export async function describeGamePackages(
+  paths: BuildPaths,
+  addressed: ContentAddressResult,
+): Promise<VersionedGamePackages> {
   const packages: VersionedGamePackages = {};
-  for (const gameId of [...gameIds].sort()) {
-    const type = (await isDirectory(join(paths.root, "swf", gameId)))
-      ? "swf"
-      : "iframe";
-    const sourceRoot = join(paths.root, type, gameId);
-    const files = (await walkFiles(sourceRoot)).sort();
-    const revision = await offlineRevision(paths.root, files);
-    const versionedName = `${gameId}.${revision}`;
-    const versionedRoot = join(paths.root, type, versionedName);
-    await rename(sourceRoot, versionedRoot);
-    const versionedFiles = (await walkFiles(versionedRoot)).sort();
+  for (const [source, target] of [...addressed.packages].sort()) {
+    const [type, gameId] = source.split("/");
+    if (
+      (type !== "swf" && type !== "iframe") ||
+      source.split("/").length !== 2
+    ) {
+      continue;
+    }
+    const revision = target.slice(source.length + 1);
     packages[gameId] = {
-      bytes: (
-        await Promise.all(
-          versionedFiles.map(async (path) => (await stat(path)).size),
-        )
-      ).reduce((total, bytes) => total + bytes, 0),
-      files: await Promise.all(
-        versionedFiles.map((path) => offlineFileEntry(paths.root, path)),
-      ),
+      ...(await offlinePackage(
+        paths.root,
+        await walkFiles(join(paths.root, target)),
+      )),
       revision,
-      root: `${type}/${versionedName}/`,
-      ...(gameRuntimes[gameId] ? { runtime: gameRuntimes[gameId] } : {}),
+      root: `${target}/`,
+      ...(GAME_RUNTIMES[gameId] ? { runtime: GAME_RUNTIMES[gameId] } : {}),
       type,
     };
   }
@@ -736,78 +603,44 @@ async function injectGameRoots(
 export async function writeOfflineGameManifest(
   paths: BuildPaths,
   version: string,
+  addressed: ContentAddressResult,
 ): Promise<void> {
   const runtimeFiles = (await readdir(paths.js, { withFileTypes: true }))
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        (entry.name.endsWith(".wasm") ||
-          (entry.name.startsWith("core.ruffle.") &&
-            entry.name.endsWith(".js"))),
-    )
-    .map((entry) => join(paths.js, entry.name))
-    .toSorted();
+    .filter((entry) => entry.isFile() && isRuffleChunk(`js/${entry.name}`))
+    .filter((entry) => !entry.name.endsWith(".map"))
+    .map((entry) => join(paths.js, entry.name));
 
+  // Shared runtimes: every file whose original path lies under these roots.
   const sharedRuntimes: Record<string, string[]> = {
-    scummvm: [
-      join(paths.root, "iframe", "scummvm"),
-      join(paths.root, "vendor", "scummvm", "2026.3.0"),
-    ],
+    scummvm: ["iframe/scummvm/", "vendor/scummvm/"],
   };
-  const games = await versionGamePackages(paths);
+  const games = await describeGamePackages(paths, addressed);
   await injectGameRoots(paths, games);
 
-  const runtimes = Object.fromEntries(
-    await Promise.all(
-      (
-        await Promise.all(
-          Object.entries(sharedRuntimes).map(async ([id, roots]) => ({
-            id,
-            roots,
-            available: (await Promise.all(roots.map(isDirectory))).every(
-              Boolean,
-            ),
-          })),
-        )
+  const runtimes: Record<string, OfflineRuntime> = {};
+  for (const [id, prefixes] of Object.entries(sharedRuntimes)) {
+    const files = [...addressed.files]
+      .filter(([source]) =>
+        prefixes.some((prefix) => source.startsWith(prefix)),
       )
-        .filter(({ available }) => available)
-        .map(async ({ id, roots }) => {
-          const files = (await Promise.all(roots.map(walkFiles))).flat().sort();
-          const revision = await offlineRevision(paths.root, files);
-          return [
-            id,
-            {
-              bytes: (
-                await Promise.all(
-                  files.map(async (path) => (await stat(path)).size),
-                )
-              ).reduce((total, bytes) => total + bytes, 0),
-              files: await Promise.all(
-                files.map((path) =>
-                  offlineFileEntry(paths.root, path, revision),
-                ),
-              ),
-              revision,
-            },
-          ];
-        }),
-    ),
-  );
-  const runtimeRevision = await offlineRevision(paths.root, runtimeFiles);
+      .map(([, target]) => join(paths.root, target));
+    if (
+      !prefixes.every((prefix) =>
+        [...addressed.files.keys()].some((source) => source.startsWith(prefix)),
+      )
+    ) {
+      continue;
+    }
+    runtimes[id] = {
+      ...(await offlinePackage(paths.root, files)),
+      revision: await offlineRevision(paths.root, files),
+    };
+  }
   const manifest: OfflineManifest = {
     games,
     runtime: {
-      bytes: (
-        await Promise.all(
-          runtimeFiles.map(async (path) => (await stat(path)).size),
-        )
-      ).reduce((total, bytes) => total + bytes, 0),
-      files: await Promise.all(
-        runtimeFiles.map((path) =>
-          offlineFileEntry(paths.root, path, runtimeRevision),
-        ),
-      ),
-      revision: runtimeRevision,
+      ...(await offlinePackage(paths.root, runtimeFiles)),
+      revision: await offlineRevision(paths.root, runtimeFiles),
     },
     runtimes,
     version,
@@ -907,7 +740,10 @@ export async function createPrecacheManifest(
       console.warn(`  - Skipping precache for oversized ${relativePath}`);
       continue;
     }
-    entries.push(precacheEntry(content, `${urlPrefix}${relativePath}`));
+    const entry = precacheEntry(content, `${urlPrefix}${relativePath}`);
+    entries.push(
+      FIXED_FILES.includes(relativePath) ? { fixed: true, ...entry } : entry,
+    );
   }
   return entries;
 }
@@ -922,12 +758,10 @@ function precacheEntry(content: Buffer, url: string): PrecacheEntry {
 
 export async function generateServiceWorker(
   outputDir: string,
-  version?: string,
+  version: string,
 ): Promise<void> {
   console.log("Generating service worker...");
-  const releasePrefix = version ? `${releaseRelativePath(version)}/` : "";
-  const contentDir = join(outputDir, releasePrefix);
-  const jsEntries = await readdir(join(contentDir, "js"));
+  const jsEntries = await readdir(join(outputDir, "js"));
   const scripts = WORKER_SCRIPTS.map((name) => {
     const matches = jsEntries.filter((entry) =>
       new RegExp(`^${name}\\.[a-f0-9]{8}\\.js$`).test(entry),
@@ -937,194 +771,139 @@ export async function generateServiceWorker(
         `Build output must contain exactly one hashed ${name.replace("-", " ")}`,
       );
     }
-    return `${releasePrefix}js/${matches[0]}`;
+    return `js/${matches[0]}`;
   });
-  const manifest = await createPrecacheManifest(contentDir, releasePrefix);
-  // A release keeps index.html at the root, outside the release directory.
-  if (version) {
-    manifest.push(
-      precacheEntry(
-        await readFile(join(outputDir, "index.html")),
-        "index.html",
-      ),
-    );
-  }
+  const manifest = await createPrecacheManifest(outputDir, "");
   const workerSource = [
-    ...(version
-      ? [`self.__ASTRO_XP_VERSION__=${JSON.stringify(version)};`]
-      : []),
+    `self.__ASTRO_XP_VERSION__=${JSON.stringify(version)};`,
     `self.__ASTRO_XP_PRECACHE__=${JSON.stringify(manifest)};`,
     `importScripts(${scripts.map((script) => JSON.stringify(script)).join(",")});`,
     "",
   ].join("\n");
   await writeFile(join(outputDir, "sw.js"), workerSource);
-  if (version) {
-    await writeFile(
-      join(outputDir, versionedServiceWorkerName(version)),
-      workerSource + VERSIONED_SERVICE_WORKER_MARKER,
-    );
-  }
+  await writeFile(
+    join(outputDir, versionedServiceWorkerName(version)),
+    workerSource + VERSIONED_SERVICE_WORKER_MARKER,
+  );
   console.log(`  - Service worker precaches ${manifest.length} files`);
 }
 
+// Every path outside the fixed entry points is named by its content, so
+// browsers may keep it forever. Cloudflare reads _headers instead of serving it.
+export async function writeHeaders(outputDir: string): Promise<void> {
+  const fixed = new Set([...FIXED_FILES, "_headers", "sw.js", "version.json"]);
+  const rules = (await readdir(outputDir, { withFileTypes: true }))
+    .filter(
+      (entry) => !fixed.has(entry.name) && !/^sw\.[^/]+\.js$/.test(entry.name),
+    )
+    .map((entry) =>
+      entry.isDirectory() ? `/${entry.name}/*` : `/${entry.name}`,
+    )
+    .sort()
+    .map((path) => `${path}\n  Cache-Control: ${IMMUTABLE_CACHE_CONTROL}\n`);
+  await writeFile(join(outputDir, "_headers"), rules.join(""));
+}
+
+// A name is content-addressed when it, or a directory above it, carries a
+// content hash, or the file came named by its content.
+export const isContentAddressed = (path: string) =>
+  FIXED_FILES.includes(path) ||
+  isRuffleChunk(path) ||
+  /\.[a-f0-9]{8}(\.[^./]+)?$/.test(path) ||
+  path
+    .split("/")
+    .slice(0, -1)
+    .some((part) => /\.[a-f0-9]{16}$/.test(part));
+
 export async function validateOutput(outputDir: string): Promise<void> {
   const paths = new BuildPaths(outputDir);
-  const required = [
-    paths.html,
-    paths.versionJson,
-    paths.fflateJs,
-    join(paths.jsDosRoot, "js-dos.js"),
-    join(paths.jsDosRoot, "emulators", "wdosbox.wasm"),
-    paths.webtorrentJs,
-  ];
-  const missing = (
-    await Promise.all(
-      required.map(async (path) =>
-        (await isFile(path)) ? undefined : relative(outputDir, path),
-      ),
-    )
-  ).filter(Boolean);
-  if (missing.length > 0) {
-    throw new Error(
-      `Build output is missing required files: ${missing.join(", ")}`,
-    );
-  }
-
-  const html = await readFile(paths.html, "utf8");
-  const offlineManifestReference = html.match(
-    /window\.ASTRO_OFFLINE_MANIFEST_URL="(offline-games\.([a-f0-9]{8})\.json)"/,
-  );
-  if (!offlineManifestReference) {
-    throw new Error("Build output has no versioned offline game manifest");
-  }
-  const versionedOfflineManifest = join(outputDir, offlineManifestReference[1]);
-  if (
-    !(await isFile(versionedOfflineManifest)) ||
-    (await getShortHash(versionedOfflineManifest)) !==
-      offlineManifestReference[2]
-  ) {
-    throw new Error("Build output has an invalid offline manifest hash");
-  }
-  for (const asset of [
-    "js/ruffle.js",
-    "js/games.js",
-    "js/flash-url-router.js",
-    "js/storage-policy.js",
-    "js/game-installer.js",
-    "js/game-library.js",
-    "js/game-data.js",
-    "js/filesystem.js",
-    "js/file-operations.js",
-    "js/dialogs.js",
-    "js/offline.js",
-    "js/main.js",
-    "css/main.css",
-  ]) {
-    const [directory, filename] = asset.split("/");
-    const extension = extname(filename);
-    const stem = filename.slice(0, -extension.length);
-    const pattern = new RegExp(
-      `${directory}/${stem.replaceAll(".", "\\.")}\\.([a-f0-9]{8})\\${extension}"`,
-    );
-    const match = html.match(pattern);
-    if (!match) {
-      throw new Error(`Build output has no hashed reference for ${asset}`);
-    }
-    const hashedPath = join(outputDir, match[0].slice(0, -1));
-    if (
-      !(await isFile(hashedPath)) ||
-      (await getShortHash(hashedPath)) !== match[1]
-    ) {
-      throw new Error(`Build output has an invalid content hash for ${asset}`);
-    }
-  }
-  const fflateReference = new RegExp(
-    `${FFLATE_JS_PATH.replaceAll(".", "\\.")}\\?v=[a-f0-9]{8}"`,
-  );
-  if (!fflateReference.test(html)) {
-    throw new Error("Build output has no versioned fflate reference");
-  }
-  const staticFiles = [
-    ...(await walkFiles(join(outputDir, "assets"))),
-    ...(await walkFiles(join(outputDir, "css", "fonts"))),
-  ];
-  const favicons = (await readdir(outputDir))
-    .filter((name) => /^favicon\.[a-f0-9]{8}\.ico$/.test(name))
-    .map((name) => join(outputDir, name));
-  if (favicons.length !== 1) {
-    throw new Error("Build output has no uniquely hashed favicon");
-  }
-  for (const path of [...staticFiles, ...favicons]) {
-    const filename = basename(path);
-    const match = filename.match(/\.([a-f0-9]{8})\.[^./]+$/);
-    if (!match || (await getShortHash(path)) !== match[1]) {
+  for (const path of [paths.html, paths.versionJson]) {
+    if (!(await isFile(path))) {
       throw new Error(
-        `Build output has an invalid static asset hash for ${relative(
-          outputDir,
-          path,
-        )}`,
+        `Build output is missing required file: ${relative(outputDir, path)}`,
       );
     }
   }
-  const referenceDocuments = [
-    { content: html, path: paths.html },
-    ...((await isFile(paths.captureHtml))
-      ? [
-          {
-            content: await readFile(paths.captureHtml, "utf8"),
-            path: paths.captureHtml,
-          },
-        ]
-      : []),
-  ];
-  for (const match of html.matchAll(
-    /(?:src|href)="((?:js|css)\/[^"]+\.(?:js|css))"/g,
-  )) {
-    referenceDocuments.push({
-      content: await readFile(join(outputDir, match[1]), "utf8"),
-      path: join(outputDir, match[1]),
-    });
+  const files = (await walkFiles(outputDir)).map((path) =>
+    relative(outputDir, path).split(sep).join("/"),
+  );
+  const unaddressed = files.filter(
+    (path) =>
+      !isContentAddressed(path) &&
+      !["_headers", "version.json", "sw.js"].includes(path) &&
+      !/^sw\.[^/]+\.js$/.test(path),
+  );
+  if (unaddressed.length) {
+    throw new Error(
+      `Build output has files not named by their content: ${unaddressed.slice(0, 5).join(", ")}`,
+    );
   }
-  for (const document of referenceDocuments) {
-    for (const match of document.content.matchAll(
-      /(?:\.\.\/)*assets\/[^"'`()\s]+|(?:css\/)?fonts\/[^"'`()\s]+|favicon[^"'`()\s]+/g,
-    )) {
-      const reference = match[0];
-      if (!/\.[a-f0-9]{8}\.[^./]+$/.test(reference)) {
-        throw new Error(
-          `Build output has an unhashed static reference in ${relative(
-            outputDir,
-            document.path,
-          )}: ${reference}`,
-        );
-      }
-      const target =
-        reference.startsWith("../") || reference.startsWith("fonts/")
-          ? join(dirname(document.path), reference)
-          : join(outputDir, reference);
-      if (!(await isFile(target))) {
-        throw new Error(
-          `Build output references a missing static asset: ${reference}`,
-        );
-      }
-    }
-  }
-  const jsEntries = await readdir(paths.js);
+  const html = await readFile(paths.html, "utf8");
   for (const name of WORKER_SCRIPTS) {
     const pattern = new RegExp(`^${name}\\.[a-f0-9]{8}\\.js$`);
-    if (jsEntries.filter((entry) => pattern.test(entry)).length !== 1) {
+    if (
+      (await readdir(paths.js)).filter((entry) => pattern.test(entry))
+        .length !== 1
+    ) {
       throw new Error(
         `Build output has no uniquely hashed ${name.replace("-", " ")}`,
       );
     }
   }
+  for (const match of html.matchAll(
+    /\b(?:src|href)="(?![a-z][a-z\d+.-]*:|\/\/|#)([^"#?]+)/g,
+  )) {
+    if (!(await isFile(join(outputDir, match[1])))) {
+      throw new Error(
+        `Build output index.html references a missing file: ${match[1]}`,
+      );
+    }
+  }
+  const jsEntries = await readdir(paths.js);
   if (!jsEntries.some((name) => /^core\.ruffle\..*\.js$/.test(name))) {
     throw new Error("Build output has no Ruffle core JavaScript");
   }
   if (!jsEntries.some((name) => name.endsWith(".wasm"))) {
     throw new Error("Build output has no Ruffle WebAssembly");
   }
+  const offlineManifestReference = html.match(
+    /window\.ASTRO_OFFLINE_MANIFEST_URL="(offline-games\.[a-f0-9]{8}\.json)"/,
+  );
+  if (!offlineManifestReference) {
+    throw new Error("Build output has no versioned offline game manifest");
+  }
+  await validateVersionMetadata(
+    paths,
+    join(outputDir, offlineManifestReference[1]),
+    html,
+  );
+  console.log("Build output validated successfully");
+}
 
+export async function replaceOutput(
+  stagingDir: string,
+  outputDir: string,
+): Promise<void> {
+  await mkdir(dirname(outputDir), { recursive: true });
+  const backupDir = join(dirname(stagingDir), "previous-output");
+  if (await isDirectory(outputDir)) {
+    await rename(outputDir, backupDir);
+  }
+  try {
+    await rename(stagingDir, outputDir);
+  } catch (error) {
+    if (await isDirectory(backupDir)) {
+      await rename(backupDir, outputDir);
+    }
+    throw error;
+  }
+}
+
+async function validateVersionMetadata(
+  paths: BuildPaths,
+  offlineManifestPath: string,
+  html: string,
+): Promise<void> {
   let versionMetadata: Record<string, unknown>;
   try {
     versionMetadata = JSON.parse(await readFile(paths.versionJson, "utf8"));
@@ -1149,11 +928,18 @@ export async function validateOutput(outputDir: string): Promise<void> {
   ) {
     throw new Error("Build output has invalid offline download size");
   }
+  if (
+    !(versionMetadata.version as string).endsWith(
+      `-${versionMetadata.revision as string}`,
+    )
+  ) {
+    throw new Error("Build output has inconsistent version metadata");
+  }
 
   let offlineManifest: OfflineManifest;
   try {
     offlineManifest = JSON.parse(
-      await readFile(versionedOfflineManifest, "utf8"),
+      await readFile(offlineManifestPath, "utf8"),
     ) as OfflineManifest;
   } catch {
     throw new Error("Build output has invalid offline game manifest");
@@ -1165,24 +951,19 @@ export async function validateOutput(outputDir: string): Promise<void> {
   ) {
     throw new Error("Build output has invalid offline game manifest");
   }
-  const gameRoots = Object.fromEntries(
-    Object.entries(offlineManifest.games).map(([id, game]) => [id, game.root]),
-  );
   const rootsMatch = html.match(
     /window\.ASTRO_GAME_ROOTS=Object\.freeze\((\{[^<]+\})\)/,
   );
-  let configuredRoots: Record<string, string> = {};
+  let configuredRoots: Record<string, string>;
   try {
     configuredRoots = rootsMatch ? JSON.parse(rootsMatch[1]) : {};
   } catch {
     configuredRoots = {};
   }
-  if (
-    Object.entries(gameRoots).some(([id, root]) => configuredRoots[id] !== root)
-  ) {
-    throw new Error("Build output has no matching versioned game roots");
-  }
   for (const [id, game] of Object.entries(offlineManifest.games)) {
+    if (configuredRoots[id] !== game.root) {
+      throw new Error("Build output has no matching versioned game roots");
+    }
     if (
       game.root !== `${game.type}/${id}.${game.revision}/` ||
       !game.files.length ||
@@ -1190,11 +971,17 @@ export async function validateOutput(outputDir: string): Promise<void> {
     ) {
       throw new Error(`Build output has an invalid game package for ${id}`);
     }
-    for (const file of game.files) {
-      const path = join(outputDir, file.url);
+  }
+  for (const [label, entry] of [
+    ...Object.entries(offlineManifest.games),
+    ["runtime", offlineManifest.runtime],
+    ...Object.entries(offlineManifest.runtimes ?? {}),
+  ] as [string, OfflineRuntime][]) {
+    for (const file of entry.files) {
+      const path = join(paths.root, file.url);
       if (!(await isFile(path))) {
         throw new Error(
-          `Build output references a missing game file: ${file.url}`,
+          `Build output's offline manifest references a missing file for ${label}: ${file.url}`,
         );
       }
       const integrity = `sha384-${createHash("sha384")
@@ -1202,185 +989,9 @@ export async function validateOutput(outputDir: string): Promise<void> {
         .digest("base64")}`;
       if (file.integrity !== integrity) {
         throw new Error(
-          `Build output has invalid game file integrity: ${file.url}`,
+          `Build output has invalid offline file integrity for ${label}: ${file.url}`,
         );
       }
-    }
-  }
-  for (const runtime of [
-    offlineManifest.runtime,
-    ...Object.values(offlineManifest.runtimes ?? {}),
-  ]) {
-    for (const file of runtime.files) {
-      const path = join(outputDir, file.url.split("?")[0]);
-      if (
-        !file.url.endsWith(`?rev=${runtime.revision}`) ||
-        !(await isFile(path))
-      ) {
-        throw new Error(
-          `Build output has an invalid runtime file: ${file.url}`,
-        );
-      }
-      const integrity = `sha384-${createHash("sha384")
-        .update(await readFile(path))
-        .digest("base64")}`;
-      if (file.integrity !== integrity) {
-        throw new Error(
-          `Build output has invalid runtime file integrity: ${file.url}`,
-        );
-      }
-    }
-  }
-  if (
-    !(versionMetadata.version as string).endsWith(
-      `-${versionMetadata.revision as string}`,
-    )
-  ) {
-    throw new Error("Build output has inconsistent version metadata");
-  }
-  console.log("Build output validated successfully");
-}
-
-export async function replaceOutput(
-  stagingDir: string,
-  outputDir: string,
-): Promise<void> {
-  await mkdir(dirname(outputDir), { recursive: true });
-  const backupDir = join(dirname(stagingDir), "previous-output");
-  if (await isDirectory(outputDir)) {
-    await rename(outputDir, backupDir);
-  }
-  try {
-    await rename(stagingDir, outputDir);
-  } catch (error) {
-    if (await isDirectory(backupDir)) {
-      await rename(backupDir, outputDir);
-    }
-    throw error;
-  }
-}
-
-export async function assembleReleaseOutput(
-  stagingDir: string,
-  version: string,
-): Promise<void> {
-  const releasePath = releaseRelativePath(version);
-  const releaseDir = join(stagingDir, ...releasePath.split("/"));
-  const rootHtml = join(stagingDir, "index.html");
-  const html = await replaceExactlyOnce(
-    await readFile(rootHtml, "utf8"),
-    /<head>/g,
-    `<head>\n    <base href="/${releasePath}/" />`,
-    "Could not set the immutable release base URL",
-  ).then((content) =>
-    content.replaceAll(
-      "https://xp.4st.li/assets/",
-      `https://xp.4st.li/${releasePath}/assets/`,
-    ),
-  );
-
-  await mkdir(releaseDir, { recursive: true });
-  for (const entry of await readdir(stagingDir, { withFileTypes: true })) {
-    if (
-      entry.name === RELEASES_PATH ||
-      entry.name === "index.html" ||
-      entry.name === "sw.js" ||
-      entry.name === "version.json"
-    ) {
-      continue;
-    }
-    await rename(join(stagingDir, entry.name), join(releaseDir, entry.name));
-  }
-  await writeFile(rootHtml, html);
-  // Cloudflare reads _headers instead of serving it. A release path never
-  // changes content, so browsers can skip revalidating it.
-  await writeFile(
-    join(stagingDir, "_headers"),
-    `/${RELEASES_PATH}/*\n  Cache-Control: public, max-age=31536000, immutable\n`,
-  );
-}
-
-export async function validateReleaseOutput(
-  outputDir: string,
-  version: string,
-): Promise<void> {
-  const releasePath = releaseRelativePath(version);
-  const releaseDir = join(outputDir, ...releasePath.split("/"));
-  const allowedRootEntries = new Set([
-    "_headers",
-    "index.html",
-    "releases",
-    "sw.js",
-    versionedServiceWorkerName(version),
-    "version.json",
-  ]);
-  const unexpectedRootEntries = (await readdir(outputDir)).filter(
-    (name) => !allowedRootEntries.has(name),
-  );
-  if (unexpectedRootEntries.length > 0) {
-    throw new Error(
-      `Build output has files outside the release directory: ${unexpectedRootEntries.join(", ")}`,
-    );
-  }
-  const releases = await readdir(join(outputDir, RELEASES_PATH));
-  if (releases.length !== 1 || releases[0] !== version) {
-    throw new Error("Build output has an invalid release directory");
-  }
-  const html = await readFile(join(outputDir, "index.html"), "utf8");
-  if (!html.includes(`<base href="/${releasePath}/" />`)) {
-    throw new Error("Build output has no matching immutable release base URL");
-  }
-  await validatePrecacheIntegrity(outputDir);
-  const rootWorker = await readFile(join(outputDir, "sw.js"), "utf8");
-  const versionedWorker = await readFile(
-    join(outputDir, versionedServiceWorkerName(version)),
-    "utf8",
-  );
-  if (versionedWorker !== rootWorker + VERSIONED_SERVICE_WORKER_MARKER) {
-    throw new Error(
-      "Build output has an inconsistent versioned service worker",
-    );
-  }
-  if (await isFile(join(releaseDir, "offline-games.json"))) {
-    throw new Error("Build output contains an unversioned offline manifest");
-  }
-  const manifestReference = html.match(
-    /window\.ASTRO_OFFLINE_MANIFEST_URL="(offline-games\.[a-f0-9]{8}\.json)"/,
-  )?.[1];
-  if (
-    !manifestReference ||
-    !(await isFile(join(releaseDir, manifestReference)))
-  ) {
-    throw new Error("Build output has no release-scoped offline manifest");
-  }
-  for (const requiredPath of [
-    "apps",
-    "assets",
-    "capture.html",
-    "css",
-    "iframe",
-    "js",
-    "vendor",
-  ]) {
-    const path = join(releaseDir, requiredPath);
-    if (!(await isFile(path)) && !(await isDirectory(path))) {
-      throw new Error(`Build output is missing release path: ${requiredPath}`);
-    }
-  }
-  for (const path of await walkFiles(releaseDir)) {
-    if (
-      ![".css", ".html", ".js", ".json", ".mjs"].includes(extname(path)) ||
-      /offline-worker\.[a-f0-9]{8}\.js$/.test(path)
-    ) {
-      continue;
-    }
-    const reference = (await readFile(path, "utf8")).match(
-      /["'`(=]\s*\/(apps|assets|css|dos|iframe|js|swf|vendor)\//,
-    )?.[0];
-    if (reference) {
-      throw new Error(
-        `Build output has an unscoped release reference in ${relative(releaseDir, path)}: ${reference}`,
-      );
     }
   }
 }
@@ -1435,7 +1046,7 @@ export interface BuildOptions {
   stabilityDelayMs?: number;
   version?: string;
   installRuffle?: (jsDir: string) => Promise<void>;
-  generate?: (outputDir: string, version?: string) => Promise<void>;
+  generate?: (outputDir: string, version: string) => Promise<void>;
 }
 
 export async function build({
@@ -1472,24 +1083,25 @@ export async function build({
       recursive: true,
       preserveTimestamps: true,
     });
-    await scopeReleaseReferences(stagingDir, deploymentVersion);
     const paths = new BuildPaths(stagingDir);
     await installFflate(stagingDir);
     await installJsDos(stagingDir);
     await installWebtorrent(stagingDir);
     await installRuffleRuntime(paths.js);
     await compressFonts(paths);
-    await updateHtml(paths, deploymentVersion);
-    await writeOfflineGameManifest(paths, deploymentVersion);
+    await prepareEntryPoints(paths, deploymentVersion);
+    await prepareDoomPackage(paths);
+    const addressed = await addressContent(paths);
+    await writeOfflineGameManifest(paths, deploymentVersion, addressed);
     await writeVersionMetadata(paths, deploymentVersion, {
       releasedAt,
       stabilityDelayMs,
     });
     await versionOfflineGameManifest(paths);
-    await validateOutput(stagingDir);
-    await assembleReleaseOutput(stagingDir, deploymentVersion);
+    await writeHeaders(stagingDir);
     await generate(stagingDir, deploymentVersion);
-    await validateReleaseOutput(stagingDir, deploymentVersion);
+    await validateOutput(stagingDir);
+    await validatePrecacheIntegrity(stagingDir);
     await replaceOutput(stagingDir, resolvedOutput);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });

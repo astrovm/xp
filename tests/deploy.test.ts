@@ -17,26 +17,28 @@ import { tmpdir } from "node:os";
 import {
   BuildPaths,
   PRECACHE_FILE_SUFFIXES,
+  addressContent,
   build,
   compressFonts,
   createPrecacheManifest,
   generateServiceWorker,
   getDeploymentVersion,
+  isContentAddressed,
   parseBuildArguments,
+  prepareDoomPackage,
+  prepareEntryPoints,
   replaceOutput,
   runGit,
-  scopeReleaseReferences,
   DEFAULT_OUTPUT_DIR,
   DEFAULT_UPDATE_STABILITY_DELAY_MS,
   installFflate,
   installJsDos,
   installRuffle,
   installWebtorrent,
-  updateHtml,
   validatePrecacheIntegrity,
-  validateReleaseOutput,
   validateOutput,
   versionOfflineGameManifest,
+  writeHeaders,
   writeOfflineGameManifest,
   writeVersionMetadata,
 } from "../tools/deploy";
@@ -74,53 +76,48 @@ async function makeSource(root: string): Promise<void> {
     "index.html": [
       "<head>",
       '<meta name="astro-version" content="development" />',
+      '<meta property="og:image" content="https://xp.4st.li/assets/xp/bliss.jpg" />',
       '<script src="js/startup-recovery.js"></script>',
-      '<script src="js/ruffle.js?v=old"></script>',
-      '<script src="vendor/fflate/index.js?v=old"></script>',
-      '<script src="js/games.js?v=old"></script>',
-      '<script src="js/flash-url-router.js?v=old"></script>',
-      '<script src="js/storage-policy.js?v=old"></script>',
-      '<script src="js/game-installer.js?v=old"></script>',
-      '<script src="js/game-library.js?v=old"></script>',
-      '<script src="js/game-data.js?v=old"></script>',
-      '<script src="js/filesystem.js?v=old"></script>',
-      '<script src="js/file-operations.js?v=old"></script>',
-      '<script src="js/dialogs.js?v=old"></script>',
-      '<script src="js/offline.js?v=old"></script>',
+      '<script defer src="vendor/fflate/index.js"></script>',
+      '<script defer src="js/games.js"></script>',
+      '<script defer src="js/flash-url-router.js"></script>',
+      '<script defer src="js/storage-policy.js"></script>',
+      '<script defer src="js/dialogs.js"></script>',
+      '<script defer src="js/shell-cache.js"></script>',
+      '<script defer src="js/offline.js"></script>',
       '<script type="module" src="apps/index.js"></script>',
-      '<script src="js/shell/desktop.js"></script>',
-      '<script src="js/main.js?v=old"></script>',
+      '<script defer src="js/shell/desktop.js"></script>',
+      '<script defer src="js/main.js"></script>',
+      '<meta name="astro-ruffle-src" content="js/ruffle.js" />',
       '<link rel="preload" href="css/fonts/test.ttf" as="font" crossorigin>',
-      '<link rel="stylesheet" href="css/main.css?v=old">',
+      '<link rel="stylesheet" href="css/main.css">',
       '<link rel="stylesheet" href="css/shell/desktop.css">',
       '<link rel="icon" href="favicon.ico">',
       '<img src="assets/xp/bliss.jpg">',
       "</head>",
     ].join("\n"),
     "capture.html": [
-      '<script src="js/ruffle.js?v=old"></script>',
-      '<script src="js/games.js?v=old"></script>',
-      '<script src="js/flash-url-router.js?v=old"></script>',
+      '<script src="js/ruffle.js"></script>',
+      '<script src="js/games.js"></script>',
+      '<script src="js/flash-url-router.js"></script>',
     ].join("\n"),
-    "js/games.js": 'const icon = "assets/icons/game.png";',
+    "js/games.js":
+      'const icon = "assets/icons/game.png"; const swf = "swf/bike-mania/main.swf";',
     "js/flash-url-router.js": "flash url router",
     "js/storage-policy.js": "storage policy",
-    "js/game-installer.js": "game installer",
-    "js/game-library.js": "game library",
-    "js/game-data.js": "game data",
-    "js/filesystem.js": "filesystem",
-    "js/file-operations.js": "file operations",
     "js/dialogs.js": "dialogs",
+    "js/shell-cache.js": "shell cache",
     "js/offline.js": "offline",
     "js/offline-worker.js": "offline worker",
     "js/shell-worker.js": "shell worker",
     "js/startup-recovery.js": "startup recovery",
-    "apps/index.js": "application registry",
+    "apps/index.js": 'import "./catalog.js";',
     "apps/catalog.js": 'const icon = "assets/xp/icons/paint.png";',
     "js/shell/desktop.js": "desktop shell",
     "js/main.js": [
       'const APP_VERSION = "old";',
       'const sound = "assets/xp/sounds/startup.wav";',
+      'const pipes = "vendor/pipes/abc/index.html";',
     ].join("\n"),
     "css/main.css": [
       '@font-face { src: url("fonts/test.ttf"); }',
@@ -129,7 +126,7 @@ async function makeSource(root: string): Promise<void> {
     "css/shell/desktop.css": ".desktop { display: block; }",
     "css/fonts/test.ttf": "font",
     "assets/icons/game.png": "icon",
-    "assets/icons/SOURCES.json": "{}",
+    "assets/icons/SOURCES.json": '{"file":"assets/icons/game.png"}',
     "assets/xp/bliss.jpg": "wallpaper",
     "assets/xp/Chess.bmp": "bitmap",
     "assets/xp/about.png": "about",
@@ -139,35 +136,56 @@ async function makeSource(root: string): Promise<void> {
     "vendor/fflate/index.js": "fflate",
     "vendor/js-dos/js-dos.js": "js-dos",
     "vendor/js-dos/emulators/wdosbox.wasm": "wasm",
+    "vendor/pipes/abc/index.html": '<script src="pipes.js"></script>',
+    "vendor/pipes/abc/pipes.js": "pipes",
     "vendor/webtorrent/webtorrent.min.js": "webtorrent",
     "swf/bike-mania/main.swf": "swf",
-    "iframe/doom/index.html": "doom ../../dos/doom/doom.jsdos",
+    "iframe/doom/index.html":
+      'doom ../../dos/doom/doom.jsdos <script src="../../vendor/js-dos/js-dos.js"></script>',
     "iframe/inside-the-firewall/index.html": "firewall",
     "iframe/pink-panther-hokus-pokus/index.html":
-      '<script src="../../js/storage-policy.js?v=old"></script>',
+      '<script src="../../js/storage-policy.js"></script>',
     "iframe/pink-panther-passport-to-peril/index.html":
-      '<script src="../../js/storage-policy.js?v=old"></script>',
+      '<script src="../../js/storage-policy.js"></script>',
     "iframe/revcdos/index.html":
-      '<script src="../../js/storage-policy.js?v=old"></script>',
+      '<script src="../../js/storage-policy.js"></script>',
+    "iframe/scummvm/index.html": '<script src="launcher.js"></script>',
     "iframe/scummvm/launcher.js": [
       'const route = "/iframe/scummvm/local-games/peril";',
-      'const dataPath = ["", "vendor", "scummvm", "2026.3.0", "data"].join("/");',
+      'const root = "../../vendor/scummvm/2026.3.0/";',
     ].join("\n"),
     "vendor/scummvm/2026.3.0/data/index.json": JSON.stringify({
       peril: { baseUrl: "/iframe/scummvm/local-games/peril" },
-      pokus: { baseUrl: "/iframe/scummvm/local-games/pokus" },
     }),
     "vendor/scummvm/2026.3.0/scummvm.wasm": "scummvm",
     "dos/doom/doom.jsdos": "jsdos",
   });
 }
 
+const RUFFLE_CORE = "core.ruffle.0123456789abcdef0123.js";
+const RUFFLE_WASM = "0123456789abcdef0123.wasm";
+const ruffleRuntime = {
+  "ruffle.js": `load("${RUFFLE_CORE}")`,
+  [RUFFLE_CORE]: `load("${RUFFLE_WASM}")`,
+  [RUFFLE_WASM]: "wasm",
+};
+
 async function addGeneratedRuntime(root: string): Promise<void> {
-  await writeFiles(root, {
-    "js/ruffle.js": "ruffle",
-    "js/core.ruffle.abc123.js": "core",
-    "js/abc123.wasm": "wasm",
-  });
+  await writeFiles(join(root, "js"), ruffleRuntime);
+}
+
+const VERSION = "26.07.28-abcdef1";
+
+// The build steps between installing packages and writing the worker.
+async function prepareSite(root: string, version = VERSION) {
+  const paths = new BuildPaths(root);
+  await prepareEntryPoints(paths, version);
+  await prepareDoomPackage(paths);
+  const addressed = await addressContent(paths);
+  await writeOfflineGameManifest(paths, version, addressed);
+  await writeVersionMetadata(paths, version);
+  const manifestName = await versionOfflineGameManifest(paths);
+  return { addressed, manifestName, paths };
 }
 
 async function fileSnapshot(root: string): Promise<Map<string, Uint8Array>> {
@@ -304,49 +322,77 @@ describe("build metadata", () => {
     );
   });
 
-  test("versions main before hashing and writes matching manifests", async () => {
+  test("names files by content and writes matching manifests", async () => {
     const root = await makeTemporaryDirectory();
     await makeSource(root);
     await addGeneratedRuntime(root);
-    const paths = new BuildPaths(root);
+    const { addressed, manifestName, paths } = await prepareSite(root);
+    const final = (path: string) => addressed.files.get(path)!;
 
-    const hashedAssets = await updateHtml(paths, "26.07.28-abcdef1");
-    await writeOfflineGameManifest(paths, "26.07.28-abcdef1");
-    await writeVersionMetadata(paths, "26.07.28-abcdef1");
-    const offlineManifestName = await versionOfflineGameManifest(paths);
-
-    const main = await readFile(join(root, hashedAssets.mainJs), "utf8");
     const html = await readFile(paths.html, "utf8");
-    expect(main).toContain('const APP_VERSION = "26.07.28-abcdef1";');
+    const main = await readFile(join(root, final("js/main.js")), "utf8");
+    expect(main).toContain(`const APP_VERSION = "${VERSION}";`);
     expect(html).toContain(
-      '<meta name="astro-version" content="26.07.28-abcdef1" />',
+      `<meta name="astro-version" content="${VERSION}" />`,
     );
     expect(html).toContain("startup recovery");
-    expect(html).not.toContain('src="js/startup-recovery.js"');
-    expect(
-      await Bun.file(join(root, "js", "startup-recovery.js")).exists(),
-    ).toBeFalse();
-    expect(html).toContain(`${hashedAssets.mainJs}"`);
-    expect(html).toContain(`${hashedAssets.flashUrlRouterJs}"`);
-    expect(html).toContain(`${hashedAssets.storagePolicyJs}"`);
-    expect(html).toContain(`${hashedAssets.gameInstallerJs}"`);
-    expect(html).toContain(`${hashedAssets.gameLibraryJs}"`);
-    expect(html).toContain(`${hashedAssets.gameDataJs}"`);
-    expect(html).toContain(`${hashedAssets.fileOperationsJs}"`);
-    expect(html).toContain(`${hashedAssets.mainCss}"`);
-    expect(html).toContain(`${hashedAssets["entry:js/shell/desktop.js"]}"`);
-    expect(html).toContain(`${hashedAssets["entry:apps/index.js"]}"`);
-    expect(html).toContain(`${hashedAssets["entry:css/shell/desktop.css"]}"`);
+    expect(html).not.toContain("startup-recovery.js");
+    expect(addressed.files.has("js/startup-recovery.js")).toBeFalse();
+    for (const path of [
+      "js/main.js",
+      "js/games.js",
+      "js/dialogs.js",
+      "js/shell-cache.js",
+      "js/offline.js",
+      "js/shell/desktop.js",
+      "apps/index.js",
+      "css/main.css",
+      "css/shell/desktop.css",
+      "vendor/fflate/index.js",
+      "favicon.ico",
+      "assets/xp/bliss.jpg",
+    ]) {
+      expect(final(path)).toMatch(/\.[a-f0-9]{8}\.[a-z]+$/);
+      expect(html).toContain(`"${final(path)}"`);
+      expect(await Bun.file(join(root, path)).exists()).toBeFalse();
+    }
     expect(html).toContain(
-      `window.ASTRO_OFFLINE_MANIFEST_URL="${offlineManifestName}"`,
+      `content="https://xp.4st.li/${final("assets/xp/bliss.jpg")}"`,
     );
-    expect(offlineManifestName).toMatch(/^offline-games\.[a-f0-9]{8}\.json$/);
+    // Ruffle's chunks already carry a hash and keep their names.
+    expect(final(`js/${RUFFLE_CORE}`)).toBe(`js/${RUFFLE_CORE}`);
+    expect(html).toContain(`content="${final("js/ruffle.js")}"`);
+    expect(html).toContain(
+      `window.ASTRO_OFFLINE_MANIFEST_URL="${manifestName}"`,
+    );
+    expect(manifestName).toMatch(/^offline-games\.[a-f0-9]{8}\.json$/);
     const capture = await readFile(paths.captureHtml, "utf8");
-    expect(capture).toContain(`${hashedAssets.ruffle}"`);
-    expect(capture).toContain(`${hashedAssets.gamesJs}"`);
-    expect(capture).toContain(`${hashedAssets.flashUrlRouterJs}"`);
+    expect(capture).toContain(`"${final("js/ruffle.js")}"`);
+    expect(capture).toContain(`"${final("js/games.js")}"`);
+    expect(capture).toContain("window.ASTRO_GAME_ROOTS=");
+
+    expect(main).toContain(`"${final("assets/xp/sounds/startup.wav")}"`);
+    expect(main).toMatch(/"vendor\/pipes\/abc\.[a-f0-9]{16}\/index\.html"/);
+    expect(await readFile(join(root, final("css/main.css")), "utf8")).toBe(
+      [
+        `@font-face { src: url("${final("css/fonts/test.ttf").slice(4)}"); }`,
+        `body { background: url("../${final("assets/xp/bliss.jpg")}"); }`,
+      ].join("\n"),
+    );
+    expect(
+      await readFile(join(root, final("apps/catalog.js")), "utf8"),
+    ).toContain(`"${final("assets/xp/icons/paint.png")}"`);
+    // Provenance files are shipped as they are.
+    expect(
+      await readFile(join(root, final("assets/icons/SOURCES.json")), "utf8"),
+    ).toBe('{"file":"assets/icons/game.png"}');
+    const games = await readFile(join(root, final("js/games.js")), "utf8");
+    expect(games).toContain(`"${final("assets/icons/game.png")}"`);
+    // Games are found through ASTRO_GAME_ROOTS, not literal paths.
+    expect(games).toContain('"swf/bike-mania/main.swf"');
+
     const manifest = JSON.parse(
-      await readFile(join(root, offlineManifestName), "utf8"),
+      await readFile(join(root, manifestName), "utf8"),
     );
     expect(manifest.games["bike-mania"].files[0].integrity).toMatch(
       /^sha384-[A-Za-z0-9+/]+={0,2}$/,
@@ -361,27 +407,29 @@ describe("build metadata", () => {
           join(root, manifest.games[gameId].root, "index.html"),
           "utf8",
         ),
-      ).toContain(`../../${hashedAssets.storagePolicyJs}"`);
+      ).toContain(`"../../${final("js/storage-policy.js")}"`);
     }
-    expect(html).toMatch(/favicon\.[a-f0-9]{8}\.ico"/);
-    expect(html).toMatch(/assets\/xp\/bliss\.[a-f0-9]{8}\.jpg"/);
-    expect(await readFile(join(root, hashedAssets.gamesJs), "utf8")).toMatch(
-      /assets\/icons\/game\.[a-f0-9]{8}\.png/,
+    expect(manifest.games["pink-panther-hokus-pokus"].runtime).toBe("scummvm");
+    expect(
+      manifest.runtimes.scummvm.files.map(({ url }: { url: string }) => url),
+    ).toEqual(
+      [
+        "iframe/scummvm/index.html",
+        "iframe/scummvm/launcher.js",
+        "vendor/scummvm/2026.3.0/data/index.json",
+        "vendor/scummvm/2026.3.0/scummvm.wasm",
+      ]
+        .map(final)
+        .sort(),
     );
-    expect(await readFile(join(root, hashedAssets.mainJs), "utf8")).toMatch(
-      /assets\/xp\/sounds\/startup\.[a-f0-9]{8}\.wav/,
+    expect(
+      await readFile(join(root, final("iframe/scummvm/launcher.js")), "utf8"),
+    ).toContain(
+      `"../../${addressed.packages.get("vendor/scummvm/2026.3.0")}/"`,
     );
-    expect(await readFile(join(root, hashedAssets.mainCss), "utf8")).toMatch(
-      /fonts\/test\.[a-f0-9]{8}\.ttf/,
-    );
-    expect(await readFile(join(root, "apps/catalog.js"), "utf8")).toMatch(
-      /assets\/xp\/icons\/paint\.[a-f0-9]{8}\.png/,
-    );
-    expect(await readFile(join(root, hashedAssets.mainCss), "utf8")).toMatch(
-      /\.\.\/assets\/xp\/bliss\.[a-f0-9]{8}\.jpg/,
-    );
-    expect(await Bun.file(join(root, "js", "main.js")).exists()).toBeFalse();
-    expect(await Bun.file(join(root, "css", "main.css")).exists()).toBeFalse();
+    expect(
+      manifest.runtime.files.map(({ url }: { url: string }) => url),
+    ).toEqual([`js/${RUFFLE_WASM}`, `js/${RUFFLE_CORE}`]);
     expect(PRECACHE_FILE_SUFFIXES.has(".ttf")).toBeTrue();
     expect(PRECACHE_FILE_SUFFIXES.has(".bmp")).toBeTrue();
     expect(PRECACHE_FILE_SUFFIXES.has(".data")).toBeTrue();
@@ -391,8 +439,11 @@ describe("build metadata", () => {
     expect(metadata.bundledGameBytes).toBeGreaterThan(0);
     expect(Number.isFinite(Date.parse(metadata.releasedAt))).toBeTrue();
     expect(metadata.stabilityDelayMs).toBe(6 * 60 * 60 * 1000);
-    expect(manifest.version).toBe("26.07.28-abcdef1");
+    expect(manifest.version).toBe(VERSION);
     expect(manifest.games["bike-mania"].type).toBe("swf");
+    expect(manifest.games["bike-mania"].root).toBe(
+      `${addressed.packages.get("swf/bike-mania")}/`,
+    );
     expect(manifest.games.doom.type).toBe("iframe");
     expect(
       manifest.games.doom.files.map(({ url }: { url: string }) => url),
@@ -400,10 +451,19 @@ describe("build metadata", () => {
       `${manifest.games.doom.root}dos/doom/doom.jsdos`,
       `${manifest.games.doom.root}index.html`,
     ]);
+    expect(
+      await readFile(
+        join(root, manifest.games.doom.root, "index.html"),
+        "utf8",
+      ),
+    ).toBe(
+      `doom dos/doom/doom.jsdos <script src="../../${addressed.packages.get("vendor/js-dos")}/js-dos.js"></script>`,
+    );
+    expect(await Bun.file(join(root, "dos")).exists()).toBeFalse();
     const configuredRoots = JSON.parse(
       html.match(/window\.ASTRO_GAME_ROOTS=Object\.freeze\((\{[^<]+\})\)/)![1],
     );
-    expect(configuredRoots).toMatchObject(
+    expect(configuredRoots).toEqual(
       Object.fromEntries(
         Object.entries(manifest.games).map(([id, game]: [string, any]) => [
           id,
@@ -411,7 +471,6 @@ describe("build metadata", () => {
         ]),
       ),
     );
-    expect(manifest.runtime.files.length).toBeGreaterThan(0);
     expect(metadata.bundledGameBytes).toBe(
       manifest.runtime.bytes +
         Object.values(manifest.runtimes).reduce(
@@ -426,63 +485,61 @@ describe("build metadata", () => {
     expect({
       revision: metadata.revision,
       version: metadata.version,
-    }).toEqual({
-      revision: "abcdef1",
-      version: "26.07.28-abcdef1",
-    });
+    }).toEqual({ revision: "abcdef1", version: VERSION });
   });
 
-  test("fails when an asset reference is missing", async () => {
-    const root = await makeTemporaryDirectory();
-    await makeSource(root);
-    await addGeneratedRuntime(root);
-    const html = join(root, "index.html");
-    await writeFile(
-      html,
-      (await readFile(html, "utf8")).replace(
-        '<script src="js/dialogs.js?v=old"></script>',
-        "",
-      ),
+  test("keeps game revisions when only the release changes", async () => {
+    const first = await makeTemporaryDirectory();
+    const second = await makeTemporaryDirectory();
+    for (const root of [first, second]) {
+      await makeSource(root);
+      await addGeneratedRuntime(root);
+    }
+    await writeFile(join(second, "js", "dialogs.js"), "dialogs v2");
+    const one = await prepareSite(first);
+    const two = await prepareSite(second, "26.07.29-1234567");
+    expect(two.addressed.packages.get("swf/bike-mania")).toBe(
+      one.addressed.packages.get("swf/bike-mania"),
     );
-    expect(
-      updateHtml(new BuildPaths(root), "26.07.28-abcdef1"),
-    ).rejects.toThrow("Could not update asset reference");
+    expect(two.addressed.files.get("assets/xp/bliss.jpg")).toBe(
+      one.addressed.files.get("assets/xp/bliss.jpg"),
+    );
+    expect(two.addressed.files.get("js/dialogs.js")).not.toBe(
+      one.addressed.files.get("js/dialogs.js"),
+    );
   });
 
-  test("rejects a hashed filename that does not match its content", async () => {
+  test("fails when the entry points can't be prepared", async () => {
     const root = await makeTemporaryDirectory();
     await makeSource(root);
-    await addGeneratedRuntime(root);
-    const paths = new BuildPaths(root);
-    const hashedAssets = await updateHtml(paths, "26.07.28-abcdef1");
-    await writeFile(join(root, hashedAssets.mainJs), "tampered");
-    await writeOfflineGameManifest(paths, "26.07.28-abcdef1");
-    await writeVersionMetadata(paths, "26.07.28-abcdef1");
-    await versionOfflineGameManifest(paths);
-    await expect(validateOutput(root)).rejects.toThrow(
-      "invalid content hash for js/main.js",
+    await editFile(join(root, "index.html"), (html) =>
+      html.replace('<meta name="astro-version" content="development" />', ""),
     );
+    await expect(
+      prepareEntryPoints(new BuildPaths(root), VERSION),
+    ).rejects.toThrow("Could not update the deployment version");
   });
 });
 
 describe("service worker and artifact validation", () => {
-  const release = "releases/26.07.28-abcdef1";
   const workerScripts = {
-    [`${release}/js/offline-worker.12345678.js`]: "offline worker",
-    [`${release}/js/shell-worker.87654321.js`]: "shell worker",
+    "js/shell-cache.11111111.js": "shell cache",
+    "js/offline-worker.12345678.js": "offline worker",
+    "js/shell-worker.87654321.js": "shell worker",
   };
 
   test("precaches bitmap artwork and Pinball data with revisions", async () => {
     const root = await makeTemporaryDirectory();
     await writeFiles(root, {
       "index.html": "final index",
+      "capture.html": "capture",
       ...workerScripts,
-      [`${release}/assets/xp/Chess.12345678.bmp`]: "bitmap",
-      [`${release}/apps/pinball/runtime/SpaceCadetPinball.data`]:
+      "assets/xp/Chess.12345678.bmp": "bitmap",
+      "apps/pinball/runtime.0123456789abcdef/SpaceCadetPinball.data":
         "pinball data",
     });
 
-    await generateServiceWorker(root, "26.07.28-abcdef1");
+    await generateServiceWorker(root, VERSION);
 
     const worker = await readFile(join(root, "sw.js"), "utf8");
     const manifest = JSON.parse(
@@ -491,16 +548,18 @@ describe("service worker and artifact validation", () => {
     expect(manifest).toEqual([
       precached(
         "pinball data",
-        `${release}/apps/pinball/runtime/SpaceCadetPinball.data`,
+        "apps/pinball/runtime.0123456789abcdef/SpaceCadetPinball.data",
       ),
-      precached("bitmap", `${release}/assets/xp/Chess.12345678.bmp`),
-      precached("final index", "index.html"),
+      precached("bitmap", "assets/xp/Chess.12345678.bmp"),
+      { fixed: true, ...precached("capture", "capture.html") },
+      { fixed: true, ...precached("final index", "index.html") },
+      precached("shell cache", "js/shell-cache.11111111.js"),
     ]);
     expect(worker).toContain(
-      `importScripts("${release}/js/offline-worker.12345678.js","${release}/js/shell-worker.87654321.js");`,
+      'importScripts("js/shell-cache.11111111.js","js/offline-worker.12345678.js","js/shell-worker.87654321.js");',
     );
-    expect(worker).toContain('self.__ASTRO_XP_VERSION__="26.07.28-abcdef1";');
-    expect(await readFile(join(root, "sw.26.07.28-abcdef1.js"), "utf8")).toBe(
+    expect(worker).toContain(`self.__ASTRO_XP_VERSION__="${VERSION}";`);
+    expect(await readFile(join(root, `sw.${VERSION}.js`), "utf8")).toBe(
       `${worker}\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n`,
     );
     await validatePrecacheIntegrity(root);
@@ -515,6 +574,8 @@ describe("service worker and artifact validation", () => {
     await writeFiles(root, {
       "index.html": "index",
       "version.json": "{}",
+      "sw.js": "worker",
+      [`sw.${VERSION}.js`]: "worker",
       "assets/xp/SOURCES.json": "{}",
       "swf/game/main.swf": "swf",
       "iframe/game/index.html": "iframe",
@@ -539,38 +600,95 @@ describe("service worker and artifact validation", () => {
     ).toEqual(["prefix/index.html", "prefix/js/main.js"]);
   });
 
-  test("builds an unversioned worker from the output root", async () => {
-    const root = await makeTemporaryDirectory();
-    await writeFiles(root, {
-      "index.html": "index",
-      "js/offline-worker.12345678.js": "offline worker",
-      "js/shell-worker.87654321.js": "shell worker",
-    });
-    await generateServiceWorker(root);
-    const worker = await readFile(join(root, "sw.js"), "utf8");
-    expect(worker).not.toContain("__ASTRO_XP_VERSION__");
-    expect(worker).toContain(
-      JSON.stringify([precached("index", "index.html")]),
-    );
-    expect(await Bun.file(join(root, "sw.undefined.js")).exists()).toBeFalse();
-  });
-
-  test("accepts a complete artifact and rejects a missing representative game", async () => {
-    const root = await makeTemporaryDirectory();
-    await makeSource(root);
-    await addGeneratedRuntime(root);
-    const paths = new BuildPaths(root);
-    await updateHtml(paths, "26.07.28-abcdef1");
-    await writeOfflineGameManifest(paths, "26.07.28-abcdef1");
-    await writeVersionMetadata(paths, "26.07.28-abcdef1");
-    const offlineManifestName = await versionOfflineGameManifest(paths);
-    await validateOutput(root);
-
+  test("accepts a complete artifact and rejects a missing game file", async () => {
+    const { root, manifestName } = await makeValidArtifact();
     const manifest = JSON.parse(
-      await readFile(join(root, offlineManifestName), "utf8"),
+      await readFile(join(root, manifestName), "utf8"),
     );
     await unlink(join(root, manifest.games["bike-mania"].root, "main.swf"));
-    await expect(validateOutput(root)).rejects.toThrow("missing game file");
+    await expect(validateOutput(root)).rejects.toThrow(
+      `references a missing file for bike-mania: ${manifest.games["bike-mania"].root}main.swf`,
+    );
+  });
+});
+
+describe("cache rules", () => {
+  test("keeps everything but the entry points forever", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeFiles(root, {
+      "index.html": "",
+      "capture.html": "",
+      "version.json": "",
+      "sw.js": "",
+      [`sw.${VERSION}.js`]: "",
+      "favicon.12345678.ico": "",
+      "js/main.12345678.js": "",
+      "swf/game.0123456789abcdef/main.swf": "",
+    });
+    await writeHeaders(root);
+    expect(await readFile(join(root, "_headers"), "utf8")).toBe(
+      ["/favicon.12345678.ico", "/js/*", "/swf/*"]
+        .map(
+          (path) =>
+            `${path}\n  Cache-Control: public, max-age=31536000, immutable\n`,
+        )
+        .join(""),
+    );
+  });
+
+  test("knows which names carry their content hash", () => {
+    for (const path of [
+      "index.html",
+      "capture.html",
+      "js/main.12345678.js",
+      "LICENSE.12345678",
+      `js/${RUFFLE_CORE}`,
+      `js/${RUFFLE_WASM}.map`,
+      "swf/game.0123456789abcdef/main.swf",
+      "vendor/pipes/abc.0123456789abcdef/sub/index.html",
+    ]) {
+      expect(isContentAddressed(path)).toBeTrue();
+    }
+    for (const path of [
+      "js/main.js",
+      "js/main.1234567.js",
+      "swf/game/main.swf",
+      "game.0123456789abcdef",
+      "js/core.ruffle.abc.js",
+    ]) {
+      expect(isContentAddressed(path)).toBeFalse();
+    }
+  });
+});
+
+describe("Doom package", () => {
+  test("moves the game data into the game and keeps other DOS data", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeFiles(root, {
+      "iframe/doom/index.html": "../../dos/doom/doom.jsdos",
+      "dos/doom/doom.jsdos": "doom",
+      "dos/other/other.jsdos": "other",
+    });
+    await prepareDoomPackage(new BuildPaths(root));
+    expect(await readFile(join(root, "iframe/doom/index.html"), "utf8")).toBe(
+      "dos/doom/doom.jsdos",
+    );
+    expect(
+      await readFile(join(root, "iframe/doom/dos/doom/doom.jsdos"), "utf8"),
+    ).toBe("doom");
+    expect(await readdir(join(root, "dos"))).toEqual(["other"]);
+  });
+
+  test("needs exactly one data reference and skips missing games", async () => {
+    const root = await makeTemporaryDirectory();
+    await prepareDoomPackage(new BuildPaths(root));
+    await writeFiles(root, {
+      "iframe/doom/index.html": "no data",
+      "dos/doom/doom.jsdos": "doom",
+    });
+    await expect(prepareDoomPackage(new BuildPaths(root))).rejects.toThrow(
+      "Could not package the Doom game data",
+    );
   });
 });
 
@@ -604,12 +722,7 @@ describe("atomic build", () => {
       version: "26.07.28-abcdef1",
       releasedAt: "2026-07-28T12:00:00.000Z",
       stabilityDelayMs: 2 * 60 * 60 * 1000,
-      installRuffle: async (jsDir) =>
-        writeFiles(jsDir, {
-          "ruffle.js": "ruffle",
-          "core.ruffle.abc123.js": "core",
-          "abc123.wasm": "wasm",
-        }),
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
     });
 
     const currentFiles = await fileSnapshot(source);
@@ -622,24 +735,12 @@ describe("atomic build", () => {
     expect(
       await Bun.file(join(output, "sw.26.07.28-abcdef1.js")).exists(),
     ).toBeTrue();
-    const release = join(output, "releases", "26.07.28-abcdef1");
+    expect(await Bun.file(join(output, "releases")).exists()).toBeFalse();
     expect(
-      await Bun.file(join(release, "offline-games.json")).exists(),
+      await Bun.file(join(output, "offline-games.json")).exists(),
     ).toBeFalse();
     const rootHtml = await readFile(join(output, "index.html"), "utf8");
-    expect(rootHtml).toContain('<base href="/releases/26.07.28-abcdef1/" />');
-    const scummvmIndexPath = join(
-      release,
-      "vendor",
-      "scummvm",
-      "2026.3.0",
-      "data",
-      "index.json",
-    );
-    const scummvmIndex = JSON.parse(await readFile(scummvmIndexPath, "utf8"));
-    expect(scummvmIndex.peril.baseUrl).toBe(
-      "/releases/26.07.28-abcdef1/iframe/scummvm/local-games/peril",
-    );
+    expect(rootHtml).not.toContain("<base");
     const metadata = JSON.parse(
       await readFile(join(output, "version.json"), "utf8"),
     );
@@ -649,17 +750,18 @@ describe("atomic build", () => {
     expect(metadata.version).toBe("26.07.28-abcdef1");
     expect(metadata.releasedAt).toBe("2026-07-28T12:00:00.000Z");
     expect(metadata.stabilityDelayMs).toBe(2 * 60 * 60 * 1000);
-    expect(await readFile(join(output, "_headers"), "utf8")).toBe(
-      "/releases/*\n  Cache-Control: public, max-age=31536000, immutable\n",
-    );
+    const headers = await readFile(join(output, "_headers"), "utf8");
+    for (const path of ["/js/*", "/swf/*", "/vendor/*"]) {
+      expect(headers).toContain(
+        `${path}\n  Cache-Control: public, max-age=31536000, immutable\n`,
+      );
+    }
+    expect(headers).not.toMatch(/^\/(index\.html|sw\.|version\.json)/m);
 
-    await writeFile(
-      scummvmIndexPath,
-      '{"peril":{"baseUrl":"/iframe/scummvm/local-games/peril"}}',
+    await writeFiles(output, { "assets/xp/extra.png": "extra" });
+    await expect(validateOutput(output)).rejects.toThrow(
+      "files not named by their content: assets/xp/extra.png",
     );
-    await expect(
-      validateReleaseOutput(output, "26.07.28-abcdef1"),
-    ).rejects.toThrow("unscoped release reference");
   });
 
   test("preserves previous output after a failed build", async () => {
@@ -780,11 +882,9 @@ async function makeValidArtifact() {
   const root = await makeTemporaryDirectory();
   await makeSource(root);
   await addGeneratedRuntime(root);
-  const paths = new BuildPaths(root);
-  await updateHtml(paths, "26.07.28-abcdef1");
-  await writeOfflineGameManifest(paths, "26.07.28-abcdef1");
-  await writeVersionMetadata(paths, "26.07.28-abcdef1");
-  const manifestName = await versionOfflineGameManifest(paths);
+  const { manifestName, paths } = await prepareSite(root);
+  await writeHeaders(root);
+  await generateServiceWorker(root, VERSION);
   await validateOutput(root);
   return { root, manifestName, paths };
 }
@@ -794,8 +894,7 @@ type Artifact = Awaited<ReturnType<typeof makeValidArtifact>>;
 const editFile = async (path: string, change: (content: string) => string) =>
   writeFile(path, change(await readFile(path, "utf8")));
 
-// Rewrites the offline manifest under its new content hash so validation
-// reaches the checks after the hash comparison.
+// Rewrites the offline manifest under its new content hash.
 async function rewriteManifest(
   { root, manifestName, paths }: Artifact,
   change: (manifest: any) => void,
@@ -821,7 +920,29 @@ describe("build output validation failures", () => {
     [
       "a missing version file",
       ({ paths }) => unlink(paths.versionJson),
-      "missing required files: version.json",
+      "missing required file: version.json",
+    ],
+    [
+      "a file not named by its content",
+      ({ root }) => writeFiles(root, { "assets/xp/extra.png": "extra" }),
+      "files not named by their content: assets/xp/extra.png",
+    ],
+    [
+      "a reference to a missing file",
+      ({ paths }) =>
+        editFile(
+          paths.html,
+          (html) => `${html}\n<img src="assets/xp/missing.12345678.png?x=1">`,
+        ),
+      "references a missing file: assets/xp/missing.12345678.png",
+    ],
+    [
+      "a reference to an unrenamed script",
+      ({ paths }) =>
+        editFile(paths.html, (html) =>
+          html.replace(/js\/dialogs\.[a-f0-9]{8}\.js/, "js/dialogs.js"),
+        ),
+      "references a missing file: js/dialogs.js",
     ],
     [
       "an unversioned offline manifest reference",
@@ -832,69 +953,9 @@ describe("build output validation failures", () => {
       "no versioned offline game manifest",
     ],
     [
-      "a tampered offline manifest",
-      ({ root, manifestName }) => writeFile(join(root, manifestName), "{}"),
-      "invalid offline manifest hash",
-    ],
-    [
-      "an unhashed script reference",
-      ({ paths }) =>
-        editFile(paths.html, (html) =>
-          html.replace(/js\/dialogs\.[a-f0-9]{8}\.js/, "js/dialogs.js"),
-        ),
-      "no hashed reference for js/dialogs.js",
-    ],
-    [
-      "a missing hashed script",
-      async ({ paths, root }) =>
-        unlink(
-          join(
-            root,
-            (await readFile(paths.html, "utf8")).match(
-              /js\/dialogs\.[a-f0-9]{8}\.js/,
-            )![0],
-          ),
-        ),
-      "invalid content hash for js/dialogs.js",
-    ],
-    [
-      "an unversioned fflate reference",
-      ({ paths }) =>
-        editFile(paths.html, (html) =>
-          html.replace(/index\.js\?v=[a-f0-9]{8}/, "index.js"),
-        ),
-      "no versioned fflate reference",
-    ],
-    [
-      "a missing favicon",
-      async ({ root }) =>
-        unlink(
-          join(
-            root,
-            (await readdir(root)).find((name) => name.startsWith("favicon."))!,
-          ),
-        ),
-      "no uniquely hashed favicon",
-    ],
-    [
-      "an unhashed static asset",
-      ({ root }) => writeFiles(root, { "assets/xp/extra.png": "extra" }),
-      "invalid static asset hash for assets/xp/extra.png",
-    ],
-    [
-      "an unhashed static reference",
-      ({ paths }) =>
-        editFile(paths.html, (html) => `${html}\n"assets/xp/raw.png"`),
-      "unhashed static reference in index.html: assets/xp/raw.png",
-    ],
-    [
-      "a missing hashed static asset",
-      ({ paths }) =>
-        editFile(
-          paths.html,
-          (html) => `${html}\n"assets/xp/missing.12345678.png"`,
-        ),
-      "references a missing static asset: assets/xp/missing.12345678.png",
+      "a missing shell cache",
+      async ({ root }) => unlink(await jsFile(root, /^shell-cache\./)),
+      "no uniquely hashed shell cache",
     ],
     [
       "a missing offline worker",
@@ -1001,20 +1062,28 @@ describe("build output validation failures", () => {
       "invalid game package for doom",
     ],
     [
+      "a game root that doesn't match its revision",
+      (artifact) =>
+        rewriteManifest(artifact, (manifest) => {
+          manifest.games.doom.revision = "0000000000000000";
+        }),
+      "invalid game package for doom",
+    ],
+    [
+      "a game file outside its root",
+      (artifact) =>
+        rewriteManifest(artifact, (manifest) => {
+          manifest.games.doom.files[0].url = "js/other.js";
+        }),
+      "invalid game package for doom",
+    ],
+    [
       "a game file with the wrong integrity",
       (artifact) =>
         rewriteManifest(artifact, (manifest) => {
           manifest.games.doom.files[0].integrity = sri("other");
         }),
-      "invalid game file integrity",
-    ],
-    [
-      "an unrevisioned runtime file",
-      (artifact) =>
-        rewriteManifest(artifact, (manifest) => {
-          manifest.runtime.files[0].url = "js/ruffle.js";
-        }),
-      "invalid runtime file: js/ruffle.js",
+      "invalid offline file integrity for doom",
     ],
     [
       "a runtime file with the wrong integrity",
@@ -1022,10 +1091,18 @@ describe("build output validation failures", () => {
         rewriteManifest(artifact, (manifest) => {
           manifest.runtime.files[0].integrity = sri("other");
         }),
-      "invalid runtime file integrity",
+      "invalid offline file integrity for runtime",
     ],
     [
-      "a shared runtime without files",
+      "a missing shared runtime file",
+      (artifact) =>
+        rewriteManifest(artifact, (manifest) => {
+          manifest.runtimes.scummvm.files[0].url = "vendor/missing.wasm";
+        }),
+      "references a missing file for scummvm: vendor/missing.wasm",
+    ],
+    [
+      "a runtime without files",
       (artifact) =>
         rewriteManifest(artifact, (manifest) => {
           delete manifest.runtimes;
@@ -1050,156 +1127,60 @@ describe("build output validation failures", () => {
     });
 });
 
-const releaseVersion = "26.07.28-abcdef1";
-
-// A minimal immutable release that passes validateReleaseOutput; options
-// replace one part at a time.
-async function makeRelease({
-  html = [
-    "<head>",
-    `<base href="/releases/${releaseVersion}/" />`,
-    '<script>window.ASTRO_OFFLINE_MANIFEST_URL="offline-games.12345678.json";</script>',
-  ].join("\n"),
-  worker,
-  versionedWorker,
-  files = {},
-}: {
-  html?: string;
-  worker?: string;
-  versionedWorker?: string;
-  files?: Record<string, string>;
-} = {}) {
+// A minimal output whose worker lists the given entries.
+async function makeWorkerOutput(worker?: string) {
   const root = await makeTemporaryDirectory();
-  const release = `releases/${releaseVersion}`;
-  const rootWorker = worker ?? precacheWorker([precached(html, "index.html")]);
   await writeFiles(root, {
-    "index.html": html,
+    "index.html": "index",
     "version.json": "{}",
-    "sw.js": rootWorker,
-    [`sw.${releaseVersion}.js`]:
-      versionedWorker ??
-      `${rootWorker}\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n`,
-    [`${release}/offline-games.12345678.json`]: "{}",
-    [`${release}/apps/index.js`]: "apps",
-    [`${release}/assets/xp/bliss.jpg`]: "wallpaper",
-    [`${release}/capture.html`]: "capture",
-    [`${release}/css/main.css`]: "body {}",
-    [`${release}/iframe/doom/index.html`]: "doom",
-    [`${release}/js/main.js`]: "main",
-    [`${release}/js/offline-worker.12345678.js`]: 'fetch("/assets/x")',
-    [`${release}/js/shell-worker.12345678.js`]: "shell worker",
-    [`${release}/vendor/v.js`]: "vendor",
-    ...files,
+    ...(worker === undefined ? {} : { "sw.js": worker }),
   });
   return root;
 }
 
-describe("release output validation failures", () => {
-  test("accepts a minimal scoped release", async () => {
-    await validateReleaseOutput(await makeRelease(), releaseVersion);
+describe("precache validation failures", () => {
+  test("accepts a worker that lists the index", async () => {
+    await validatePrecacheIntegrity(
+      await makeWorkerOutput(
+        precacheWorker([precached("index", "index.html")]),
+      ),
+    );
   });
 
-  const cases: [string, () => Promise<string>, string][] = [
-    [
-      "files outside the release directory",
-      () => makeRelease({ files: { "stray.txt": "stray" } }),
-      "files outside the release directory: stray.txt",
-    ],
-    [
-      "more than one release directory",
-      () => makeRelease({ files: { "releases/other/index.html": "other" } }),
-      "invalid release directory",
-    ],
-    [
-      "an HTML document without the release base URL",
-      () => makeRelease({ html: "<head></head>" }),
-      "no matching immutable release base URL",
-    ],
-    [
-      "a versioned worker that differs from the root worker",
-      () => makeRelease({ versionedWorker: "changed" }),
-      "inconsistent versioned service worker",
-    ],
-    [
-      "an unversioned offline manifest",
-      () =>
-        makeRelease({
-          files: { [`releases/${releaseVersion}/offline-games.json`]: "{}" },
-        }),
-      "contains an unversioned offline manifest",
-    ],
-    [
-      "a missing release-scoped offline manifest",
-      () =>
-        makeRelease({
-          html: `<head>\n<base href="/releases/${releaseVersion}/" />`,
-        }),
-      "no release-scoped offline manifest",
-    ],
-    [
-      "a missing release path",
-      async () => {
-        const root = await makeRelease();
-        await rm(join(root, "releases", releaseVersion, "vendor"), {
-          recursive: true,
-        });
-        return root;
-      },
-      "missing release path: vendor",
-    ],
-    [
-      "a missing root worker",
-      async () => {
-        const root = await makeRelease();
-        await unlink(join(root, "sw.js"));
-        return root;
-      },
-      "missing required file: sw.js",
-    ],
+  const cases: [string, string | undefined, string][] = [
+    ["a missing worker", undefined, "missing required file: sw.js"],
     [
       "a worker without integrity-protected entries",
-      () => makeRelease({ worker: "self.skipWaiting();" }),
+      "self.skipWaiting();",
       "no integrity-protected precache entries",
     ],
     [
-      "a precache entry outside the output",
-      () =>
-        makeRelease({
-          worker: precacheWorker([precached("x", "../outside.js")]),
-        }),
+      "an entry outside the output",
+      precacheWorker([precached("x", "../outside.js")]),
       "escapes the build output: ../outside.js",
     ],
     [
-      "a precache entry for a missing file",
-      () =>
-        makeRelease({
-          worker: precacheWorker([precached("x", "missing.js")]),
-        }),
+      "an entry for a missing file",
+      precacheWorker([precached("x", "missing.js")]),
       "references a missing file: missing.js",
     ],
     [
-      "a precache entry with a stale revision",
-      () =>
-        makeRelease({
-          worker: precacheWorker([
-            { ...precached("{}", "version.json"), revision: "00000000" },
-          ]),
-        }),
+      "an entry with a stale revision",
+      precacheWorker([
+        { ...precached("{}", "version.json"), revision: "00000000" },
+      ]),
       "invalid revision: version.json",
     ],
     [
       "a worker that does not precache the index",
-      () =>
-        makeRelease({
-          worker: precacheWorker([precached("{}", "version.json")]),
-        }),
+      precacheWorker([precached("{}", "version.json")]),
       "must precache index.html exactly once",
     ],
   ];
-  for (const [label, create, message] of cases)
+  for (const [label, worker, message] of cases)
     test(`rejects ${label}`, async () => {
       await expect(
-        validateReleaseOutput(await create(), releaseVersion),
+        validatePrecacheIntegrity(await makeWorkerOutput(worker)),
       ).rejects.toThrow(message);
     });
 });
@@ -1207,7 +1188,13 @@ describe("release output validation failures", () => {
 describe("build helpers", () => {
   test("rejects unsafe release versions", async () => {
     const root = await makeTemporaryDirectory();
-    await expect(scopeReleaseReferences(root, "../escape")).rejects.toThrow(
+    await writeFiles(root, {
+      "index.html": "index",
+      "js/shell-cache.11111111.js": "shell cache",
+      "js/offline-worker.12345678.js": "offline worker",
+      "js/shell-worker.87654321.js": "shell worker",
+    });
+    await expect(generateServiceWorker(root, "../escape")).rejects.toThrow(
       "Invalid release version: ../escape",
     );
   });
@@ -1258,7 +1245,7 @@ describe("build helpers", () => {
     expect(await readdir(join(root, "css/fonts"))).toContain("fake.ttf");
   });
 
-  test("versions a minimal site without optional packages", async () => {
+  test("names a minimal site without optional packages", async () => {
     const root = await makeTemporaryDirectory();
     await makeSource(root);
     await addGeneratedRuntime(root);
@@ -1270,29 +1257,34 @@ describe("build helpers", () => {
       "iframe/pink-panther-hokus-pokus",
       "iframe/pink-panther-passport-to-peril",
       "iframe/revcdos",
+      "iframe/scummvm",
+      "vendor/pipes",
+      "vendor/scummvm",
     ])
       await rm(join(root, path), { recursive: true });
     await editFile(join(root, "index.html"), (html) =>
       html.replace('<script type="module" src="apps/index.js"></script>', ""),
     );
     await writeFiles(root, { "iframe/notes.txt": "not a game" });
-    const paths = new BuildPaths(root);
-    await updateHtml(paths, "26.07.28-abcdef1");
-    await writeOfflineGameManifest(paths, "26.07.28-abcdef1");
-    const manifest = JSON.parse(await readFile(paths.offlineGamesJson, "utf8"));
-    await writeVersionMetadata(paths, "26.07.28-abcdef1");
-    await versionOfflineGameManifest(paths);
+    const { manifestName, paths } = await prepareSite(root);
+    await writeHeaders(root);
+    await generateServiceWorker(root, VERSION);
     await validateOutput(root);
+    const manifest = JSON.parse(
+      await readFile(join(root, manifestName), "utf8"),
+    );
     expect(Object.keys(manifest.games).sort()).toEqual([
       "doom",
       "inside-the-firewall",
     ]);
+    expect(manifest.runtimes).toEqual({});
     expect(
       await readFile(
         join(root, manifest.games.doom.root, "index.html"),
         "utf8",
       ),
-    ).toBe("doom ../../dos/doom/doom.jsdos");
+    ).toStartWith("doom ../../dos/doom/doom.jsdos");
+    expect(await Bun.file(paths.captureHtml).exists()).toBeFalse();
   });
 
   test("totals bundled bytes for catalogs without shared runtimes", async () => {
@@ -1313,11 +1305,15 @@ describe("build helpers", () => {
   test("requires exactly one of each worker script", async () => {
     const root = await makeTemporaryDirectory();
     await writeFiles(root, { "js/main.js": "main" });
-    await expect(generateServiceWorker(root)).rejects.toThrow(
+    await expect(generateServiceWorker(root, VERSION)).rejects.toThrow(
+      "exactly one hashed shell cache",
+    );
+    await writeFiles(root, { "js/shell-cache.11111111.js": "cache" });
+    await expect(generateServiceWorker(root, VERSION)).rejects.toThrow(
       "exactly one hashed offline worker",
     );
     await writeFiles(root, { "js/offline-worker.12345678.js": "worker" });
-    await expect(generateServiceWorker(root)).rejects.toThrow(
+    await expect(generateServiceWorker(root, VERSION)).rejects.toThrow(
       "exactly one hashed shell worker",
     );
   });
@@ -1344,12 +1340,7 @@ describe("build helpers", () => {
     await build({
       sourceDir: source,
       outputDir: join(project, "dist"),
-      installRuffle: async (jsDir) =>
-        writeFiles(jsDir, {
-          "ruffle.js": "ruffle",
-          "core.ruffle.abc123.js": "core",
-          "abc123.wasm": "wasm",
-        }),
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
       generate: async (directory, version) => {
         await writeFiles(directory, {
           "sw.js": precacheWorker([
