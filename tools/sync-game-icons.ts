@@ -91,7 +91,6 @@ async function writeIcon(
   };
 }
 
-
 function addIconMetadata(gameSource: string, gameId: string): string {
   const iconValue = `icon: "assets/icons/${gameId}.png"`;
   if (gameSource.includes(iconValue)) return gameSource;
