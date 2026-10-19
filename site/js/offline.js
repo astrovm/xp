@@ -25,6 +25,13 @@
   const RELEASE_PREFIX = /^\/releases\/[^/]+(?=\/)/;
   const DEFAULT_CHECK_INTERVAL = 60 * 60 * 1000;
   const UPDATE_RETRY_DELAY = 30 * 1000;
+  const MISSING_FILE_MESSAGE = "ASTRO_FILE_MISSING";
+  const MODULE_LOAD_FAILURE =
+    /dynamically imported module|module script failed/i;
+  // A release deployed during an update removes files the update still needs,
+  // so a failed install checks for the newer release before asking for Repair.
+  const INSTALL_RETRIES = 3;
+  const INSTALL_RETRY_DELAY = 2 * 1000;
 
   const waitForWorker = (worker) =>
     new Promise((resolve, reject) => {
@@ -147,6 +154,8 @@
     let bypassWorkerCdn = false;
     let applyTargetVersion = null;
     let reloadTargetVersion = null;
+    let failedUpdateInstalls = 0;
+    let missingFileCheck = null;
 
     const versionedServiceWorkerUrl = (version) => {
       if (serviceWorkerUrl.includes("{version}")) {
@@ -225,6 +234,20 @@
       );
     };
 
+    const retryFailedUpdate = () => {
+      failedUpdateInstalls += 1;
+      const applying = applyTargetVersion !== null;
+      const reload = reloadTargetVersion !== null;
+      (environment.setTimeout || setTimeout)(() => {
+        if (!state.enabled) return;
+        void checkForUpdates({
+          applyAutomatically: true,
+          bypassDelay: applying,
+          reload,
+        }).catch(() => {});
+      }, INSTALL_RETRY_DELAY * failedUpdateInstalls);
+    };
+
     const cancelAutomaticUpdate = () => {
       if (automaticUpdateTimer === null) return;
       (environment.clearTimeout || clearTimeout)(automaticUpdateTimer);
@@ -295,6 +318,8 @@
       downloadMetadataError: false,
       lastChecked: Number(storage.getItem(LAST_CHECKED_KEY)) || null,
       updateReady: false,
+      // A file this tab needs is gone because a newer release replaced it.
+      reloadRequired: false,
       workerState: "unregistered",
       usage: null,
       quota: null,
@@ -496,6 +521,7 @@
         if (!state.enabled) return;
         setState({ workerState: worker.state });
         if (worker.state === "installed" && isUpdate) {
+          failedUpdateInstalls = 0;
           (environment.setTimeout || setTimeout)(() => {
             if (registration?.waiting) {
               void markWaitingUpdate(registration.waiting);
@@ -504,6 +530,13 @@
         } else if (worker.state === "activated" && !isUpdate) {
           setState({ phase: "ready", workerState: "active", error: null });
           void refreshStorageEstimate();
+        } else if (
+          worker.state === "redundant" &&
+          isUpdate &&
+          failedUpdateInstalls < INSTALL_RETRIES
+        ) {
+          setState({ phase: "updating", workerState: "failed", error: null });
+          retryFailedUpdate();
         } else if (worker.state === "redundant") {
           setState({
             phase: "error",
@@ -546,10 +579,61 @@
       }
     };
 
+    const workerRunsVersion = (worker, version) =>
+      Boolean(worker?.scriptURL) &&
+      serviceWorkerUrl.includes("{version}") &&
+      !workerNeedsVersionedUrl(worker, version);
+
+    // Chrome slows down the downloads of an installing worker, so the page
+    // stores the new files first and the worker only checks them. The
+    // entry points are left to the worker: the current one would answer the
+    // page's request with its own copy.
+    const prefetchShell = async (targetVersion) => {
+      const shellCache = environment.AstroShellCache;
+      if (!shellCache || !environment.caches) return;
+      const existing =
+        registration ||
+        (await navigatorObject.serviceWorker.getRegistration?.("/"));
+      if (
+        [existing?.active, existing?.waiting, existing?.installing].some(
+          (worker) => workerRunsVersion(worker, targetVersion),
+        )
+      ) {
+        return;
+      }
+      setState({
+        phase: existing?.active ? "updating" : "downloading",
+        error: null,
+      });
+      try {
+        const scriptUrl = new URL(
+          versionedServiceWorkerUrl(targetVersion),
+          environment.location.href,
+        );
+        const response = await environment.fetch(scriptUrl.href, {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        await shellCache
+          .createShellCache({
+            base: scriptUrl.href,
+            caches: environment.caches,
+            fetch: (request) => environment.fetch(request),
+            manifest: shellCache
+              .parseWorkerManifest(await response.text())
+              .filter((entry) => !entry.fixed),
+          })
+          .install();
+      } catch {
+        // The worker downloads whatever is still missing.
+      }
+    };
+
     const registerAndWait = async (targetVersion, inspectWaiting = true) => {
       if (!navigatorObject.serviceWorker) {
         throw new Error("This browser can't work offline.");
       }
+      await prefetchShell(targetVersion);
       const nextRegistration = await navigatorObject.serviceWorker.register(
         versionedServiceWorkerUrl(targetVersion),
         { scope: "/", updateViaCache: "none" },
@@ -1282,9 +1366,58 @@
       void checkForUpdates({ applyAutomatically: true }).catch(() => {});
     };
 
+    // Files are named by content and each deploy removes the old ones, so a
+    // tab left open across a release can fail to load a file. One check per
+    // tab tells a missing file apart from a network problem.
+    const reportMissingFile = () => {
+      if (state.reloadRequired || missingFileCheck) return;
+      missingFileCheck = fetchVersion().then(
+        (metadata) => {
+          if (metadata.version === currentVersion) return;
+          setState({ reloadRequired: true });
+          if (state.enabled) {
+            void checkForUpdates({ applyAutomatically: true }).catch(() => {});
+          }
+        },
+        () => {
+          missingFileCheck = null;
+        },
+      );
+    };
+
+    const sameOrigin = (url) => {
+      try {
+        return (
+          new URL(url, environment.location.href).origin ===
+          new URL(environment.location.href).origin
+        );
+      } catch {
+        return false;
+      }
+    };
+
     const attachLifecycleListeners = () => {
       if (lifecycleListenersAttached) return;
       lifecycleListenersAttached = true;
+      navigatorObject.serviceWorker?.addEventListener("message", (event) => {
+        if (event.data?.type === MISSING_FILE_MESSAGE) reportMissingFile();
+      });
+      // Scripts, styles and images report load failures here.
+      environment.addEventListener?.(
+        "error",
+        (event) => {
+          const url = event.target?.src || event.target?.href;
+          if (typeof url === "string" && url && sameOrigin(url)) {
+            reportMissingFile();
+          }
+        },
+        true,
+      );
+      environment.addEventListener?.("unhandledrejection", (event) => {
+        if (MODULE_LOAD_FAILURE.test(String(event.reason?.message))) {
+          reportMissingFile();
+        }
+      });
       navigatorObject.serviceWorker?.addEventListener(
         "controllerchange",
         () => {
@@ -1385,6 +1518,7 @@
       initialize,
       refreshStorageEstimate,
       removeAllGames,
+      reportMissingFile,
       removeGame,
       repair,
       setAutomaticUpdatesEnabled,
