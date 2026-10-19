@@ -23,8 +23,11 @@ import {
 import { fileURLToPath } from "node:url";
 
 import { compress as compressWoff2 } from "wawoff2";
-import { generateSW, type ManifestTransform } from "workbox-build";
-import workboxConfig, { PRECACHE_EXTENSIONS } from "../workbox-config";
+import {
+  PRECACHE_EXTENSIONS,
+  PRECACHE_IGNORES,
+  PRECACHE_MAXIMUM_FILE_SIZE,
+} from "../precache-config";
 
 const PROJECT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const SOURCE_DIR = join(PROJECT_DIR, "site");
@@ -58,41 +61,13 @@ const APP_VERSION_PATTERN = /const APP_VERSION = "[^"]+";/g;
 const VERSIONED_SERVICE_WORKER_MARKER =
   "\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n";
 
-type WorkboxGenerator = typeof generateSW;
+const WORKER_SCRIPTS = ["offline-worker", "shell-worker"] as const;
 
-export function createIntegrityManifestTransform(
-  outputDir: string,
-  urlPrefix = "",
-): ManifestTransform {
-  const root = resolve(outputDir);
-  return async (entries) => ({
-    manifest: await Promise.all(
-      entries.map(async (entry) => {
-        const relativeUrl = decodeURIComponent(entry.url.split(/[?#]/, 1)[0])
-          .replace(/^\/+/, "")
-          .split("/")
-          .join(sep);
-        const path = resolve(root, relativeUrl);
-        if (path !== root && !path.startsWith(`${root}${sep}`)) {
-          throw new Error(
-            `Precache entry escapes the build output: ${entry.url}`,
-          );
-        }
-        const integrity = `sha384-${createHash("sha384")
-          .update(await readFile(path))
-          .digest("base64")}`;
-        return {
-          ...entry,
-          integrity,
-          url:
-            entry.url === "index.html" ? entry.url : `${urlPrefix}${entry.url}`,
-        };
-      }),
-    ),
-    warnings: [],
-  });
+export interface PrecacheEntry {
+  integrity: string;
+  revision: string;
+  url: string;
 }
-
 interface OfflineFile {
   bytes: number;
   integrity: string;
@@ -497,6 +472,7 @@ export async function updateHtml(
     dialogsJs: "js/dialogs.js",
     offlineJs: "js/offline.js",
     offlineWorkerJs: "js/offline-worker.js",
+    shellWorkerJs: "js/shell-worker.js",
     mainJs: "js/main.js",
     mainCss: "css/main.css",
   };
@@ -522,7 +498,10 @@ export async function updateHtml(
   const referenceFiles = [
     ...new Set([
       ...Object.values(mutableAssets).filter(
-        (path) => path !== "js/ruffle.js" && path !== "js/offline-worker.js",
+        (path) =>
+          path !== "js/ruffle.js" &&
+          path !== "js/offline-worker.js" &&
+          path !== "js/shell-worker.js",
       ),
       ...applicationReferenceFiles,
       "index.html",
@@ -565,7 +544,7 @@ export async function updateHtml(
 
   let content = await readFile(paths.html, "utf8");
   for (const [name, originalPath] of Object.entries(mutableAssets)) {
-    if (name === "offlineWorkerJs") continue;
+    if (name === "offlineWorkerJs" || name === "shellWorkerJs") continue;
     const pattern = new RegExp(
       originalPath.replaceAll(".", "\\.") + '(?:\\?v=[^"]+)?"',
       "g",
@@ -907,79 +886,85 @@ export async function writeVersionMetadata(
   );
 }
 
-async function getWorkboxFiles(outputDir: string): Promise<string[]> {
-  return (await readdir(outputDir))
-    .filter(
-      (name) =>
-        name === "sw.js" ||
-        name === "sw.js.map" ||
-        /^workbox-.*\.js(?:\.map)?$/.test(name),
-    )
-    .map((name) => join(outputDir, name));
+export async function createPrecacheManifest(
+  contentDir: string,
+  urlPrefix = "",
+): Promise<PrecacheEntry[]> {
+  const root = resolve(contentDir);
+  const ignores = PRECACHE_IGNORES.map((pattern) => new Bun.Glob(pattern));
+  const entries: PrecacheEntry[] = [];
+  for (const path of (await walkFiles(root)).sort()) {
+    const relativePath = relative(root, path).split(sep).join("/");
+    if (
+      relativePath.split("/").some((part) => part.startsWith(".")) ||
+      !PRECACHE_FILE_SUFFIXES.has(extname(relativePath)) ||
+      ignores.some((glob) => glob.match(relativePath))
+    ) {
+      continue;
+    }
+    const content = await readFile(path);
+    if (content.length > PRECACHE_MAXIMUM_FILE_SIZE) {
+      console.warn(`  - Skipping precache for oversized ${relativePath}`);
+      continue;
+    }
+    entries.push(precacheEntry(content, `${urlPrefix}${relativePath}`));
+  }
+  return entries;
+}
+
+function precacheEntry(content: Buffer, url: string): PrecacheEntry {
+  return {
+    integrity: `sha384-${createHash("sha384").update(content).digest("base64")}`,
+    revision: createHash("sha384").update(content).digest("hex").slice(0, 8),
+    url,
+  };
 }
 
 export async function generateServiceWorker(
   outputDir: string,
-  generator: WorkboxGenerator = generateSW,
   version?: string,
 ): Promise<void> {
   console.log("Generating service worker...");
   const releasePrefix = version ? `${releaseRelativePath(version)}/` : "";
-  const contentDir = version ? join(outputDir, releasePrefix) : outputDir;
-  const offlineWorkerNames = (await readdir(join(contentDir, "js"))).filter(
-    (name) => /^offline-worker\.[a-f0-9]{8}\.js$/.test(name),
-  );
-  if (offlineWorkerNames.length !== 1) {
-    throw new Error(
-      "Build output must contain exactly one hashed offline worker",
+  const contentDir = join(outputDir, releasePrefix);
+  const jsEntries = await readdir(join(contentDir, "js"));
+  const scripts = WORKER_SCRIPTS.map((name) => {
+    const matches = jsEntries.filter((entry) =>
+      new RegExp(`^${name}\\.[a-f0-9]{8}\\.js$`).test(entry),
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        `Build output must contain exactly one hashed ${name.replace("-", " ")}`,
+      );
+    }
+    return `${releasePrefix}js/${matches[0]}`;
+  });
+  const manifest = await createPrecacheManifest(contentDir, releasePrefix);
+  // A release keeps index.html at the root, outside the release directory.
+  if (version) {
+    manifest.push(
+      precacheEntry(
+        await readFile(join(outputDir, "index.html")),
+        "index.html",
+      ),
     );
   }
-  await generator({
-    ...workboxConfig,
-    globDirectory: `${resolve(contentDir)}/`,
-    importScripts: [`${releasePrefix}js/${offlineWorkerNames[0]}`],
-    inlineWorkboxRuntime: true,
-    manifestTransforms: [
-      createIntegrityManifestTransform(contentDir, releasePrefix),
-    ],
+  const workerSource = [
     ...(version
-      ? {
-          additionalManifestEntries: [
-            {
-              integrity: `sha384-${createHash("sha384")
-                .update(await readFile(join(outputDir, "index.html")))
-                .digest("base64")}`,
-              revision: await getShortHash(join(outputDir, "index.html")),
-              url: "index.html",
-            },
-          ],
-        }
-      : {}),
-    swDest: join(resolve(outputDir), "sw.js"),
-  });
-
-  const serviceWorker = join(outputDir, "sw.js");
-  if (!(await isFile(serviceWorker))) {
-    throw new Error("Workbox did not generate output sw.js");
-  }
-  let workerSource = await readFile(serviceWorker, "utf8");
-  if (version) {
-    workerSource += `\nself.__ASTRO_XP_VERSION__=${JSON.stringify(
-      version,
-    )};self.addEventListener("message",event=>{if(event.data?.type==="GET_VERSION")event.ports[0]?.postMessage({version:self.__ASTRO_XP_VERSION__})});\n`;
-    await writeFile(serviceWorker, workerSource);
-  }
-  for (const path of await getWorkboxFiles(outputDir)) {
-    const name = basename(path);
-    if (name.startsWith("workbox-")) await rm(path);
-  }
+      ? [`self.__ASTRO_XP_VERSION__=${JSON.stringify(version)};`]
+      : []),
+    `self.__ASTRO_XP_PRECACHE__=${JSON.stringify(manifest)};`,
+    `importScripts(${scripts.map((script) => JSON.stringify(script)).join(",")});`,
+    "",
+  ].join("\n");
+  await writeFile(join(outputDir, "sw.js"), workerSource);
   if (version) {
     await writeFile(
       join(outputDir, versionedServiceWorkerName(version)),
       workerSource + VERSIONED_SERVICE_WORKER_MARKER,
     );
   }
-  console.log("  - Service worker generated successfully");
+  console.log(`  - Service worker precaches ${manifest.length} files`);
 }
 
 export async function validateOutput(outputDir: string): Promise<void> {
@@ -1124,14 +1109,15 @@ export async function validateOutput(outputDir: string): Promise<void> {
       }
     }
   }
-  if (
-    (await readdir(paths.js)).filter((name) =>
-      /^offline-worker\.[a-f0-9]{8}\.js$/.test(name),
-    ).length !== 1
-  ) {
-    throw new Error("Build output has no uniquely hashed offline worker");
-  }
   const jsEntries = await readdir(paths.js);
+  for (const name of WORKER_SCRIPTS) {
+    const pattern = new RegExp(`^${name}\\.[a-f0-9]{8}\\.js$`);
+    if (jsEntries.filter((entry) => pattern.test(entry)).length !== 1) {
+      throw new Error(
+        `Build output has no uniquely hashed ${name.replace("-", " ")}`,
+      );
+    }
+  }
   if (!jsEntries.some((name) => /^core\.ruffle\..*\.js$/.test(name))) {
     throw new Error("Build output has no Ruffle core JavaScript");
   }
@@ -1407,17 +1393,14 @@ export async function validatePrecacheIntegrity(
     throw new Error("Build output is missing required file: sw.js");
   }
   const source = await readFile(serviceWorker, "utf8");
-  const entries = [
-    ...source.matchAll(
-      /\{(?=[^{}]*\bintegrity:"([^"]+)")(?=[^{}]*\burl:"([^"]+)")[^{}]*\}/g,
-    ),
-  ];
+  const manifest = source.match(/^self\.__ASTRO_XP_PRECACHE__=(.*);$/m)?.[1];
+  const entries: PrecacheEntry[] = manifest ? JSON.parse(manifest) : [];
   if (entries.length === 0) {
     throw new Error("Build output has no integrity-protected precache entries");
   }
   let indexEntries = 0;
   const root = resolve(outputDir);
-  for (const [, integrity, url] of entries) {
+  for (const { integrity, revision, url } of entries) {
     const relativeUrl = decodeURIComponent(url.split(/[?#]/, 1)[0])
       .replace(/^\/+/, "")
       .split("/")
@@ -1429,11 +1412,13 @@ export async function validatePrecacheIntegrity(
     if (!(await isFile(path))) {
       throw new Error(`Precache entry references a missing file: ${url}`);
     }
-    const actualIntegrity = `sha384-${createHash("sha384")
-      .update(await readFile(path))
-      .digest("base64")}`;
-    if (integrity !== actualIntegrity) {
+    const expected = precacheEntry(await readFile(path), url);
+    if (integrity !== expected.integrity) {
       throw new Error(`Precache entry has invalid integrity: ${url}`);
+    }
+    // The worker reuses a cached file whenever its revision matches.
+    if (revision !== expected.revision) {
+      throw new Error(`Precache entry has an invalid revision: ${url}`);
     }
     if (url === "index.html") indexEntries += 1;
   }
@@ -1462,7 +1447,7 @@ export async function build({
   version,
   installRuffle: installRuffleRuntime = installRuffle,
   generate = (directory, buildVersion) =>
-    generateServiceWorker(directory, generateSW, buildVersion),
+    generateServiceWorker(directory, buildVersion),
 }: BuildOptions): Promise<void> {
   const resolvedOutput = resolve(outputDir);
   const resolvedSource = resolve(sourceDir);

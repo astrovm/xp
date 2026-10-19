@@ -15,6 +15,6 @@
     "tools/**/*.ts",
     "tests/**/*.ts",
     "worker/**/*.ts",
-    "workbox-config.ts"
+    "precache-config.ts"
   ]
 }

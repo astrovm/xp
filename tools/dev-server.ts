@@ -14,7 +14,7 @@ export const DEV_RELOAD_PATH = "/__dev/reload";
 const BUILD_INPUTS = [
   "site",
   "tools/deploy.ts",
-  "workbox-config.ts",
+  "precache-config.ts",
   "package.json",
   "bun.lock",
 ];
