@@ -133,7 +133,7 @@
   },
   "inside-the-firewall": {
     "file": "inside-the-firewall.png",
-    "source": "iframe/inside-the-firewall/index.html#bundled-favicon",
+    "source": "iframe/inside-the-firewall/icon.png",
     "retrieved": "2026-07-26",
     "sha256": "40f027ab9a26e310e98f13d72eba9dcafeb7496f9a34283c5ea34fb71b90f5c3"
   },

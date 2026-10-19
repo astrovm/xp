@@ -1,349 +1,542 @@
 <!DOCTYPE html>
-<!-- Created with https://packager.turbowarp.org/ -->
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- We only include this to explicitly loosen the CSP of various packager environments. It does not provide any security. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: blob:">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Inside the firewall</title>
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
   <style>
-    body {
-      color: #ffffff;
-      font-family: sans-serif;
-      overflow: hidden;
+    html, body {
       margin: 0;
-      padding: 0;
-    }
-    :root, body.is-fullscreen {
-      background-color: #000000;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
     }
     [hidden] {
       display: none !important;
     }
-    h1 {
-      font-weight: normal;
-    }
-    a {
-      color: inherit;
-      text-decoration: underline;
-      cursor: pointer;
-    }
-
-    #app, #loading, #error, #launch {
+    #game {
       position: absolute;
-      top: 0;
-      left: 0;
+      inset: 0;
       width: 100%;
       height: 100%;
+      display: block;
+      touch-action: none;
+    }
+    @font-face {
+      font-family: "Noto Sans";
+      font-weight: 500;
+      src: url(assets/fonts/noto-sans-medium.woff2) format("woff2");
+    }
+    #ui {
+      position: absolute;
+      width: calc(480 * var(--s));
+      height: calc(360 * var(--s));
+      font-family: "Noto Sans", sans-serif;
+      font-weight: 500;
+      font-size: calc(16 * var(--s));
+      color: #fe9501;
+      pointer-events: none;
+      user-select: none;
+    }
+    #ui section {
+      position: absolute;
+      inset: 0;
+    }
+    #ui button, #ui .stat {
+      position: absolute;
+      pointer-events: auto;
+      font: inherit;
+      margin: 0;
+    }
+    #ui button {
+      cursor: pointer;
+    }
+    #ui button:focus-visible {
+      outline: calc(3 * var(--s)) solid #fff;
+      outline-offset: calc(2 * var(--s));
+    }
+    .pill {
+      padding: 0 calc(14 * var(--s));
+      height: calc(30 * var(--s));
+      border: calc(3 * var(--s)) solid #fe9501;
+      border-radius: calc(15 * var(--s));
+      background: #00cc44;
+      color: #006321;
+    }
+    .pill:hover {
+      background: #00e04b;
+    }
+    .pill.dark {
+      background: #004a19;
+      color: #fe9501;
+    }
+    .pill.dark:hover {
+      background: #005d20;
+    }
+    #cheats {
+      position: absolute;
+      top: 56px;
+      right: 8px;
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 4px;
+      padding: 8px;
+      border-radius: 8px;
+      background: #000c;
+      color: #fff;
+      font-size: 13px;
+    }
+    #cheats[hidden] {
+      display: none;
+    }
+    #cheats h2 {
+      grid-column: 1 / -1;
+      margin: 0 0 2px;
+      font-size: 13px;
+      color: #fe9501;
+    }
+    #cheats button {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 3px 8px;
+      border: 0;
+      border-radius: 4px;
+      background: #fff2;
+      color: #fff;
+      text-align: left;
+      cursor: pointer;
+    }
+    #cheats button:hover {
+      background: #fff4;
+    }
+    #cheats button[aria-pressed=true] {
+      background: #00cc44;
+      color: #003311;
+    }
+    #cheats kbd {
+      min-width: 1em;
+      font: inherit;
+      opacity: 0.6;
+    }
+    #corner {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      display: flex;
+      gap: 8px;
+    }
+    .icon {
+      width: 40px;
+      height: 40px;
+      padding: 8px;
+      border: 0;
+      border-radius: 8px;
+      background: #0008;
+      cursor: pointer;
+      display: flex;
+    }
+    .icon[hidden] {
+      display: none;
+    }
+    .icon:hover {
+      background: #000c;
+    }
+    .icon:focus-visible {
+      outline: 3px solid #fff;
+    }
+    .icon svg {
+      width: 100%;
+      height: 100%;
+      fill: #fe9501;
+    }
+    #play {
+      left: calc(127.9 * var(--s));
+      top: calc(104.7 * var(--s));
+      width: calc(217.8 * var(--s));
+      height: calc(97.7 * var(--s));
+      padding: 0;
+      border: 0;
+      border-radius: calc(48 * var(--s));
+      background: none;
+    }
+    #play img {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #play .hover, #play:hover .normal, #play:focus-visible .normal {
+      display: none;
+    }
+    #play:hover .hover, #play:focus-visible .hover {
+      display: block;
+    }
+    #ui #pause-menu, #ui #settings-menu, #ui #keys-menu {
+      position: fixed;
+      background: #000a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: calc(10 * var(--s));
+    }
+    #pause-menu[hidden], #settings-menu[hidden], #keys-menu[hidden] {
+      display: none;
+    }
+    #pause-menu h2, #settings-menu h2, #keys-menu h2 {
+      font-size: calc(36 * var(--s));
+      font-weight: 500;
+      margin: 0 0 calc(6 * var(--s));
+    }
+    #pause-menu button, #settings-menu > button, #keys-menu > button {
+      position: static;
+      width: calc(140 * var(--s));
+    }
+    #ui #settings-menu, #ui #keys-menu {
+      background: #000d;
+      pointer-events: auto;
+    }
+    #settings-menu label, #settings-menu fieldset, #keys-menu .row {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: calc(12 * var(--s));
+      width: calc(300 * var(--s));
+      min-height: calc(30 * var(--s));
+      margin: 0;
+      padding: 0;
+      border: 0;
+      cursor: pointer;
+    }
+    #settings-menu legend {
+      float: left;
+      padding: 0;
+    }
+    #settings-menu input {
+      accent-color: #fe9501;
+      margin: 0;
+      cursor: pointer;
+    }
+    #settings-menu input[type="range"] {
+      width: calc(150 * var(--s));
+    }
+    .speed {
+      display: flex;
+      align-items: center;
+      gap: calc(8 * var(--s));
+    }
+    #settings-menu .speed input[type="range"] {
+      width: calc(110 * var(--s));
+    }
+    .speed output {
+      width: calc(36 * var(--s));
+      text-align: right;
+    }
+    #ui .row button {
+      position: static;
+      min-width: calc(110 * var(--s));
+      height: calc(26 * var(--s));
+      padding: 0 calc(10 * var(--s));
+      border: calc(2 * var(--s)) solid #fe9501;
+      border-radius: calc(13 * var(--s));
+      background: none;
+      color: inherit;
+      font-size: calc(14 * var(--s));
+    }
+    #ui .row button.listening {
+      background: #fe9501;
+      color: #000;
+    }
+    #settings-menu input:focus-visible, .choices label:has(input:focus-visible) {
+      outline: calc(3 * var(--s)) solid #fff;
+      outline-offset: calc(2 * var(--s));
+    }
+    .choices {
+      display: flex;
+    }
+    #settings-menu .choices label {
+      width: auto;
+      min-height: 0;
+      height: calc(26 * var(--s));
+      padding: 0 calc(10 * var(--s));
+      border: calc(2 * var(--s)) solid #fe9501;
+      margin-left: calc(-2 * var(--s));
+      font-size: calc(14 * var(--s));
+    }
+    .choices label:first-child {
+      border-radius: calc(13 * var(--s)) 0 0 calc(13 * var(--s));
+    }
+    .choices label:last-child {
+      border-radius: 0 calc(13 * var(--s)) calc(13 * var(--s)) 0;
+    }
+    .choices label:has(input:checked) {
+      background: #fe9501;
+      color: #000;
+    }
+    .choices input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #touch button {
+      position: fixed;
+      bottom: 16px;
+      width: 72px;
+      height: 72px;
+      padding: 18px;
+      border: 3px solid #fe950188;
+      border-radius: 50%;
+      background: #0006;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    #touch button.held {
+      background: #fe950166;
+    }
+    #touch svg {
+      width: 100%;
+      height: 100%;
+      fill: #fe9501;
+    }
+    #touch [data-move="left"] {
+      left: 16px;
+    }
+    #touch [data-move="right"] {
+      left: 100px;
+    }
+    #touch [data-move="down"] {
+      right: 100px;
+    }
+    #touch [data-move="jump"] {
+      right: 16px;
+      bottom: 40px;
+    }
+    #repair {
+      left: calc(70 * var(--s));
+      top: calc(290 * var(--s));
+      width: calc(320 * var(--s));
+      height: calc(48 * var(--s));
+      border: 0;
+      border-radius: calc(8 * var(--s));
+      background: none;
+      color: transparent;
+    }
+    #repair:hover {
+      background: #ff000026;
+    }
+    #over-menu .stat {
+      left: calc(12 * var(--s));
+      top: calc(8 * var(--s));
+      font-size: calc(16 * var(--s));
+      line-height: 1.25;
+    }
+    #over-menu .stat p {
+      margin: 0;
+    }
+    #over-menu .stat p:first-child {
+      font-size: calc(20 * var(--s));
+    }
+    #new-best {
+      font-weight: 500;
+      color: #fff;
+      background: #d40000;
+      border-radius: calc(4 * var(--s));
+      padding: 0 calc(5 * var(--s));
+      font-size: calc(13 * var(--s));
+      vertical-align: middle;
+    }
+    #title-best {
+      right: calc(24 * var(--s));
+      top: calc(250 * var(--s));
+      font-size: calc(16 * var(--s));
+    }
+    #over-menu .actions {
+      position: absolute;
+      right: calc(12 * var(--s));
+      top: calc(10 * var(--s));
+      display: flex;
+      gap: calc(8 * var(--s));
+    }
+    #over-menu .actions button {
+      position: static;
+    }
+    .grabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 calc(10 * var(--s));
+      /* Wraps before the 2013 computer. */
+      max-width: calc(172 * var(--s));
+    }
+    .grabs span {
+      display: flex;
+      align-items: center;
+      gap: calc(3 * var(--s));
+    }
+    .grabs img {
+      height: calc(18 * var(--s));
+      image-rendering: pixelated;
+    }
+    #replay-label {
+      position: absolute;
+      left: calc(318 * var(--s));
+      top: calc(50 * var(--s));
+      padding: 0 calc(5 * var(--s));
+      font-size: calc(12 * var(--s));
+      background: #fe9501;
+      color: #000;
+    }
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
     .screen {
+      position: absolute;
+      inset: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       text-align: center;
-      cursor: default;
+      background: #000;
       user-select: none;
-      -webkit-user-select: none;
-      background-color: #000000;
     }
-    #launch {
-      background-color: rgba(0, 0, 0, 0.7);
-      cursor: pointer;
-    }
-    .green-flag {
-      width: 80px;
-      height: 80px;
-      padding: 16px;
-      border-radius: 100%;
-      background: rgba(255, 255, 255, 0.75);
-      border: 3px solid hsla(0, 100%, 100%, 1);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      box-sizing: border-box;
-    }
-    #loading {
-      
-    }
-    .progress-bar-outer {
-      border: 1px solid currentColor;
-      height: 10px;
-      width: 200px;
-      max-width: 200px;
-    }
-    .progress-bar-inner {
-      height: 100%;
-      width: 0;
-      background-color: currentColor;
-    }
-    .loading-text, noscript {
+    .screen h1 {
       font-weight: normal;
       font-size: 36px;
       margin: 0 0 16px;
     }
-    .loading-image {
-      margin: 0 0 16px;
+    .progress {
+      border: 1px solid currentColor;
+      height: 10px;
+      width: 200px;
     }
-    #error-message, #error-stack {
+    #loading-bar {
+      height: 100%;
+      width: 0;
+      background: currentColor;
+    }
+    #error-message {
       font-family: monospace;
       max-width: 600px;
       white-space: pre-wrap;
-      user-select: text;
-      -webkit-user-select: text;
     }
-    #error-stack {
-      text-align: left;
-      max-height: 200px;
-      overflow: auto;
-    }
-    .control-button {
-      width: 2rem;
-      height: 2rem;
-      padding: 0.375rem;
-      margin-top: 0.5rem;
-      margin-bottom: 0.5rem;
-      user-select: none;
-      -webkit-user-select: none;
-      cursor: pointer;
-      border: 0;
-      border-radius: 4px;
-    }
-    .control-button-highlight:hover {
-      background: #ff4c4c26;
-    }
-    .control-button-highlight.active {
-      background: #ff4c4c59;
-    }
-    .fullscreen-button {
-      background: white;
-    }
-    .standalone-fullscreen-button {
-      position: absolute;
-      top: 0;
-      right: 0;
-      background-color: rgba(0, 0, 0, 0.5);
-      border-radius: 0 0 0 4px;
-      padding: 4px;
-      cursor: pointer;
-    }
-    .sc-canvas {
-      cursor: auto;
-    }
-    .sc-monitor-root[data-opcode^="data_"] .sc-monitor-value-color {
-      background-color: #ff8c1a;
-    }
-    .sc-monitor-row-value-outer {
-      background-color: #fc662c;
-    }
-    .sc-monitor-row-value-editing .sc-monitor-row-value-outer {
-      background-color: #e25b27;
-    }
-    
   </style>
-  <meta name="theme-color" content="#000000">
-  <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAcoAAAHKCAYAAACDnAvcAAAA0GVYSWZJSSoACAAAAAoAAAEEAAEAAADKAQAAAQEEAAEAAADKAQAAAgEDAAMAAACGAAAAEgEDAAEAAAABAAAAGgEFAAEAAACMAAAAGwEFAAEAAACUAAAAKAEDAAEAAAACAAAAMQECAA0AAACcAAAAMgECABQAAACqAAAAaYcEAAEAAAC+AAAAAAAAAAgACAAIAEgAAAABAAAASAAAAAEAAABHSU1QIDIuMTAuMzYAADIwMjQ6MDE6MTYgMTc6NTA6MTIAAQABoAMAAQAAAAEAAAAAAAAAOpQQmgAAAYVpQ0NQSUNDIHByb2ZpbGUAAHicfZE7SMNQFIb/pooiFQU7FHHIUJ0s+EIctQpFqBBqhVYdTG76giYNSYqLo+BacPCxWHVwcdbVwVUQBB8gzg5Oii5S4rlJoUWMBy7347/n/7n3XECol5lmdYwBmm6bqURczGRXxa5XBNCPMMYRkZllzElSEr71dU/dVHcxnuXf92f1qjmLAQGReJYZpk28QTy9aRuc94nDrCirxOfEoyZdkPiR64rHb5wLLgs8M2ymU/PEYWKx0MZKG7OiqRFPEUdVTad8IeOxynmLs1ausuY9+QtDOX1lmeu0hpDAIpYgQYSCKkoow0aMdp0UCyk6j/v4B12/RC6FXCUwciygAg2y6wf/g9+ztfKTE15SKA50vjjOxzDQtQs0ao7zfew4jRMg+Axc6S1/pQ7MfJJea2nRI6BvG7i4bmnKHnC5A0SeDNmUXSlIS8jngfcz+qYsMHAL9Kx5c2ue4/QBSNOskjfAwSEwUqDsdZ93d7fP7d+e5vx+AIcLcq+OmfVeAAANeGlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4KPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iWE1QIENvcmUgNC40LjAtRXhpdjIiPgogPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4KICA8cmRmOkRlc2NyaXB0aW9uIHJkZjphYm91dD0iIgogICAgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iCiAgICB4bWxuczpzdEV2dD0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL3NUeXBlL1Jlc291cmNlRXZlbnQjIgogICAgeG1sbnM6ZGM9Imh0dHA6Ly9wdXJsLm9yZy9kYy9lbGVtZW50cy8xLjEvIgogICAgeG1sbnM6R0lNUD0iaHR0cDovL3d3dy5naW1wLm9yZy94bXAvIgogICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iCiAgICB4bWxuczp4bXA9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC8iCiAgIHhtcE1NOkRvY3VtZW50SUQ9ImdpbXA6ZG9jaWQ6Z2ltcDpmOWI4MGRmNS0zYmE2LTQxOGMtODkyOS1lYmU5MGVjOTJlNDciCiAgIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6ZGNkZjlmYjUtNzY2ZS00YjQ1LThmMDktMGRiNjQxOWYwNjBkIgogICB4bXBNTTpPcmlnaW5hbERvY3VtZW50SUQ9InhtcC5kaWQ6Mjg0NzVjNDItZmEwZS00ZTdiLWIwN2EtNmExZjY3ZjAzNDkwIgogICBkYzpGb3JtYXQ9ImltYWdlL3BuZyIKICAgR0lNUDpBUEk9IjIuMCIKICAgR0lNUDpQbGF0Zm9ybT0iTGludXgiCiAgIEdJTVA6VGltZVN0YW1wPSIxNzA1NDM4MjEyMTY2MTk2IgogICBHSU1QOlZlcnNpb249IjIuMTAuMzYiCiAgIHRpZmY6T3JpZW50YXRpb249IjEiCiAgIHhtcDpDcmVhdG9yVG9vbD0iR0lNUCAyLjEwIgogICB4bXA6TWV0YWRhdGFEYXRlPSIyMDI0OjAxOjE2VDE3OjUwOjEyLTAzOjAwIgogICB4bXA6TW9kaWZ5RGF0ZT0iMjAyNDowMToxNlQxNzo1MDoxMi0wMzowMCI+CiAgIDx4bXBNTTpIaXN0b3J5PgogICAgPHJkZjpTZXE+CiAgICAgPHJkZjpsaQogICAgICBzdEV2dDphY3Rpb249InNhdmVkIgogICAgICBzdEV2dDpjaGFuZ2VkPSIvIgogICAgICBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOjhkZDBmNTEyLWU1NzQtNDlhMi1hM2Q0LWJiYmFhOGM5YTMxMyIKICAgICAgc3RFdnQ6c29mdHdhcmVBZ2VudD0iR2ltcCAyLjEwIChMaW51eCkiCiAgICAgIHN0RXZ0OndoZW49IjIwMjQtMDEtMTZUMTc6NTA6MTItMDM6MDAiLz4KICAgIDwvcmRmOlNlcT4KICAgPC94bXBNTTpIaXN0b3J5PgogIDwvcmRmOkRlc2NyaXB0aW9uPgogPC9yZGY6UkRGPgo8L3g6eG1wbWV0YT4KICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgCiAgICAgICAgICAgICAgICAgICAgICAgICAgIAo8P3hwYWNrZXQgZW5kPSJ3Ij8+gt5FngAAAAZiS0dEAP8A/wD/oL2nkwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAAd0SU1FB+gBEBQyDKRTXpYAAA5ESURBVHja7d1bjFx3fcDx35nLzq7t3Ti2wcS5YaLcZAdyqRopm15lCUGTQNUHjA0ob1EfEOoDSHVbRF2UiJTy0KotKSJRK9l9KAmRA7EURAREpnKwg4nBxMQm69iJYzsm9novszuX04e0EUlm3Znd2dkzM5+P5IfsmXPmv/9zZr+z/8zMJrFvUxoAQEM5UwAAQgkAQgkAQgkAQgkAQgkAQgkAQgkAQgkAQgkACCUACCUACCUACCUACCUACCUACCUACCUACCUACCUAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAgFACgFACgFACgFACgFACgFACgFACgFACgFACgFACAEIJAEIJAEIJAEIJAEIJAEIJAEIJAEIJAEIJAAglAAglAAglAAglAAglAAglAAglAAglAAglAAglACCUACCUACCUACCUACCUACCUACCUACCUANA3CqaAfrPuU3tj4NeTXTv+6TtWx6mvfsiJBKGExZFU0khm6937DVRTJxE6yNIrAAglAAglAAglAAglAGREEvs2eQkdmbX6H34VI//5sonIqNf+5daY/t1VJgK/UQKAUAIAQgkAQgkAQgkAQgkAQgkAQgkAQgkAQgkAQgkACCUACCUACCUACCUACCUACCUACCUACCUACCUACCUAIJQAIJQAIJQAIJQAIJQAkEkFU0C/+dD69TFUKmV6jJPlchwcG3OyQCih875y771x3eWXZ3qMB8fG4mNf/rKTBRlg6RUAhBIAhBIAhBIAhBIAMsKrXoF5G9z3RuTOVVreb+oP3xPpgOfpCCXQ41Y+/NK89nv5qd+P2qoBE0hX8JQOAIQSAIQSAIQSAIQSADLCq14hg1aPjMS9mza19ZgHx8Zi/5EjJheEErrfulWr4oubN7f1mF/fvVsoYR4svQKAUAKAUAKAUAKAUAJARnjVK5k2deeaqF1abHm/FbtejeKJ6cYbN2yIuOaa1gezf78TAkIJ2TJ9+6qYvn1Vy/sN/uSNuUN5/fURGzcKJdAUS68AIJQAIJQAIJQAIJQAkBFe9UpPGv/UVTH54bUNt331nx+I1dVlDbf99de+FsuHh9v4VDQXcccdre83MRFx4EBb5+QPNm6MS1esaOsxv/nUU3Hk5EkXHEIJ3WZqdM2c2578xK4YODrRcNvn77+/vaFMkjffjtKq119veyhvvPLKuPHKK9t6zO88+6xQ0vMsvQKAUAKAUAKAUAKAUAJARnjVK33nb7dsifefKzXcNrx3b0Sp1Lb7qlYq8ef33NNw26Vr1sSDDz/shIBQQrbcfv31sbF8SeONp0619b7q9Xp8/4knGm67rM1v1QAWh6VXABBKABBKABBKABBKAMgIr3qFRVTM5+OxbdsabhsolSJ27Wq8Y7Vq8kAoofclSRI3f+ADc9/gzBmTBBln6RUAhBIAhBIAhBIAhBIAMiKJfZtS00A/WVcZioG09eeILx26u6u/7x0/+EE8tHt3W4956PNXxfkNy1ver7q2FJFLXIx0BW8Poe+8Wpzuy+/7wvR0nDh7tq3HnBq5OqqXDbqo6GmWXgFAKAFAKAFAKAFAKAFAKAFAKAFAKAFAKAFAKAEAoQQAoQSAhfOh6NBDvrVnT3zhkUfaeswzf7cxJj7yPpOL3ygBAKEEAKEEAKEEAKEEAKEEAKEEAKEEAKEEAKEEAIQSAIQSAObNh6LTm8rLIurtvbzPzpQy/21fqK+IenF16zsOlCMKsw03pQOeT9Pfkti3KTUN9Jx/ezDiyC3moVl3fz3i9x41D9CAp4oAIJQAIJQAIJQAIJQAkBHeHsLSX4STaRQvtPfF1zOzEXVT27TihTQKr7V3xmbW5Nr9Dh0QSvrT2h9X46pds2095qFSLc5bL2na5d+bjct2T7f1mD/7y6GYWuck0P1cxQAglAAglAAglAAglAAglAAglAAglAAglAAglACAUAKAUALAwvlQdNpnfHXESze1vt/JIxFx2PwBQkmPe+XaiB1/1fp+1f8QSiCzLL0CgFACgFACgFACgFACQEZ41SuwOA78ccRLK9t7zNHHzStCCfSIpzdH5K4RSrqepVcAEEoAEEoAEEoAEEoAEEoAEEoAEEoAEEoAEEoAQCgBQCgBYOF8KHq/qhUivv3Z9h7z3HvNK4vrW3/R+j7LJiI++g1zh1DSojQX8exHzQPdZT7X7CWvCyULYukVAIQSAIQSAIQSAIQSAIQSAIQSAIQSAIQSAIQSABBKABBKABBKABBKABBKABBKABBKABBKABBKABBKAEAoAUAoAUAoAUAoAUAoAUAoAUAoAUAoAUAoAQChBAChBAChBAChBAChBAChBAChBAChBAChBAChBACEEgBaVTAFLLVXCp+JVwqfabzxnn+NuPOxxtt2bos48EcmsA3Gip+LseLnGm/85AMRtzzdeNs3vhLx4q0mEL9RAoBQAgBCCQBCCQBCCQBCCQBCCQBCCQBCCQBCCQBCCQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQDwdgVTQKb9phJxbPrdX796yNwAzTkzGzFVa+62xSRi3aBQ0kUeOR5xfP+7v77vTnMDNOfvj0Y8fba52149FPHobW/7kqVXALgIoQQAoQQAoQQAoQQAoQQAoQQAoQQAoQQAoQSAPlTYtv35jt7ho+VCHK411+fVuTTuG6o4S4ugGqV4sIvHv2378/F4+VwccioX3ce+fTw2PNH458TO6YkYy/j4h8cr8dkO/5wjWx795XQcbvK2q8/OxH3vuF4Koz863dEB/3CyGIcr+aZuO5RLY3RkxlleBLO5wYibu3f8oz86HXvWlyMudS4X23UvjMfobxr/nHjy2tmI4WyPvzRbi9H9p53IPvbDyWIcjia7M1WLd3bR0isAXIRQAoBQAoBQAoBQAkAnFUxBn574pB7bP7g/E2N549cvxvcPvRDPVxs8bzu/d+4dx/dFVIYy8T18uvpcy/tMJsV4LH9TJsb/O/UTcWO98StD10//bM797l3/YoyvW/qXHtfraXxp15NxT6kalyRv3zZUH/eARyiZTyjT+JuNBzIxlqOnn4xTJ3bF8+UWL8fxn0ZMns/E97C5/M2W9zmTLI/HSpszMf5bqnvj49Wft7zf1vVHY821A0s+/kqtFl/6xwfiT0Zm4opc6gFOW1l6BQChBAChBAChBAChBAChBAChBAChBAChBAChBACEEgCEEgCEEgCEEgCEEgCEEgCEEgCEEgCEEgD6XMEU9Kd6rRo//qcHMjGWmfNvOCFd6tDjO6MwuGzRjn+wmot/L///P6bSNHUyEEraLE3j3LGjLkUWZOLUyUU9/suVfPz3ZNFEs6QsvQKAUAKAUAKAUAKAUAKAUAKAUAKAUAKAUAKAUAIAQgkAQgkAC+eTqMm24Vsill33ri//WZJGJfKZH34l8rF5cOscWxPnF4QSFioXkbz7Mi130XdQDn/9Arr8pxAAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAIJQAwFuSiMHUNJBZw7dFLL8h++N8bcccj7BcxNpPZn/8F/ZHTL7gegO/UQKAUAKAUAKAUAKAUAKAUAKAUAJArymYArKtFlGfbbwpKbz5PsWsm3P8SURSdIpBKGEBLhx4818jK0cjBt+f7fGn9YjT/9V4W35ZxHv+1DmGjLP0CgAX+41yy2C1o3f4TCUfx2tJU7cdSdK4q1RzlvrAwWouDlabf962ZbAae3JpHMvI+OfzOJrK1eLxjIz/1kI9bujwz4JmHK8l8Uwl3/Tt7y7VYjjxqZy0tzuFrR1+cByrJXG8lm9ywBFbM/jgpf12lAsthXLrYDVeyWcnlPO5Ts8k1cyE8rZiPT6eZO+xtqeSbymUd5WqcUVOKGlvdyy9AsBFCCUACCUACCUACCUACCUAZIRP5gF6xhcnBuK3PxTwoZEZk4JQAvyfU/XEJNB2ll4BwG+U9JpfVHNxPsYjaqc7d6cD7215lzQiDs3xiUPnkjQi6eD488si8itcPCCU9IMvTAxExC/+91+HvG9ry7tU3xprI/WI+F7nxr98Q8TwzS4eaJGlVwAQSgCYH0uvQGYNJenb/hrIeBoxnnplK0IJEBFv/p3M334v5I5yIXaW/diisyy9AoBQAoBQAoBQAoBQAoBQAoBQAoBQAoBQAoBQAgBCCQBCCQBCCQBCCQBCCQAZ5A+70ZW2DlY7f6fV51reJb9UY204mFcjqvWGm26on3ZRgVDSS7YsSSh/2vIuuaUaa0MnI6onXTwwj8cxACCUACCUACCUACCUACCUACCUACCUACCUACCUAIBQAoBQAoBQAoBQAoBQAoBQAoBQAoBQAoBQAoBQAgCNFO4bL3X0Ds+mSdO3fa2eRKfHx9IYT1u7vevCddLp62T7itlYm0udhH4M5Yl6ktnBVSMiy+Nj6bgu6PR1UjGdfcvSKwAIJQDMTxIxaNEdAPxGCQBCCQBCCQBCCQBCCQBCCQBdqzBarHX0Dl+o5eJsk5+WMZRE3FqoOUt94OV6Lo7Xmv8UlU5ft/T+ddLqsekfyXdXRkffR3n/ZDH2VPJN3faKXBoPjcw4S31gR7kQO8uFpm//3ZVlk+Y6aet10uqx6R+WXgFAKAFgfqwzAETEBwv1iMGqiehBz1TyTf//55EkjbtKNaEEeKebCvW4qVA3ET3oWC2J47XmXhszkkRsfccTJkuvAHARQgkAQgkAQgkAQgkAQgkAGeHtISyJ56q5eGiq+NZ/j6fmBBBKeMt0msSJug+gBrLP0isACCUACCUACCUACCUAZIRXvdIV1ubSKJoGQCihse0rZuOKnDdbAp1n6RUAhBIAhBIAhBIAhBIAhBIAhBIAhBIAhBIAhBIAEEoAEEoAWLj/AVmrkVA0o0eJAAAAAElFTkSuQmCC">
 </head>
 <body>
-  <div id="app"></div>
-
-  <div id="launch" class="screen" hidden title="Click to start">
-    <div class="green-flag">
-      <svg viewBox="0 0 16.63 17.5" width="42" height="44">
-        <defs><style>.cls-1,.cls-2{fill:#4cbf56;stroke:#45993d;stroke-linecap:round;stroke-linejoin:round;}.cls-2{stroke-width:1.5px;}</style></defs>
-        <path class="cls-1" d="M.75,2A6.44,6.44,0,0,1,8.44,2h0a6.44,6.44,0,0,0,7.69,0V12.4a6.44,6.44,0,0,1-7.69,0h0a6.44,6.44,0,0,0-7.69,0"/>
-        <line class="cls-2" x1="0.75" y1="16.75" x2="0.75" y2="0.75"/>
-      </svg>
+  <main>
+    <h1 class="visually-hidden">Inside the firewall</h1>
+    <canvas id="game" aria-label="Inside the firewall game"></canvas>
+    <div id="ui">
+      <section id="title-menu" hidden>
+        <button id="play" type="button" aria-label="Play"><img class="normal" src="assets/costumes/play.svg" alt=""><img class="hover" src="assets/costumes/play-hover.svg" alt=""></button>
+        <p id="title-best" class="stat" hidden></p>
+      </section>
+      <section id="pause-menu" hidden>
+        <h2>Paused</h2>
+        <button class="pill" type="button" data-action="resume">Resume</button>
+        <button class="pill" type="button" data-action="restart">Restart</button>
+        <button class="pill" type="button" data-fullscreen>Full screen</button>
+        <button class="pill" type="button" data-action="settings">Settings</button>
+        <button class="pill" type="button" data-action="menu">Menu</button>
+      </section>
+      <section id="settings-menu" role="dialog" aria-labelledby="settings-title" hidden>
+        <h2 id="settings-title">Settings</h2>
+        <label>Music <input id="music-volume" type="range" min="0" max="100" step="5"></label>
+        <label>Sound effects <input id="effects-volume" type="range" min="0" max="100" step="5"></label>
+        <label>Game speed <span class="speed"><input id="game-speed" type="range" min="5" max="500" step="5"><output id="game-speed-value" for="game-speed">100%</output></span></label>
+        <fieldset>
+          <legend>Touch buttons</legend>
+          <span class="choices">
+            <label><input type="radio" name="touch" value="auto">Auto</label>
+            <label><input type="radio" name="touch" value="on">On</label>
+            <label><input type="radio" name="touch" value="off">Off</label>
+          </span>
+        </fieldset>
+        <button class="pill" type="button" data-action="keys">Keys</button>
+        <button class="pill" type="button" data-action="close-settings">Done</button>
+      </section>
+      <section id="keys-menu" role="dialog" aria-labelledby="keys-title" hidden>
+        <h2 id="keys-title">Keys</h2>
+        <div class="row"><span id="key-left">Left</span> <button id="bind-left" type="button" data-bind="left" aria-labelledby="key-left bind-left"></button></div>
+        <div class="row"><span id="key-right">Right</span> <button id="bind-right" type="button" data-bind="right" aria-labelledby="key-right bind-right"></button></div>
+        <div class="row"><span id="key-down">Down</span> <button id="bind-down" type="button" data-bind="down" aria-labelledby="key-down bind-down"></button></div>
+        <div class="row"><span id="key-jump">Jump</span> <button id="bind-jump" type="button" data-bind="jump" aria-labelledby="key-jump bind-jump"></button></div>
+        <button class="pill" type="button" data-action="reset-keys">Reset</button>
+        <button class="pill" type="button" data-action="close-keys">Done</button>
+      </section>
+      <section id="over-menu" hidden>
+        <div class="stat">
+          <p>Time <span id="over-time">0</span> <strong id="new-best" hidden>New best!</strong></p>
+          <p>Best <span id="over-best">0</span></p>
+          <p id="over-grabs" class="grabs"></p>
+        </div>
+        <span id="replay-label">Replay</span>
+        <div class="actions">
+          <button id="share" class="pill dark" type="button">Share</button>
+          <button class="pill dark" type="button" data-action="menu">Menu</button>
+        </div>
+        <button id="repair" type="button" data-action="restart">Repair (R)</button>
+      </section>
     </div>
-  </div>
+    <section id="cheats" aria-labelledby="cheats-title" hidden>
+      <h2 id="cheats-title">Cheats (`)</h2>
+      <button type="button" data-cheat="jetpack"><kbd>1</kbd>Jetpack</button>
+      <button type="button" data-cheat="shield"><kbd>2</kbd>Shield</button>
+      <button type="button" data-cheat="freeze"><kbd>3</kbd>Freeze</button>
+      <button type="button" data-cheat="pill"><kbd>4</kbd>Red pill</button>
+      <button type="button" data-cheat="heart"><kbd>5</kbd>Heart</button>
+      <button type="button" data-cheat="god" aria-pressed="false"><kbd>6</kbd>God mode</button>
+      <button type="button" data-cheat="dive"><kbd>7</kbd>3D world</button>
+      <button type="button" data-cheat="escape"><kbd>8</kbd>Escape</button>
+      <button type="button" data-cheat="powerUpNow"><kbd>9</kbd>Power-up now</button>
+      <button type="button" data-cheat="penguinNow"><kbd>0</kbd>Penguin now</button>
+      <button type="button" data-cheat="skip"><kbd>-</kbd>Skip 30 s</button>
+      <button type="button" data-cheat="shoes"><kbd>z</kbd>Speed shoes</button>
+      <button type="button" data-cheat="portal"><kbd>c</kbd>Portal gun</button>
+      <button type="button" data-cheat="ball"><kbd>b</kbd>Bonus round</button>
+      <button type="button" data-cheat="drive"><kbd>n</kbd>Drive in 3D</button>
+    </section>
+    <div id="corner">
+      <button id="open-settings" class="icon" type="button" title="Settings" aria-label="Settings" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 1h4l.6 2.6 1.6.9 2.5-.9 2 3.4-2 1.8v2.4l2 1.8-2 3.4-2.5-.9-1.6.9L12 19H8l-.6-2.6-1.6-.9-2.5.9-2-3.4 2-1.8V8.8l-2-1.8 2-3.4 2.5.9 1.6-.9zm2 6a3 3 0 100 6 3 3 0 000-6z"/></svg></button>
+      <button id="fullscreen-game" class="icon" type="button" data-fullscreen title="Full screen" aria-label="Full screen"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 3h5v2H5v3H3zm9 0h5v5h-2V5h-3zM3 12h2v3h3v2H3zm12 0h2v5h-5v-2h3z"/></svg></button>
+      <button id="pause-game" class="icon" type="button" title="Pause" aria-label="Pause" hidden>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3h4v14H4zm8 0h4v14h-4z"/></svg>
+      </button>
+    </div>
+    <div id="touch" hidden>
+      <button type="button" data-move="left" aria-label="Left"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M14 2v16L4 10z"/></svg></button>
+      <button type="button" data-move="right" aria-label="Right"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2v16l10-8z"/></svg></button>
+      <button type="button" data-move="down" aria-label="Fall faster"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 6h16l-8 10z"/></svg></button>
+      <button type="button" data-move="jump" aria-label="Jump"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 14h16L10 4z"/></svg></button>
+    </div>
+    <p id="status" class="visually-hidden" aria-live="polite"></p>
 
-  <div id="loading" class="screen">
-    <noscript>Enable JavaScript</noscript>
-    <h1 class="loading-text">Loading malware...</h1>
-    
-    <div class="progress-bar-outer"><div class="progress-bar-inner" id="loading-inner"></div></div>
-  </div>
+    <div id="loading" class="screen">
+      <noscript>Enable JavaScript</noscript>
+      <h1>Loading malware...</h1>
+      <div class="progress"><div id="loading-bar"></div></div>
+    </div>
 
-  <div id="error" class="screen" hidden>
-    <h1>Error</h1>
-    <details>
-      <summary id="error-message"></summary>
-      <p id="error-stack"></p>
-    </details>
-  </div>
+    <div id="error" class="screen" hidden>
+      <h1>Error</h1>
+      <p id="error-message"></p>
+    </div>
+  </main>
 
-  <script src="script.js"></script>
-  <script>
-    const appElement = document.getElementById('app');
-    const launchScreen = document.getElementById('launch');
-    const loadingScreen = document.getElementById('loading');
-    const loadingInner = document.getElementById('loading-inner');
-    const errorScreen = document.getElementById('error');
-    const errorScreenMessage = document.getElementById('error-message');
-    const errorScreenStack = document.getElementById('error-stack');
-
-    const handleError = (error) => {
-      console.error(error);
-      if (!errorScreen.hidden) return;
-      errorScreen.hidden = false;
-      errorScreenMessage.textContent = '' + error;
-      let debug = error && error.stack || 'no stack';
-      debug += '\nUser agent: ' + navigator.userAgent;
-      errorScreenStack.textContent = debug;
-    };
-    const setProgress = (progress) => {
-      if (loadingInner) loadingInner.style.width = progress * 100 + '%';
-    };
-    const interpolate = (a, b, t) => a + t * (b - a);
-
-    try {
-      setProgress(0.1);
-
-      const scaffolding = new Scaffolding.Scaffolding();
-      scaffolding.width = 480;
-      scaffolding.height = 360;
-      scaffolding.resizeMode = "preserve-ratio";
-      scaffolding.editableLists = false;
-      scaffolding.usePackagedRuntime = true;
-      scaffolding.setup();
-      scaffolding.appendTo(appElement);
-
-      const vm = scaffolding.vm;
-      window.scaffolding = scaffolding;
-      window.vm = scaffolding.vm;
-      window.Scratch = {
-        vm,
-        renderer: vm.renderer,
-        audioEngine: vm.runtime.audioEngine,
-        bitmapAdapter: vm.runtime.v2BitmapAdapter,
-        videoProvider: vm.runtime.ioDevices.video.provider
-      };
-
-      scaffolding.setUsername("player####".replace(/#/g, () => Math.floor(Math.random() * 10)));
-      scaffolding.setAccentColor("#ff4c4c");
-
-      try {
-        scaffolding.addCloudProvider(new Scaffolding.Cloud.WebSocketProvider(["wss://clouddata.turbowarp.org","wss://clouddata.turbowarp.xyz"], "p4-@scratch.sb3"));
-      } catch (error) {
-        console.error(error);
-      }
-
-      vm.setTurboMode(false);
-      if (vm.setInterpolation) vm.setInterpolation(true);
-      if (vm.setFramerate) vm.setFramerate(30);
-      if (vm.renderer.setUseHighQualityRender) vm.renderer.setUseHighQualityRender(false);
-      if (vm.setRuntimeOptions) vm.setRuntimeOptions({
-        fencing: true,
-        miscLimits: true,
-        maxClones: 300,
-      });
-      if (vm.setCompilerOptions) vm.setCompilerOptions({
-        enabled: true,
-        warpTimer: false
-      });
-      if (vm.renderer.setMaxTextureDimension) vm.renderer.setMaxTextureDimension(2048);
-
-      // enforcePrivacy threat model only makes sense in the editor
-      if (vm.runtime.setEnforcePrivacy) vm.runtime.setEnforcePrivacy(false);
-
-      if (typeof ScaffoldingAddons !== 'undefined') {
-        ScaffoldingAddons.run(scaffolding, {"gamepad":true,"pointerlock":false,"specialCloudBehaviors":false,"unsafeCloudBehaviors":false,"pause":false});
-      }
-
-      scaffolding.setExtensionSecurityManager({
-        getSandboxMode: () => 'unsandboxed',
-        canLoadExtensionFromProject: () => true
-      });
-      for (const extension of []) {
-        vm.extensionManager.loadExtensionURL(extension);
-      }
-
-    } catch (e) {
-      handleError(e);
-    }
-  </script>
-  
-  
-    <script>
-      const getProjectData = (function() {
-        const storage = scaffolding.storage;
-        storage.onprogress = (total, loaded) => {
-          setProgress(interpolate(0.2, 0.98, loaded / total));
-        };
-        
-        storage.addWebStore(
-          [
-            storage.AssetType.ImageVector,
-            storage.AssetType.ImageBitmap,
-            storage.AssetType.Sound,
-            storage.AssetType.Font
-          ].filter(i => i),
-          (asset) => new URL('./assets/' + asset.assetId + '.' + asset.dataFormat, location).href
-        );
-        return () => new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.onload = () => {
-          resolve(xhr.response);
-        };
-        xhr.onerror = () => {
-          if (location.protocol === 'file:') {
-            reject(new Error('Zip environment must be used on a website, not on a local file. To fix this error, use the "Plain HTML" environment instead.'));
-          } else {
-            reject(new Error('Request to load project data failed.'));
-          }
-        };
-        xhr.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setProgress(interpolate(0.1, 0.2, e.loaded / e.total));
-          }
-        };
-        xhr.responseType = 'arraybuffer';
-        xhr.open('GET', "./assets/project.json");
-        xhr.send();
-      });
-      })();
-    </script>
-  <script>
-    const run = async () => {
-      const projectData = await getProjectData();
-      await scaffolding.loadProject(projectData);
-      setProgress(1);
-      loadingScreen.hidden = true;
-      if (true) {
-        scaffolding.start();
-      } else {
-        launchScreen.hidden = false;
-        launchScreen.addEventListener('click', () => {
-          launchScreen.hidden = true;
-          scaffolding.start();
-        });
-        launchScreen.focus();
-      }
-    };
-    run().catch(handleError);
-  </script>
-  <script>
-    // Handle volume control messages from parent window
-    window.addEventListener('message', (event) => {
-      if (event.data.type === 'setVolume') {
-        try {
-          // Set volume for Scratch audio engine
-          if (window.Scratch && window.Scratch.audioEngine) {
-            const audioEngine = window.Scratch.audioEngine;
-            audioEngine.inputNode.gain.value = event.data.volume;
-            
-            // Confirm volume change to parent
-            window.parent.postMessage({
-              type: 'volumeUpdate',
-              volume: event.data.volume
-            }, '*');
-          }
-        } catch (error) {
-          console.error('Error setting volume:', error);
-        }
-      }
-    });
-  </script>
+  <script type="module" src="game.js"></script>
 </body>
 </html>
