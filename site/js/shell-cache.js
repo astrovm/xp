@@ -216,6 +216,7 @@
     CACHE_NAME,
     LEGACY_CACHE_PREFIX,
     MISSING_FILE_MESSAGE,
+    cleanResponse,
     createShellCache,
     parseWorkerManifest,
     reportMissingFiles,
