@@ -19,7 +19,7 @@ import {
   PRECACHE_FILE_SUFFIXES,
   build,
   compressFonts,
-  createIntegrityManifestTransform,
+  createPrecacheManifest,
   generateServiceWorker,
   getDeploymentVersion,
   parseBuildArguments,
@@ -113,6 +113,7 @@ async function makeSource(root: string): Promise<void> {
     "js/dialogs.js": "dialogs",
     "js/offline.js": "offline",
     "js/offline-worker.js": "offline worker",
+    "js/shell-worker.js": "shell worker",
     "js/startup-recovery.js": "startup recovery",
     "apps/index.js": "application registry",
     "apps/catalog.js": 'const icon = "assets/xp/icons/paint.png";',
@@ -166,8 +167,6 @@ async function addGeneratedRuntime(root: string): Promise<void> {
     "js/ruffle.js": "ruffle",
     "js/core.ruffle.abc123.js": "core",
     "js/abc123.wasm": "wasm",
-    "sw.js": 's("workbox-f9030226", import.meta.url)',
-    "workbox-f9030226.js": "workbox",
   });
 }
 
@@ -466,39 +465,43 @@ describe("build metadata", () => {
   });
 });
 
-describe("Workbox and artifact validation", () => {
-  test("precaches bitmap artwork and Pinball data", async () => {
+describe("service worker and artifact validation", () => {
+  const release = "releases/26.07.28-abcdef1";
+  const workerScripts = {
+    [`${release}/js/offline-worker.12345678.js`]: "offline worker",
+    [`${release}/js/shell-worker.87654321.js`]: "shell worker",
+  };
+
+  test("precaches bitmap artwork and Pinball data with revisions", async () => {
     const root = await makeTemporaryDirectory();
     await writeFiles(root, {
       "index.html": "final index",
-      "releases/26.07.28-abcdef1/js/offline-worker.12345678.js":
-        "offline worker",
-      "releases/26.07.28-abcdef1/assets/xp/Chess.12345678.bmp": "bitmap",
-      "releases/26.07.28-abcdef1/apps/pinball/runtime/SpaceCadetPinball.data":
+      ...workerScripts,
+      [`${release}/assets/xp/Chess.12345678.bmp`]: "bitmap",
+      [`${release}/apps/pinball/runtime/SpaceCadetPinball.data`]:
         "pinball data",
     });
 
-    await generateServiceWorker(root, undefined, "26.07.28-abcdef1");
+    await generateServiceWorker(root, "26.07.28-abcdef1");
 
     const worker = await readFile(join(root, "sw.js"), "utf8");
-    expect(worker).toContain(
-      "releases/26.07.28-abcdef1/assets/xp/Chess.12345678.bmp",
+    const manifest = JSON.parse(
+      worker.match(/^self\.__ASTRO_XP_PRECACHE__=(.*);$/m)![1],
     );
+    expect(manifest).toEqual([
+      precached(
+        "pinball data",
+        `${release}/apps/pinball/runtime/SpaceCadetPinball.data`,
+      ),
+      precached("bitmap", `${release}/assets/xp/Chess.12345678.bmp`),
+      precached("final index", "index.html"),
+    ]);
     expect(worker).toContain(
-      "releases/26.07.28-abcdef1/apps/pinball/runtime/SpaceCadetPinball.data",
+      `importScripts("${release}/js/offline-worker.12345678.js","${release}/js/shell-worker.87654321.js");`,
     );
-    expect(worker).toContain(
-      'importScripts("releases/26.07.28-abcdef1/js/offline-worker.12345678.js")',
-    );
-    expect(worker).toContain(
-      `integrity:"sha384-${createHash("sha384")
-        .update("bitmap")
-        .digest("base64")}"`,
-    );
-    expect(worker).toContain(
-      `integrity:"sha384-${createHash("sha384")
-        .update("final index")
-        .digest("base64")}"`,
+    expect(worker).toContain('self.__ASTRO_XP_VERSION__="26.07.28-abcdef1";');
+    expect(await readFile(join(root, "sw.26.07.28-abcdef1.js"), "utf8")).toBe(
+      `${worker}\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n`,
     );
     await validatePrecacheIntegrity(root);
     await writeFile(join(root, "index.html"), "changed after generation");
@@ -507,56 +510,49 @@ describe("Workbox and artifact validation", () => {
     );
   });
 
-  test("generates a self-contained worker for the release directory", async () => {
+  test("leaves out ignored, hidden, unknown and oversized files", async () => {
     const root = await makeTemporaryDirectory();
-    const release = join(root, "releases", "26.07.28-abcdef1");
     await writeFiles(root, {
-      "index.html": "final index",
-      "releases/26.07.28-abcdef1/js/offline-worker.12345678.js":
-        "offline worker",
+      "index.html": "index",
+      "version.json": "{}",
+      "assets/xp/SOURCES.json": "{}",
+      "swf/game/main.swf": "swf",
+      "iframe/game/index.html": "iframe",
+      "dos/doom/doom.jsdos": "dos",
+      "vendor/scummvm/scummvm.js": "scummvm",
+      "js/abc123.wasm": "ruffle",
+      "js/core.ruffle.abc123.js": "ruffle core",
+      "js/offline-worker.12345678.js": "offline worker",
+      "js/shell-worker.87654321.js": "shell worker",
+      "js/main.js": "main",
+      ".hidden/file.js": "hidden",
+      "notes.txt": "text",
+      "apps/pinball/runtime/large.wasm": "x",
     });
-    let configuration: any;
-    const generator = async (options: any) => {
-      configuration = options;
-      await writeFiles(root, {
-        "sw.js": 's("workbox-f9030226", import.meta.url)',
-        "workbox-f9030226.js": "workbox",
-      });
-      return { count: 1, size: 1, warnings: [], filePaths: [] };
-    };
-    await generateServiceWorker(root, generator as any, "26.07.28-abcdef1");
-    expect(configuration.inlineWorkboxRuntime).toBeTrue();
-    expect(configuration.globDirectory).toBe(`${release}/`);
-    expect(configuration.importScripts).toEqual([
-      "releases/26.07.28-abcdef1/js/offline-worker.12345678.js",
-    ]);
+    await writeFile(
+      join(root, "apps/pinball/runtime/large.wasm"),
+      new Uint8Array(25_000_001),
+    );
+
     expect(
-      await Bun.file(join(root, "workbox-f9030226.js")).exists(),
-    ).toBeFalse();
-    expect(await readFile(join(root, "sw.js"), "utf8")).toContain(
-      'self.__ASTRO_XP_VERSION__="26.07.28-abcdef1"',
-    );
-    expect(await readFile(join(root, "sw.26.07.28-abcdef1.js"), "utf8")).toBe(
-      `${await readFile(join(root, "sw.js"), "utf8")}\nself.__ASTRO_XP_IMMUTABLE_WORKER__=true;\n`,
-    );
+      (await createPrecacheManifest(root, "prefix/")).map(({ url }) => url),
+    ).toEqual(["prefix/index.html", "prefix/js/main.js"]);
   });
 
-  test("removes an unused external Workbox runtime", async () => {
+  test("builds an unversioned worker from the output root", async () => {
     const root = await makeTemporaryDirectory();
     await writeFiles(root, {
+      "index.html": "index",
       "js/offline-worker.12345678.js": "offline worker",
+      "js/shell-worker.87654321.js": "shell worker",
     });
-    const generator = async () => {
-      await writeFile(
-        join(root, "sw.js"),
-        's("workbox-deadbeef", import.meta.url)',
-      );
-      return { count: 1, size: 1, warnings: [], filePaths: [] };
-    };
-    await generateServiceWorker(root, generator as any);
-    expect(
-      await Bun.file(join(root, "workbox-deadbeef.js")).exists(),
-    ).toBeFalse();
+    await generateServiceWorker(root);
+    const worker = await readFile(join(root, "sw.js"), "utf8");
+    expect(worker).not.toContain("__ASTRO_XP_VERSION__");
+    expect(worker).toContain(
+      JSON.stringify([precached("index", "index.html")]),
+    );
+    expect(await Bun.file(join(root, "sw.undefined.js")).exists()).toBeFalse();
   });
 
   test("accepts a complete artifact and rejects a missing representative game", async () => {
@@ -772,6 +768,13 @@ const sri = (content: string | Uint8Array) =>
   `sha384-${createHash("sha384").update(content).digest("base64")}`;
 const shortHash = (content: string | Uint8Array) =>
   createHash("sha384").update(content).digest("hex").slice(0, 8);
+const precached = (content: string | Uint8Array, url: string) => ({
+  integrity: sri(content),
+  revision: shortHash(content),
+  url,
+});
+const precacheWorker = (entries: object[]) =>
+  `self.__ASTRO_XP_PRECACHE__=${JSON.stringify(entries)};\n`;
 
 async function makeValidArtifact() {
   const root = await makeTemporaryDirectory();
@@ -897,6 +900,11 @@ describe("build output validation failures", () => {
       "a missing offline worker",
       async ({ root }) => unlink(await jsFile(root, /^offline-worker\./)),
       "no uniquely hashed offline worker",
+    ],
+    [
+      "a missing shell worker",
+      async ({ root }) => unlink(await jsFile(root, /^shell-worker\./)),
+      "no uniquely hashed shell worker",
     ],
     [
       "a missing Ruffle core",
@@ -1063,8 +1071,7 @@ async function makeRelease({
 } = {}) {
   const root = await makeTemporaryDirectory();
   const release = `releases/${releaseVersion}`;
-  const rootWorker =
-    worker ?? `[{integrity:"${sri(html)}",url:"index.html",revision:null}]`;
+  const rootWorker = worker ?? precacheWorker([precached(html, "index.html")]);
   await writeFiles(root, {
     "index.html": html,
     "version.json": "{}",
@@ -1080,6 +1087,7 @@ async function makeRelease({
     [`${release}/iframe/doom/index.html`]: "doom",
     [`${release}/js/main.js`]: "main",
     [`${release}/js/offline-worker.12345678.js`]: 'fetch("/assets/x")',
+    [`${release}/js/shell-worker.12345678.js`]: "shell worker",
     [`${release}/vendor/v.js`]: "vendor",
     ...files,
   });
@@ -1157,7 +1165,7 @@ describe("release output validation failures", () => {
       "a precache entry outside the output",
       () =>
         makeRelease({
-          worker: `[{integrity:"${sri("x")}",url:"../outside.js"}]`,
+          worker: precacheWorker([precached("x", "../outside.js")]),
         }),
       "escapes the build output: ../outside.js",
     ],
@@ -1165,15 +1173,25 @@ describe("release output validation failures", () => {
       "a precache entry for a missing file",
       () =>
         makeRelease({
-          worker: `[{integrity:"${sri("x")}",url:"missing.js"}]`,
+          worker: precacheWorker([precached("x", "missing.js")]),
         }),
       "references a missing file: missing.js",
+    ],
+    [
+      "a precache entry with a stale revision",
+      () =>
+        makeRelease({
+          worker: precacheWorker([
+            { ...precached("{}", "version.json"), revision: "00000000" },
+          ]),
+        }),
+      "invalid revision: version.json",
     ],
     [
       "a worker that does not precache the index",
       () =>
         makeRelease({
-          worker: `[{integrity:"${sri("{}")}",url:"version.json"}]`,
+          worker: precacheWorker([precached("{}", "version.json")]),
         }),
       "must precache index.html exactly once",
     ],
@@ -1187,33 +1205,6 @@ describe("release output validation failures", () => {
 });
 
 describe("build helpers", () => {
-  test("integrity transforms keep the index unprefixed and reject escaping entries", async () => {
-    const root = await makeTemporaryDirectory();
-    await writeFiles(root, { "index.html": "index", "a.js": "a" });
-    const entries = [
-      { url: "index.html", revision: null, size: 5 },
-      { url: "a.js", revision: null, size: 1 },
-    ];
-    expect(
-      (
-        await createIntegrityManifestTransform(root)(entries as any)
-      ).manifest.map(({ url }) => url),
-    ).toEqual(["index.html", "a.js"]);
-    expect(
-      (
-        await createIntegrityManifestTransform(
-          root,
-          "releases/v/",
-        )(entries as any)
-      ).manifest.map(({ url }) => url),
-    ).toEqual(["index.html", "releases/v/a.js"]);
-    await expect(
-      createIntegrityManifestTransform(root)([
-        { url: "../escape.js", revision: null, size: 1 },
-      ] as any),
-    ).rejects.toThrow("escapes the build output: ../escape.js");
-  });
-
   test("rejects unsafe release versions", async () => {
     const root = await makeTemporaryDirectory();
     await expect(scopeReleaseReferences(root, "../escape")).rejects.toThrow(
@@ -1319,16 +1310,16 @@ describe("build helpers", () => {
     ).toBe(12);
   });
 
-  test("requires exactly one offline worker and a generated service worker", async () => {
+  test("requires exactly one of each worker script", async () => {
     const root = await makeTemporaryDirectory();
     await writeFiles(root, { "js/main.js": "main" });
     await expect(generateServiceWorker(root)).rejects.toThrow(
       "exactly one hashed offline worker",
     );
     await writeFiles(root, { "js/offline-worker.12345678.js": "worker" });
-    await expect(
-      generateServiceWorker(root, (async () => ({})) as any),
-    ).rejects.toThrow("Workbox did not generate output sw.js");
+    await expect(generateServiceWorker(root)).rejects.toThrow(
+      "exactly one hashed shell worker",
+    );
   });
 
   test("restores the previous output when replacing it fails", async () => {
@@ -1361,7 +1352,12 @@ describe("build helpers", () => {
         }),
       generate: async (directory, version) => {
         await writeFiles(directory, {
-          "sw.js": `[{integrity:"${sri(await readFile(join(directory, "index.html")))}",url:"index.html"}]`,
+          "sw.js": precacheWorker([
+            precached(
+              await readFile(join(directory, "index.html")),
+              "index.html",
+            ),
+          ]),
         });
         await cp(join(directory, "sw.js"), join(directory, `sw.${version}.js`));
         await editFile(

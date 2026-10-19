@@ -117,7 +117,7 @@ export default defineConfig(
       "tests/**/*.ts",
       "tools/**/*.ts",
       "worker/**/*.ts",
-      "workbox-config.ts",
+      "precache-config.ts",
     ],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: {
