@@ -14,6 +14,7 @@ const scripts = [
   "site/js/filesystem.js",
   "site/js/file-operations.js",
   "site/js/dialogs.js",
+  "site/js/shell-cache.js",
   "site/js/offline.js",
 ];
 

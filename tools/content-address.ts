@@ -112,7 +112,6 @@ export function findReferences(
   const directory = directoryOf(file);
   const fileRelativeFirst = [".html", ".css"].includes(extension(file));
   const references: Reference[] = [];
-  const taken: [number, number][] = [];
   const resolve = (token: string, base: string) => {
     const joined = posix.normalize(base ? `${base}/${token}` : token);
     return joined === ".." || joined.startsWith("../") ? null : joined;
@@ -145,16 +144,12 @@ export function findReferences(
       `${escapeRegExp(origin)}(/[\\w.~/-]+)(?=[?#"'\`)\\s,;])`,
       "g",
     );
+    // A path inside such a URL follows "/", so PATH_TOKEN never sees it.
     for (const match of source.matchAll(pattern)) {
-      const start = match.index + origin.length;
-      taken.push([match.index, start + match[1].length]);
-      add(start, match[1], true);
+      add(match.index + origin.length, match[1], true);
     }
   }
   for (const match of source.matchAll(PATH_TOKEN)) {
-    if (taken.some(([from, to]) => match.index >= from && match.index < to)) {
-      continue;
-    }
     add(match.index, match[0], false);
   }
   return references.sort((a, b) => a.start - b.start);

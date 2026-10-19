@@ -138,7 +138,7 @@ const serveContent = (request) =>
 
 describe("shell worker install", () => {
   test("downloads in parallel and checks each file's integrity", async () => {
-    const manifest = Array.from({ length: 40 }, (_, index) =>
+    const manifest = Array.from({ length: 100 }, (_, index) =>
       entry(`js/file-${index}.js`, `file ${index}`),
     );
     manifest.push(fixedEntry("index.html", "index"));
@@ -157,8 +157,8 @@ describe("shell worker install", () => {
 
     await worker.install();
 
-    expect(peak).toBe(16);
-    expect(worker.requests).toHaveLength(41);
+    expect(peak).toBe(64);
+    expect(worker.requests).toHaveLength(101);
     const first = worker.requests.find((request) =>
       request.url.endsWith("/file-0.js"),
     );
@@ -421,7 +421,7 @@ describe("shell worker retries", () => {
   });
 
   test("stops starting downloads after one fails", async () => {
-    const manifest = Array.from({ length: 40 }, (_, index) =>
+    const manifest = Array.from({ length: 100 }, (_, index) =>
       entry(`js/file-${index}.js`, `file ${index}`),
     );
     const worker = loadWorker({
@@ -435,7 +435,7 @@ describe("shell worker retries", () => {
     });
     await expect(worker.install()).rejects.toThrow("failed (404)");
     await new Promise((resolve) => originalSetTimeout(resolve, 20));
-    expect(worker.requests.length).toBeLessThan(40);
+    expect(worker.requests.length).toBeLessThan(100);
   });
 });
 

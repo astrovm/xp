@@ -153,10 +153,6 @@ export class BuildPaths {
     return join(this.root, "offline-games.json");
   }
 
-  get fflateJs() {
-    return join(this.root, ...FFLATE_JS_PATH.split("/"));
-  }
-
   get jsDosRoot() {
     return join(this.root, ...JS_DOS_ROOT_PATH.split("/"));
   }

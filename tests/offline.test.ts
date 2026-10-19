@@ -1177,6 +1177,13 @@ describe("offline manager", () => {
     installing.transition("redundant");
     expect(h.timers.filter(({ delay }) => delay === 2000)).toHaveLength(2);
 
+    // A retry whose check fails waits for the next one.
+    h.environment.navigator.onLine = false;
+    installing.transition("redundant");
+    h.timers.findLast(({ delay }) => delay === 4000).callback();
+    await flush();
+    h.environment.navigator.onLine = true;
+
     await manager.setOfflineEnabled(false);
     const checks = countVersionFetches(h);
     h.timers.findLast(({ delay }) => delay === 2000).callback();

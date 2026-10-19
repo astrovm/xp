@@ -16,7 +16,8 @@
   const CACHE_NAME = "astro-xp-shell-v1";
   // The Workbox precache used before this cache. Its files are reused once.
   const LEGACY_CACHE_PREFIX = "astro-xp-precache-";
-  const CONCURRENCY = 16;
+  // HTTP/2 runs these side by side; 64 measured fastest against 16 and 32.
+  const CONCURRENCY = 64;
   const ATTEMPTS = 3;
   const RETRY_DELAY = 500;
   // Releases used to live under /releases/<version>/.
