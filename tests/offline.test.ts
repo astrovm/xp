@@ -964,6 +964,21 @@ describe("offline manager", () => {
     ]);
   });
 
+  test("keeps offline use ready while a newer release waits for its delay", async () => {
+    const pending = makeEnvironment({
+      registration: new Registration({
+        active: new Worker("activated", manifest.version),
+      }),
+      remoteVersion: "26.07.30-bbbbbbb",
+      remoteReleasedAt: new Date(now).toISOString(),
+    });
+    const pendingManager = await createInitializedManager(pending.environment);
+    expect(pendingManager.getSnapshot()).toMatchObject({
+      phase: "update-pending",
+      workerState: "active",
+    });
+  });
+
   test("delays automatic activation until a release is stable and never reloads the open session", async () => {
     const firstReleaseTime = now - 3 * 60 * 60 * 1000;
     const delayedRegistration = new Registration({

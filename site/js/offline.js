@@ -561,6 +561,11 @@
       registration = nextRegistration;
       if (trackedRegistrations.has(nextRegistration)) return;
       trackedRegistrations.add(nextRegistration);
+      // An update that waits for its delay returns before the check records
+      // the worker, so the one already running counts as ready.
+      if (nextRegistration.active && state.workerState === "unregistered") {
+        setState({ workerState: "active" });
+      }
       nextRegistration.addEventListener("updatefound", () => {
         if (!state.enabled) return;
         trackInstallingWorker(
