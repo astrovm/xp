@@ -80,4 +80,51 @@ describe("reVCDOS", () => {
     host.close();
     game.close();
   });
+
+  test("starts in its window and still locks the mouse", async () => {
+    const launcher = await file("site/iframe/revcdos/index.html").text();
+    const gameUrl = launcher.match(/gameFrame\.src = `(game\.html\?[^`$]*)/);
+    expect(gameUrl?.[1]).toBe("game.html?fullscreen=0");
+
+    const start = async (query: string) => {
+      const game = new Window({
+        url: `http://127.0.0.1/iframe/revcdos/game.html${query}`,
+      });
+      // Markup set this way never runs its scripts. Only the two below run.
+      game.document.documentElement.innerHTML = await file(
+        "site/iframe/revcdos/game.html",
+      ).text();
+      game.eval(await file("site/iframe/revcdos/idbfs.js").text());
+      try {
+        game.eval(await file("site/iframe/revcdos/game.js").text());
+      } catch {
+        // The engine setup after the click handler needs a real browser.
+      }
+      const posted: unknown[] = [];
+      const parent = {
+        postMessage: (message: unknown) => posted.push(message),
+      };
+      Object.defineProperty(game, "parent", { value: parent });
+      Object.defineProperty(game, "top", { value: parent });
+      game.startGame = async () => {};
+      const listeners: string[] = [];
+      const addListener = game.document.addEventListener.bind(game.document);
+      game.document.addEventListener = (type, ...rest) => {
+        listeners.push(type);
+        return addListener(type, ...rest);
+      };
+      game.document.querySelector(".click-to-play button").click();
+      game.close();
+      return { listeners, posted };
+    };
+
+    expect(await start("?fullscreen=0")).toEqual({
+      listeners: ["mousedown"],
+      posted: [],
+    });
+    expect(await start("")).toEqual({
+      listeners: ["mousedown"],
+      posted: [{ event: "request-fullscreen" }],
+    });
+  });
 });

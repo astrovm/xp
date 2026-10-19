@@ -588,10 +588,11 @@ clickToPlay.addEventListener("click", (e) => {
   }
   if (e.target === clickToPlay || e.target === clickLink) {
     startGame(e);
-    if (!isMobile && autoFullScreen) {
-      if (window.top === window) {
+    // Astro XP: the mouse is locked for the camera in a window too.
+    if (!isMobile) {
+      if (autoFullScreen && window.top === window) {
         document.body.requestFullscreen(document.documentElement);
-      } else {
+      } else if (autoFullScreen) {
         window.parent.postMessage(
           {
             event: "request-fullscreen",
@@ -624,7 +625,7 @@ clickToPlay.addEventListener("click", (e) => {
         navigator.keyboard.lock(["Escape", "KeyW"]);
       }
     }
-  } else if (window.top !== window) {
+  } else if (autoFullScreen && window.top !== window) {
     window.parent.postMessage(
       {
         event: "request-fullscreen",
