@@ -76,6 +76,65 @@ describe("offline service worker", () => {
     ).toBe(404);
     expect(posted).toEqual([{ type: "ASTRO_FILE_MISSING" }]);
   });
+
+  test("opens downloaded pages without their redirect, folders included", async () => {
+    const listeners = new Map();
+    globalThis.self = {
+      AstroShellCache: shellCache,
+      clients: workerClients([]),
+      location: { origin: "https://xp.example" },
+      addEventListener(type, listener) {
+        listeners.set(type, listener);
+      },
+    };
+    const redirected = (body) => {
+      const response = new Response(body, {
+        headers: { "Content-Type": "text/html" },
+      });
+      Object.defineProperty(response, "redirected", { value: true });
+      return response;
+    };
+    const stored = {
+      "https://xp.example/iframe/game.0123456789abcdef/game.html": "game page",
+      "https://xp.example/iframe/game.0123456789abcdef/index.html":
+        "index page",
+    };
+    globalThis.caches = {
+      open: async () => ({
+        match: async (key) =>
+          stored[key] ? redirected(stored[key]) : undefined,
+      }),
+    };
+    globalThis.fetch = async () => {
+      throw new TypeError("offline");
+    };
+    require(workerPath);
+    const respond = (url) => {
+      let responsePromise;
+      listeners.get("fetch")({
+        request: new Request(url),
+        respondWith(promise) {
+          responsePromise = promise;
+        },
+      });
+      return responsePromise;
+    };
+
+    for (const [path, body] of [
+      ["game.html", "game page"],
+      ["", "index page"],
+    ]) {
+      const response = await respond(
+        `https://xp.example/iframe/game.0123456789abcdef/${path}`,
+      );
+      expect(response.redirected).toBe(false);
+      expect(response.headers.get("Content-Type")).toBe("text/html");
+      expect(await response.text()).toBe(body);
+    }
+    await expect(
+      respond("https://xp.example/iframe/game.0123456789abcdef/missing/"),
+    ).rejects.toThrow("offline");
+  });
 });
 
 const originalNavigator = Object.getOwnPropertyDescriptor(

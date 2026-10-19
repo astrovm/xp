@@ -251,8 +251,16 @@
         const key = new URL(url.href);
         key.pathname = path;
         // Paths are named by content, so a downloaded copy is always current.
-        const cached = await cache.match(key.href, { ignoreSearch: true });
-        return cached || fetchFile(event.request);
+        // Folder links open the index.html stored for them.
+        const cached =
+          (await cache.match(key.href, { ignoreSearch: true })) ||
+          (key.pathname.endsWith("/") &&
+            (await cache.match(`${key.origin}${key.pathname}index.html`)));
+        // Downloads of .html files followed Cloudflare's redirect, and a
+        // redirected response cannot open a page.
+        return cached
+          ? self.AstroShellCache.cleanResponse(cached)
+          : fetchFile(event.request);
       }),
     );
   });
