@@ -10,5 +10,5 @@ directory = "../dist"
 run_worker_first = ["/api/*"]
 
 [[routes]]
-pattern = "xp.4st.li/*"
-zone_name = "4st.li"
+pattern = "xp.4st.li"
+custom_domain = true
