@@ -5,5 +5,5 @@ workers_dev = false
 
 # The old domain: moves stored data to xp.4st.li, then redirects there.
 [[routes]]
-pattern = "flash.4st.li/*"
-zone_name = "4st.li"
+pattern = "flash.4st.li"
+custom_domain = true
