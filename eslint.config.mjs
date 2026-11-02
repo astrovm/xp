@@ -37,6 +37,9 @@ export default defineConfig(
   {
     ignores: [
       "coverage/",
+      ".stryker-tmp/",
+      "reports/",
+      "build/",
       "dist/",
       "site/iframe/inside-the-firewall/",
       "site/vendor/",

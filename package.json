@@ -28,6 +28,8 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@hughescr/stryker-bun-runner": "1.6.0",
+    "@stryker-mutator/core": "10.1.1",
     "@types/bun": "^1.4.2",
     "@types/istanbul-lib-coverage": "^2.0.6",
     "@types/istanbul-lib-instrument": "^1.7.8",
@@ -56,5 +58,9 @@
     "js-dos": "^8.5.3",
     "sharp": "^0.35.5",
     "webtorrent": "^3.0.21"
+  },
+  "overrides": {
+    "minimatch@^10": "11.0.3",
+    "qs": "6.17.1"
   }
 }

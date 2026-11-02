@@ -22,3 +22,6 @@ site/apps/paint/styles/
 # formatting. Astro-owned module, tests, and build tools remain covered.
 native/pinball/
 site/apps/pinball/runtime/
+.stryker-tmp/
+reports/
+build/
