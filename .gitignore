@@ -142,3 +142,8 @@ out
 __pycache__/
 *.py[cod]
 *$py.class
+
+# mutation testing (scripts/mutants.ts)
+.stryker-tmp/
+reports/
+/build/

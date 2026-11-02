@@ -127,6 +127,15 @@ Tests run in 4 parallel worker processes. More workers barely speed them up and 
 
 `bun run test:coverage` instruments first-party code with Istanbul, including the classic scripts the shell harness loads into Happy DOM. It writes an HTML report to `coverage/index.html` and fails unless lines, statements, functions, and branches are all at 100%. Instrumentation slows the suite, so this run allows each test 30 seconds. CI enforces the same threshold on every pull request.
 
+Mutation testing checks that the tests notice when the code changes. Stryker changes a line a little, one change at a time, and runs the tests that reach it:
+
+```bash
+bun run scripts/mutants.ts diff origin/main   # the lines this branch changed
+bun run scripts/mutants.ts part 3 64          # the 4th of 64 equal parts of all source lines
+```
+
+It only changes the TypeScript the coverage gate counts, listed in `coverage-scope.json` (`catalog/`, `rtc/`, `worker/` and the tools that have tests), and runs the tests that load that code. The browser scripts in `site/` are not mutated: the tests run them inside Happy DOM windows, where Stryker cannot switch a change on. It never blocks a merge. On a pull request, one comment lists the changes no test noticed. Every Saturday a quarter of the 64 parts runs, and what lived goes in the open "Missed mutants" issue. A real gap gets its own pull request; a change that keeps the same behavior can be ignored.
+
 </details>
 
 <details>
