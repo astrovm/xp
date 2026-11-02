@@ -2,6 +2,7 @@
   "packageManager": "bun@1.4.4",
   "scripts": {
     "test": "bun run typecheck && bun test --parallel=4 --timeout 30000 && bun run validate:javascript && bun run validate:icons",
+    "test:timezones": "scripts/test-timezones.sh",
     "test:coverage": "COVERAGE=1 bun test --parallel=4 --timeout 30000 && bun tools/coverage-report.ts --skip-full",
     "build": "bun tools/deploy.ts",
     "build:pinball-runtime": "bun tools/build-pinball-runtime.ts",

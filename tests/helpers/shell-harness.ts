@@ -106,7 +106,10 @@ export async function loadShell({
     BigInt,
     Boolean,
     DataView,
-    Date,
+    // Tests fake the clock with `window.Date.now = ...`. A subclass takes that
+    // assignment on its own, so it can't freeze Date.now for the runner and
+    // for every later test file that shares this process.
+    Date: class extends Date {},
     Error,
     EvalError,
     Float32Array,

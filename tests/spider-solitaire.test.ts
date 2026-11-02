@@ -1,5 +1,5 @@
 // @ts-nocheck -- Spider Solitaire's window, played through Happy DOM.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import {
   cleanupShells,
   flushShell,
@@ -9,6 +9,10 @@ import {
 import { recordCardCanvas } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
+
+// Playing a whole game takes 7 to 10 seconds of CPU, more than Bun's 5 second
+// default, which only `bun run test` raises (`--timeout 30000`).
+setDefaultTimeout(30_000);
 
 // The XP VM dealt its Easy game at this clock.
 const VM_TIME = 1791198413000;

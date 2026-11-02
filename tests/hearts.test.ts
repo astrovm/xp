@@ -1,5 +1,5 @@
 // @ts-nocheck -- Hearts' window, played through Happy DOM.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   cleanupShells,
   flushShell,
@@ -9,6 +9,10 @@ import {
 import { face, recordCardCanvas } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
+
+// Playing a whole game takes 7 to 10 seconds of CPU, more than Bun's 5 second
+// default, which only `bun run test` raises (`--timeout 30000`).
+setDefaultTimeout(30_000);
 
 const BACK = "assets/xp/cards/backs/54.png";
 // time(NULL) values whose first rand() is a game number: 714 and 10132
