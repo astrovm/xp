@@ -74,8 +74,14 @@ test("fixed-size dialogs shrink to the screen and scale their client area", asyn
 test("fixed-size windows fit once when the page reports no layout sizes", async () => {
   const s = await openPhone();
   const sizes = ["offsetWidth", "offsetHeight", "offsetLeft", "offsetTop"];
+  const proto = s.window.HTMLElement.prototype;
+  // Happy DOM shares its element classes across windows, so the originals
+  // have to go back, not just away.
+  const originals = sizes.map((name) =>
+    Object.getOwnPropertyDescriptor(proto, name),
+  );
   for (const name of sizes)
-    Object.defineProperty(s.window.HTMLElement.prototype, name, {
+    Object.defineProperty(proto, name, {
       configurable: true,
       get: () => undefined,
     });
@@ -91,7 +97,9 @@ test("fixed-size windows fit once when the page reports no layout sizes", async 
       .click();
     await settle();
   } finally {
-    for (const name of sizes) delete s.window.HTMLElement.prototype[name];
+    sizes.forEach((name, index) =>
+      Object.defineProperty(proto, name, originals[index]),
+    );
   }
   // Fitted from the sizes it was given, without refitting forever.
   const win = windowFor(s, "__display-properties");
@@ -252,7 +260,9 @@ test("fixed-size windows refit when the screen turns", async () => {
 test("a screen smaller than a window's frame leaves the window alone", async () => {
   const s = await openPhone();
   // A 50 pixel frame around the client area, on a 40 by 40 screen.
-  Object.defineProperty(s.window.HTMLElement.prototype, "offsetWidth", {
+  const proto = s.window.HTMLElement.prototype;
+  const offsetWidth = Object.getOwnPropertyDescriptor(proto, "offsetWidth");
+  Object.defineProperty(proto, "offsetWidth", {
     configurable: true,
     get() {
       return this.classList.contains("xp-window") ? 50 : 0;
@@ -278,7 +288,7 @@ test("a screen smaller than a window's frame leaves the window alone", async () 
       .click();
     await settle();
   } finally {
-    delete s.window.HTMLElement.prototype.offsetWidth;
+    Object.defineProperty(proto, "offsetWidth", offsetWidth);
   }
   const win = windowFor(s, "__display-properties");
   expect(win.style.width).toBe("404px");
