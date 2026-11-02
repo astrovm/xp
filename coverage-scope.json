@@ -1,0 +1,15 @@
+{
+  "roots": ["catalog", "rtc", "worker", "tools"],
+  "extensions": [".ts"],
+  "exclude": [
+    "*.d.ts",
+    "tools/build-pinball-runtime.ts",
+    "tools/compare-xp-ui.ts",
+    "tools/coverage-report.ts",
+    "tools/extract-pinball-assets.ts",
+    "tools/extract-xp-assets.ts",
+    "tools/find-flashpoint-icons.ts",
+    "tools/sync-game-icons.ts",
+    "tools/xp-vm.ts"
+  ]
+}
