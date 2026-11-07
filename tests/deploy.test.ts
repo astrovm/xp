@@ -413,6 +413,13 @@ describe("build metadata", () => {
       ).toContain(`"../../${final("js/storage-policy.js")}"`);
     }
     expect(manifest.games["pink-panther-hokus-pokus"].runtime).toBe("scummvm");
+    expect(manifest.games["pink-panther-passport-to-peril"].runtime).toBe(
+      "scummvm",
+    );
+    expect(addressed.packages.has("iframe/scummvm")).toBe(false);
+    expect(manifest.games.scummvm).toBeUndefined();
+    expect(manifest.runtime.revision).toMatch(/^[a-f0-9]{16}$/);
+    expect(manifest.runtimes.scummvm.revision).toMatch(/^[a-f0-9]{16}$/);
     expect(
       manifest.runtimes.scummvm.files.map(({ url }: { url: string }) => url),
     ).toEqual(
@@ -462,7 +469,7 @@ describe("build metadata", () => {
     ).toBe(
       `doom dos/doom/doom.jsdos <script src="../../${addressed.packages.get("vendor/js-dos")}/js-dos.js"></script>`,
     );
-    expect(await Bun.file(join(root, "dos")).exists()).toBeFalse();
+    expect(await readdir(root)).not.toContain("dos");
     const configuredRoots = JSON.parse(
       html.match(/window\.ASTRO_GAME_ROOTS=Object\.freeze\((\{[^<]+\})\)/)![1],
     );
@@ -545,6 +552,7 @@ describe("service worker and artifact validation", () => {
     await generateServiceWorker(root, VERSION);
 
     const worker = await readFile(join(root, "sw.js"), "utf8");
+    expect(() => new Function("self", "importScripts", worker)).not.toThrow();
     const manifest = JSON.parse(
       worker.match(/^self\.__ASTRO_XP_PRECACHE__=(.*);$/m)![1],
     );
@@ -601,6 +609,13 @@ describe("service worker and artifact validation", () => {
     expect(
       (await createPrecacheManifest(root, "prefix/")).map(({ url }) => url),
     ).toEqual(["prefix/index.html", "prefix/js/main.js"]);
+    await writeFile(
+      join(root, "apps/pinball/runtime/limit.data"),
+      new Uint8Array(25_000_000),
+    );
+    expect(
+      (await createPrecacheManifest(root, "prefix/")).map(({ url }) => url),
+    ).toContain("prefix/apps/pinball/runtime/limit.data");
   });
 
   test("accepts a complete artifact and rejects a missing game file", async () => {
@@ -742,10 +757,11 @@ describe("atomic build", () => {
       await Bun.file(join(output, "stale.12345678.txt")).exists(),
     ).toBeFalse();
     expect(await Bun.file(join(output, "sw.js")).exists()).toBeTrue();
+    expect((await readdir(project)).sort()).toEqual(["dist", "site"]);
     expect(
       await Bun.file(join(output, "sw.26.07.28-abcdef1.js")).exists(),
     ).toBeTrue();
-    expect(await Bun.file(join(output, "releases")).exists()).toBeFalse();
+    expect(await readdir(output)).not.toContain("releases");
     expect(
       await Bun.file(join(output, "offline-games.json")).exists(),
     ).toBeFalse();
@@ -800,6 +816,7 @@ describe("atomic build", () => {
     expect(await readFile(join(output, "previous.12345678.txt"), "utf8")).toBe(
       "keep",
     );
+    expect((await readdir(project)).sort()).toEqual(["dist", "site"]);
   });
 
   test("rejects output inside the source tree", async () => {
@@ -875,9 +892,19 @@ describe("build inputs and release metadata validation", () => {
   ]) {
     test(`version metadata rejects ${JSON.stringify(options)}`, async () => {
       const root = await makeTemporaryDirectory();
+      await writeFiles(root, {
+        "offline-games.json": JSON.stringify({
+          runtime: { bytes: 7 },
+          games: { fake: { bytes: 5 } },
+        }),
+      });
       await expect(
         writeVersionMetadata(new BuildPaths(root), "26.07.28-abcdef1", options),
-      ).rejects.toThrow();
+      ).rejects.toThrow(
+        "releasedAt" in options
+          ? "Release time must be a valid date"
+          : "Update stability delay must be a non-negative integer",
+      );
       expect(await Bun.file(join(root, "version.json")).exists()).toBeFalse();
     });
   }
@@ -1579,4 +1606,36 @@ test("offline size excludes optional, provenance, workers, hidden, unsupported a
   expect(
     JSON.parse(await readFile(join(root, "version.json"), "utf8")).offlineBytes,
   ).toBe(10 + Buffer.byteLength(manifest));
+});
+
+test("shared runtime revisions are stable and change with file bytes or chunk names", async () => {
+  const revisions: string[] = [];
+  for (const variant of ["original", "same", "bytes", "name"]) {
+    const root = await makeTemporaryDirectory();
+    await makeSource(root);
+    await addGeneratedRuntime(root);
+    if (variant === "bytes")
+      await writeFile(
+        join(root, "js", RUFFLE_CORE),
+        'load("changed-runtime.wasm")',
+      );
+    if (variant === "name") {
+      const renamed = "core.ruffle.abcdef0123456789abcd.js";
+      await unlink(join(root, "js", RUFFLE_CORE));
+      await writeFiles(join(root, "js"), {
+        [renamed]: ruffleRuntime[RUFFLE_CORE],
+        "ruffle.js": `load("${renamed}")`,
+      });
+    }
+    const { manifestName } = await prepareSite(root);
+    const manifest = JSON.parse(
+      await readFile(join(root, manifestName), "utf8"),
+    );
+    expect(manifest.runtime.revision).toMatch(/^[a-f0-9]{16}$/);
+    expect(manifest.runtimes.scummvm.revision).toMatch(/^[a-f0-9]{16}$/);
+    revisions.push(manifest.runtime.revision);
+  }
+  expect(revisions[1]).toBe(revisions[0]);
+  expect(revisions[2]).not.toBe(revisions[0]);
+  expect(revisions[3]).not.toBe(revisions[0]);
 });
