@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import {
+  basename,
   dirname,
   extname,
   isAbsolute,
@@ -889,10 +890,7 @@ async function canonicalPath(path: string): Promise<string> {
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
       throw error;
-    return join(
-      await canonicalPath(dirname(path)),
-      path.split(sep).at(-1) ?? "",
-    );
+    return join(await canonicalPath(dirname(path)), basename(path));
   }
 }
 
