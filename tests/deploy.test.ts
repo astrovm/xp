@@ -1458,6 +1458,53 @@ describe("output safety", () => {
   });
 });
 
+describe("output replacement", () => {
+  test("refuses an empty folder and a plain file, naming the reason", async () => {
+    const root = await makeTemporaryDirectory();
+    const staging = join(root, "build", "output");
+    await writeFiles(staging, { "new.txt": "new" });
+    await mkdir(join(root, "empty"));
+    await expect(replaceOutput(staging, join(root, "empty"))).rejects.toThrow(
+      "previous Astro XP build",
+    );
+    await writeFiles(root, { "plain-file": "not a folder" });
+    await expect(
+      replaceOutput(staging, join(root, "plain-file")),
+    ).rejects.toMatchObject({ cause: { message: "not a directory" } });
+    expect(await readFile(join(root, "plain-file"), "utf8")).toBe(
+      "not a folder",
+    );
+    expect(await readFile(join(staging, "new.txt"), "utf8")).toBe("new");
+  });
+  test("reports a failure to inspect the output instead of treating it as missing", async () => {
+    const root = await makeTemporaryDirectory();
+    const staging = join(root, "build", "output");
+    await writeFiles(staging, { "new.txt": "new" });
+    await writeFiles(root, { "plain-file": "not a folder" });
+    await expect(
+      replaceOutput(staging, join(root, "plain-file", "dist")),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("previous Astro XP build"),
+      cause: { code: "ENOTDIR" },
+    });
+    expect(await readFile(join(staging, "new.txt"), "utf8")).toBe("new");
+  });
+  test("accepts a folder named like a parent link next to the source", async () => {
+    const project = await makeTemporaryDirectory();
+    const source = join(project, "site");
+    await makeSource(source);
+    await build({
+      sourceDir: source,
+      outputDir: join(project, "..dist"),
+      version: "26.07.28-abcdef1",
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+    });
+    expect(await Bun.file(join(project, "..dist", "index.html")).exists()).toBe(
+      true,
+    );
+  });
+});
+
 test("output replacement refuses directory symlinks and preserves their target", async () => {
   const root = await makeTemporaryDirectory();
   const output = join(root, "output");

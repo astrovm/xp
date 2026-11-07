@@ -888,40 +888,36 @@ async function canonicalPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
-      throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return join(await canonicalPath(dirname(path)), basename(path));
   }
 }
 
 function containsPath(parent: string, child: string): boolean {
   const path = relative(parent, child);
-  return (
-    path === "" ||
-    (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
-  );
+  return path.split(sep)[0] !== ".." && !isAbsolute(path);
 }
 
 /** Existing output must be a complete previous build, never an arbitrary folder or link. */
 async function assertReplaceableOutput(outputDir: string): Promise<void> {
+  const refuse = (cause: unknown) =>
+    new Error(
+      `Refusing to replace output that is not a previous Astro XP build: ${outputDir}`,
+      { cause },
+    );
+  let info;
   try {
-    const info = await lstat(outputDir);
+    info = await lstat(outputDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw refuse(error);
+  }
+  try {
     if (!info.isDirectory()) throw new Error("not a directory");
     await validateOutput(outputDir);
     await validatePrecacheIntegrity(outputDir);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT" &&
-      "path" in error &&
-      error.path === outputDir
-    )
-      return;
-    throw new Error(
-      `Refusing to replace output that is not a previous Astro XP build: ${outputDir}`,
-      { cause: error },
-    );
+    throw refuse(error);
   }
 }
 
