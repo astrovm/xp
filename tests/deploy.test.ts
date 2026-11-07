@@ -1427,6 +1427,23 @@ describe("output safety", () => {
       expect(await Bun.file(join(source, "index.html")).exists()).toBe(true);
     });
   }
+  test("reports a real filesystem error instead of treating it as a missing output", async () => {
+    const project = await makeTemporaryDirectory();
+    const source = join(project, "site");
+    await makeSource(source);
+    await writeFiles(project, { "plain-file": "not a folder" });
+    await expect(
+      build({
+        sourceDir: source,
+        outputDir: join(project, "plain-file", "dist"),
+        version: "26.07.28-abcdef1",
+        installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+      }),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect(await readFile(join(project, "plain-file"), "utf8")).toBe(
+      "not a folder",
+    );
+  });
   test("refuses to replace an unrelated folder even when it contains version.json", async () => {
     const root = await makeTemporaryDirectory();
     const output = join(root, "personal");
