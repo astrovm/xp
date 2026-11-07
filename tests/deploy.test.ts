@@ -713,8 +713,13 @@ describe("atomic build", () => {
     const output = join(project, "dist");
     await makeSource(source);
     const originalFiles = await fileSnapshot(source);
-    await mkdir(output);
-    await writeFile(join(output, "stale.txt"), "stale");
+    await build({
+      sourceDir: source,
+      outputDir: output,
+      version: "26.07.28-abcdef0",
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+    });
+    await writeFile(join(output, "stale.12345678.txt"), "stale");
 
     await build({
       sourceDir: source,
@@ -730,7 +735,9 @@ describe("atomic build", () => {
     for (const [path, bytes] of originalFiles) {
       expect(currentFiles.get(path)).toEqual(bytes);
     }
-    expect(await Bun.file(join(output, "stale.txt")).exists()).toBeFalse();
+    expect(
+      await Bun.file(join(output, "stale.12345678.txt")).exists(),
+    ).toBeFalse();
     expect(await Bun.file(join(output, "sw.js")).exists()).toBeTrue();
     expect(
       await Bun.file(join(output, "sw.26.07.28-abcdef1.js")).exists(),
@@ -769,8 +776,13 @@ describe("atomic build", () => {
     const source = join(project, "site");
     const output = join(project, "dist");
     await makeSource(source);
-    await mkdir(output);
-    await writeFile(join(output, "previous.txt"), "keep");
+    await build({
+      sourceDir: source,
+      outputDir: output,
+      version: "26.07.28-abcdef0",
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+    });
+    await writeFile(join(output, "previous.12345678.txt"), "keep");
 
     await expect(
       build({
@@ -782,7 +794,9 @@ describe("atomic build", () => {
         },
       }),
     ).rejects.toThrow("network failed");
-    expect(await readFile(join(output, "previous.txt"), "utf8")).toBe("keep");
+    expect(await readFile(join(output, "previous.12345678.txt"), "utf8")).toBe(
+      "keep",
+    );
   });
 
   test("rejects output inside the source tree", async () => {
@@ -1321,12 +1335,16 @@ describe("build helpers", () => {
   test("restores the previous output when replacing it fails", async () => {
     const root = await makeTemporaryDirectory();
     const output = join(root, "dist");
-    await writeFiles(output, { "index.html": "previous" });
+    const artifact = await makeValidArtifact();
+    await cp(artifact.root, output, { recursive: true });
+    const previousHtml = await readFile(join(output, "index.html"), "utf8");
     await mkdir(join(root, "build"));
     await expect(
       replaceOutput(join(root, "build", "missing"), output),
     ).rejects.toThrow();
-    expect(await readFile(join(output, "index.html"), "utf8")).toBe("previous");
+    expect(await readFile(join(output, "index.html"), "utf8")).toBe(
+      previousHtml,
+    );
     await rm(output, { recursive: true });
     await expect(
       replaceOutput(join(root, "build", "missing"), output),
@@ -1371,4 +1389,132 @@ describe("build helpers", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("Unknown argument: --bogus");
   });
+});
+
+describe("output safety", () => {
+  for (const destination of [
+    "source",
+    "ancestor",
+    "inside",
+    "source alias",
+    "ancestor alias",
+  ]) {
+    test(`rejects output ${destination} without losing the source or repository`, async () => {
+      const project = await makeTemporaryDirectory();
+      const source = join(project, "site");
+      await makeSource(source);
+      await writeFiles(project, { ".git/HEAD": "ref: refs/heads/fake\n" });
+      const output =
+        destination === "source"
+          ? source
+          : destination === "inside"
+            ? join(source, "dist")
+            : project;
+      const alias = join(project, "alias");
+      if (destination.endsWith("alias"))
+        await symlink(destination === "source alias" ? source : project, alias);
+      await expect(
+        build({
+          sourceDir: source,
+          outputDir: destination.endsWith("alias") ? alias : output,
+          version: "26.07.28-abcdef1",
+          installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+        }),
+      ).rejects.toThrow("outside");
+      expect(await readFile(join(project, ".git/HEAD"), "utf8")).toBe(
+        "ref: refs/heads/fake\n",
+      );
+      expect(await Bun.file(join(source, "index.html")).exists()).toBe(true);
+    });
+  }
+  test("reports a real filesystem error instead of treating it as a missing output", async () => {
+    const project = await makeTemporaryDirectory();
+    const source = join(project, "site");
+    await makeSource(source);
+    await writeFiles(project, { "plain-file": "not a folder" });
+    await expect(
+      build({
+        sourceDir: source,
+        outputDir: join(project, "plain-file", "dist"),
+        version: "26.07.28-abcdef1",
+        installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+      }),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect(await readFile(join(project, "plain-file"), "utf8")).toBe(
+      "not a folder",
+    );
+  });
+  test("refuses to replace an unrelated folder even when it contains version.json", async () => {
+    const root = await makeTemporaryDirectory();
+    const output = join(root, "personal");
+    const staging = join(root, "build", "output");
+    await writeFiles(output, { "version.json": "{}", "keep.txt": "keep" });
+    await writeFiles(staging, { "new.txt": "new" });
+    await expect(replaceOutput(staging, output)).rejects.toThrow(
+      "previous Astro XP build",
+    );
+    expect(await readFile(join(output, "keep.txt"), "utf8")).toBe("keep");
+    expect(await readFile(join(staging, "new.txt"), "utf8")).toBe("new");
+  });
+});
+
+describe("output replacement", () => {
+  test("refuses an empty folder and a plain file, naming the reason", async () => {
+    const root = await makeTemporaryDirectory();
+    const staging = join(root, "build", "output");
+    await writeFiles(staging, { "new.txt": "new" });
+    await mkdir(join(root, "empty"));
+    await expect(replaceOutput(staging, join(root, "empty"))).rejects.toThrow(
+      "previous Astro XP build",
+    );
+    await writeFiles(root, { "plain-file": "not a folder" });
+    await expect(
+      replaceOutput(staging, join(root, "plain-file")),
+    ).rejects.toMatchObject({ cause: { message: "not a directory" } });
+    expect(await readFile(join(root, "plain-file"), "utf8")).toBe(
+      "not a folder",
+    );
+    expect(await readFile(join(staging, "new.txt"), "utf8")).toBe("new");
+  });
+  test("reports a failure to inspect the output instead of treating it as missing", async () => {
+    const root = await makeTemporaryDirectory();
+    const staging = join(root, "build", "output");
+    await writeFiles(staging, { "new.txt": "new" });
+    await writeFiles(root, { "plain-file": "not a folder" });
+    await expect(
+      replaceOutput(staging, join(root, "plain-file", "dist")),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("previous Astro XP build"),
+      cause: { code: "ENOTDIR" },
+    });
+    expect(await readFile(join(staging, "new.txt"), "utf8")).toBe("new");
+  });
+  test("accepts a folder named like a parent link next to the source", async () => {
+    const project = await makeTemporaryDirectory();
+    const source = join(project, "site");
+    await makeSource(source);
+    await build({
+      sourceDir: source,
+      outputDir: join(project, "..dist"),
+      version: "26.07.28-abcdef1",
+      installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+    });
+    expect(await Bun.file(join(project, "..dist", "index.html")).exists()).toBe(
+      true,
+    );
+  });
+});
+
+test("output replacement refuses directory symlinks and preserves their target", async () => {
+  const root = await makeTemporaryDirectory();
+  const output = join(root, "output");
+  const target = join(root, "personal");
+  const staging = join(root, "build", "output");
+  await writeFiles(target, { "keep.txt": "keep" });
+  await writeFiles(staging, { "new.txt": "new" });
+  await symlink(target, output);
+  await expect(replaceOutput(staging, output)).rejects.toThrow(
+    "previous Astro XP build",
+  );
+  expect(await readFile(join(target, "keep.txt"), "utf8")).toBe("keep");
 });
