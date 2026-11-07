@@ -16,6 +16,9 @@ on:
       - coverage-scope.json
       - stryker.conf.mjs
       - scripts/mutants.ts
+      - scripts/mutants.test.ts
+      - scripts/mutants-post.sh
+      - scripts/mutants-post.test.sh
       - scripts/mutants-comment.sh
       - .github/workflows/mutants.yml
   schedule:
@@ -64,7 +67,7 @@ jobs:
         run: bun run scripts/mutants.ts diff HEAD^1 --out build/mutants
       - name: Try one part of everything
         run: |
-          if git diff --quiet HEAD^1 -- stryker.conf.mjs coverage-scope.json scripts/mutants.ts scripts/mutants-comment.sh .github/workflows/mutants.yml; then
+          if git diff --quiet HEAD^1 -- stryker.conf.mjs coverage-scope.json scripts/mutants.ts scripts/mutants.test.ts scripts/mutants-comment.sh scripts/mutants-post.sh scripts/mutants-post.test.sh .github/workflows/mutants.yml; then
             echo "The setup didn't change."
           else
             bun run scripts/mutants.ts part 0 64 --out build/mutants-part
@@ -150,6 +153,9 @@ jobs:
       contents: read
       issues: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test report posting
+        run: bash scripts/mutants-post.test.sh
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: mutants-part-*
@@ -164,23 +170,34 @@ jobs:
         run: |
           lived=$(cat results/*/build/mutants/lived.txt results/*/lived.txt 2>/dev/null | sort -u || true)
           parts=$(jq -r 'map(tostring) | join(", ")' <<< "$PARTS")
-          issue=$(gh issue list --state open --search 'in:title "Missed mutants"' --json number --jq '.[0].number // empty')
           {
             echo "Parts $parts of 64: [run]($RUN), jobs $JOBS."
             echo
             if [ -z "$lived" ]; then
               echo 'Every change in these parts was caught by a test.'
             else
-              echo "### Lived ($(wc -l <<< "$lived"))"
-              echo 'No test noticed these changes. Real gaps get their own PR; changes that keep the same behavior can be ignored.'
-              echo '```'
-              echo "$lived"
-              echo '```'
+              for status in findings timeout; do
+                if [ "$status" = timeout ]; then
+                  rows=$(grep '  timeout:' <<< "$lived" || true)
+                  heading='Timed out'
+                  note='Stryker stopped these changes at its timeout.'
+                else
+                  rows=$(grep -v '  timeout:' <<< "$lived" || true)
+                  heading='Lived'
+                  note='No test noticed these changes. Real gaps get their own PR; changes that keep the same behavior can be ignored.'
+                fi
+                if [ -n "$rows" ]; then
+                  echo "### $heading ($(wc -l <<< "$rows"))"
+                  echo "$note"
+                  echo '```'
+                  echo "$rows"
+                  echo '```'
+                fi
+              done
             fi
           } > report.md
-          cat report.md >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$issue" ]; then
-            gh issue comment "$issue" --body-file report.md
-          elif [ -n "$lived" ]; then
-            gh issue create --title 'Missed mutants' --body-file report.md
-          fi
+          head -c 1000000 report.md >> "$GITHUB_STEP_SUMMARY"
+          printf '\n\nFull report: %s#artifacts\n' "$RUN" >> "$GITHUB_STEP_SUMMARY"
+          has_findings=false
+          [ -z "$lived" ] || has_findings=true
+          scripts/mutants-post.sh report.md "$has_findings"

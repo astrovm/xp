@@ -64,15 +64,15 @@ function comment(lived: string, old: boolean, fork = false): string[] {
 describe("mutants comment", () => {
   const list = "api --paginate repos/o/r/issues/5/comments --jq";
   test("what lived is posted once, then edited in place", () => {
-    const first = comment("catalog/a.ts:3  survived: X\n", false);
+    const first = comment("src/a.ts:3  survived: X\n", false);
     expect(first[0]).toStartWith(list);
     expect(first.slice(1)).toEqual(["api repos/o/r/issues/5/comments"]);
     expect(body).toStartWith(
       "<!-- mutants -->\n**Mutation testing:** 1 of 2 changes caught",
     );
-    expect(body).toContain("\ncatalog/a.ts:3  survived: X\n");
+    expect(body).toContain("\nsrc/a.ts:3  survived: X\n");
     expect(body).toContain("[Full report](https://run)");
-    expect(comment("catalog/a.ts:3  survived: X\n", true).slice(1)).toEqual([
+    expect(comment("src/a.ts:3  survived: X\n", true).slice(1)).toEqual([
       "api -X PATCH repos/o/r/issues/comments/7",
     ]);
   });
@@ -85,6 +85,16 @@ describe("mutants comment", () => {
   });
 
   test("a fork's run only summarizes", () => {
-    expect(comment("catalog/a.ts:3  survived: X\n", false, true)).toEqual([]);
+    expect(comment("src/a.ts:3  survived: X\n", false, true)).toEqual([]);
   });
+});
+
+test("long comments fit GitHub and keep whole rows and balanced fences", () => {
+  comment('src/f.ts:12:3  survived: Literal → "á"\n'.repeat(3000), false);
+  expect(Buffer.byteLength(body)).toBeLessThanOrEqual(60000);
+  expect(body).toContain(
+    "Report trimmed. [Full report artifact](https://run#artifacts)",
+  );
+  expect(body.match(/^```/gm)?.length).toBe(2);
+  expect(body).not.toContain("�");
 });
