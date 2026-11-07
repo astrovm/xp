@@ -481,19 +481,6 @@ export async function addressContent(
   return result;
 }
 
-export function isOptionalOfflinePath(relativePath: string): boolean {
-  const path = relativePath.split(sep).join("/");
-  return (
-    path.startsWith("swf/") ||
-    path.startsWith("iframe/") ||
-    path.startsWith("dos/") ||
-    path.startsWith("vendor/scummvm/") ||
-    (path.startsWith("js/") &&
-      (path.endsWith(".wasm") ||
-        Boolean(path.split("/").at(-1)?.startsWith("core.ruffle."))))
-  );
-}
-
 async function offlineFileEntry(
   root: string,
   path: string,
@@ -674,7 +661,12 @@ export async function writeVersionMetadata(
   {
     releasedAt = new Date().toISOString(),
     stabilityDelayMs = DEFAULT_UPDATE_STABILITY_DELAY_MS,
-  }: { releasedAt?: string; stabilityDelayMs?: number } = {},
+    offlineManifestPath = paths.offlineGamesJson,
+  }: {
+    releasedAt?: string;
+    stabilityDelayMs?: number;
+    offlineManifestPath?: string;
+  } = {},
 ): Promise<void> {
   if (!Number.isFinite(Date.parse(releasedAt))) {
     throw new Error("Release time must be a valid date");
@@ -682,21 +674,12 @@ export async function writeVersionMetadata(
   if (!Number.isInteger(stabilityDelayMs) || stabilityDelayMs < 0) {
     throw new Error("Update stability delay must be a non-negative integer");
   }
-  const files = await walkFiles(paths.root);
-  let offlineBytes = 0;
-  for (const path of files) {
-    const relativePath = relative(paths.root, path);
-    if (
-      path !== paths.versionJson &&
-      path !== paths.offlineGamesJson &&
-      PRECACHE_FILE_SUFFIXES.has(extname(path).toLowerCase()) &&
-      !isOptionalOfflinePath(relativePath)
-    ) {
-      offlineBytes += (await stat(path)).size;
-    }
-  }
+  const offlineBytes = (await precacheFiles(resolve(paths.root))).reduce(
+    (total, file) => total + file.bytes,
+    0,
+  );
   const offlineManifest = JSON.parse(
-    await readFile(paths.offlineGamesJson, "utf8"),
+    await readFile(offlineManifestPath, "utf8"),
   ) as OfflineManifest;
   const bundledGameBytes =
     offlineManifest.runtime.bytes +
@@ -722,28 +705,42 @@ export async function writeVersionMetadata(
   );
 }
 
-export async function createPrecacheManifest(
-  contentDir: string,
-  urlPrefix: string,
-): Promise<PrecacheEntry[]> {
-  const root = resolve(contentDir);
+/** The same final files and byte limit drive both download size and worker installation. */
+async function precacheFiles(
+  root: string,
+): Promise<{ path: string; relativePath: string; bytes: number }[]> {
   const ignores = PRECACHE_IGNORES.map((pattern) => new Bun.Glob(pattern));
-  const entries: PrecacheEntry[] = [];
+  const files: { path: string; relativePath: string; bytes: number }[] = [];
   for (const path of (await walkFiles(root)).sort()) {
     const relativePath = relative(root, path).split(sep).join("/");
     if (
       relativePath.split("/").some((part) => part.startsWith(".")) ||
       !PRECACHE_FILE_SUFFIXES.has(extname(relativePath)) ||
       ignores.some((glob) => glob.match(relativePath))
-    ) {
+    )
       continue;
-    }
-    const content = await readFile(path);
-    if (content.length > PRECACHE_MAXIMUM_FILE_SIZE) {
+    const bytes = (await stat(path)).size;
+    if (bytes > PRECACHE_MAXIMUM_FILE_SIZE) {
       console.warn(`  - Skipping precache for oversized ${relativePath}`);
       continue;
     }
-    const entry = precacheEntry(content, `${urlPrefix}${relativePath}`);
+    files.push({ path, relativePath, bytes });
+  }
+  return files;
+}
+
+export async function createPrecacheManifest(
+  contentDir: string,
+  urlPrefix: string,
+): Promise<PrecacheEntry[]> {
+  const entries: PrecacheEntry[] = [];
+  for (const { path, relativePath } of await precacheFiles(
+    resolve(contentDir),
+  )) {
+    const entry = precacheEntry(
+      await readFile(path),
+      `${urlPrefix}${relativePath}`,
+    );
     entries.push(
       FIXED_FILES.includes(relativePath) ? { fixed: true, ...entry } : entry,
     );
@@ -1142,11 +1139,12 @@ export async function build({
     await prepareDoomPackage(paths);
     const addressed = await addressContent(paths);
     await writeOfflineGameManifest(paths, deploymentVersion, addressed);
+    const manifestName = await versionOfflineGameManifest(paths);
     await writeVersionMetadata(paths, deploymentVersion, {
       releasedAt,
       stabilityDelayMs,
+      offlineManifestPath: join(stagingDir, manifestName),
     });
-    await versionOfflineGameManifest(paths);
     await writeHeaders(stagingDir);
     await generate(stagingDir, deploymentVersion);
     await validateOutput(stagingDir);

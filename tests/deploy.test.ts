@@ -8,6 +8,7 @@ import {
   readdir,
   rm,
   symlink,
+  stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -183,8 +184,10 @@ async function prepareSite(root: string, version = VERSION) {
   await prepareDoomPackage(paths);
   const addressed = await addressContent(paths);
   await writeOfflineGameManifest(paths, version, addressed);
-  await writeVersionMetadata(paths, version);
   const manifestName = await versionOfflineGameManifest(paths);
+  await writeVersionMetadata(paths, version, {
+    offlineManifestPath: join(root, manifestName),
+  });
   return { addressed, manifestName, paths };
 }
 
@@ -1517,4 +1520,63 @@ test("output replacement refuses directory symlinks and preserves their target",
     "previous Astro XP build",
   );
   expect(await readFile(join(target, "keep.txt"), "utf8")).toBe("keep");
+});
+
+test("offline download size is exactly what the generated worker precaches", async () => {
+  const project = await makeTemporaryDirectory();
+  const source = join(project, "site");
+  const output = join(project, "dist");
+  await makeSource(source);
+  await build({
+    sourceDir: source,
+    outputDir: output,
+    version: VERSION,
+    installRuffle: async (jsDir) => writeFiles(jsDir, ruffleRuntime),
+  });
+  const worker = await readFile(join(output, "sw.js"), "utf8");
+  const entries: { url: string }[] = JSON.parse(
+    worker.match(/^self\.__ASTRO_XP_PRECACHE__=(.*);$/m)![1],
+  );
+  const expected = (
+    await Promise.all(
+      entries.map(async ({ url }) => (await stat(join(output, url))).size),
+    )
+  ).reduce((a, b) => a + b, 0);
+  expect(
+    JSON.parse(await readFile(join(output, "version.json"), "utf8"))
+      .offlineBytes,
+  ).toBe(expected);
+});
+
+test("offline size excludes optional, provenance, workers, hidden, unsupported and oversized files", async () => {
+  const root = await makeTemporaryDirectory();
+  const manifest = JSON.stringify({
+    runtime: { bytes: 7 },
+    games: { fake: { bytes: 5 } },
+  });
+  await writeFiles(root, {
+    "index.html": "shell",
+    "js/main.js": "entry",
+    "offline-games.json": manifest,
+    "version.json": "old",
+    "sw.js": "old",
+    "sw.old.js": "old",
+    "notes.txt": "notes",
+    "swf/fake/main.swf": "swf",
+    "iframe/fake/index.html": "game",
+    "dos/fake/main.jsdos": "dos",
+    "vendor/scummvm/fake.js": "runtime",
+    "js/fake.wasm": "wasm",
+    "js/core.ruffle.fake.js": "ruffle",
+    "js/offline-worker.12345678.js": "offline worker",
+    "js/shell-worker.12345678.js": "shell worker",
+    "assets/fake/SOURCES-one.json": "provenance",
+    ".hidden/main.js": "hidden",
+    "UPPER.JS": "uppercase",
+    "apps/fake/oversized.data": new Uint8Array(25_000_001),
+  });
+  await writeVersionMetadata(new BuildPaths(root), VERSION);
+  expect(
+    JSON.parse(await readFile(join(root, "version.json"), "utf8")).offlineBytes,
+  ).toBe(10 + Buffer.byteLength(manifest));
 });
