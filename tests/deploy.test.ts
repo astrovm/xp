@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   cp,
@@ -606,9 +606,17 @@ describe("service worker and artifact validation", () => {
       new Uint8Array(25_000_001),
     );
 
-    expect(
-      (await createPrecacheManifest(root, "prefix/")).map(({ url }) => url),
-    ).toEqual(["prefix/index.html", "prefix/js/main.js"]);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(
+        (await createPrecacheManifest(root, "prefix/")).map(({ url }) => url),
+      ).toEqual(["prefix/index.html", "prefix/js/main.js"]);
+      expect(warn).toHaveBeenCalledWith(
+        "  - Skipping precache for oversized apps/pinball/runtime/large.wasm",
+      );
+    } finally {
+      warn.mockRestore();
+    }
     await writeFile(
       join(root, "apps/pinball/runtime/limit.data"),
       new Uint8Array(25_000_000),
@@ -908,6 +916,20 @@ describe("build inputs and release metadata validation", () => {
       expect(await Bun.file(join(root, "version.json")).exists()).toBeFalse();
     });
   }
+
+  test("version metadata takes the revision from the last dash", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeFiles(root, {
+      "offline-games.json": JSON.stringify({
+        runtime: { bytes: 7 },
+        games: { fake: { bytes: 5 } },
+      }),
+    });
+    await writeVersionMetadata(new BuildPaths(root), "26.07.28-rc-abcdef1");
+    expect(
+      JSON.parse(await readFile(join(root, "version.json"), "utf8")).revision,
+    ).toBe("abcdef1");
+  });
 });
 
 const sri = (content: string | Uint8Array) =>
