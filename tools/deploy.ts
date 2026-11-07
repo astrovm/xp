@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   cp,
   mkdir,
+  lstat,
+  realpath,
   mkdtemp,
   readFile,
   readdir,
@@ -880,10 +882,56 @@ export async function validateOutput(outputDir: string): Promise<void> {
   console.log("Build output validated successfully");
 }
 
+/** Resolve existing ancestors too, so a symlink cannot disguise overlapping trees. */
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+      throw error;
+    return join(
+      await canonicalPath(dirname(path)),
+      path.split(sep).at(-1) ?? "",
+    );
+  }
+}
+
+function containsPath(parent: string, child: string): boolean {
+  const path = relative(parent, child);
+  return (
+    path === "" ||
+    (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+  );
+}
+
+/** Existing output must be a complete previous build, never an arbitrary folder or link. */
+async function assertReplaceableOutput(outputDir: string): Promise<void> {
+  try {
+    const info = await lstat(outputDir);
+    if (!info.isDirectory()) throw new Error("not a directory");
+    await validateOutput(outputDir);
+    await validatePrecacheIntegrity(outputDir);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT" &&
+      "path" in error &&
+      error.path === outputDir
+    )
+      return;
+    throw new Error(
+      `Refusing to replace output that is not a previous Astro XP build: ${outputDir}`,
+      { cause: error },
+    );
+  }
+}
+
 export async function replaceOutput(
   stagingDir: string,
   outputDir: string,
 ): Promise<void> {
+  await assertReplaceableOutput(outputDir);
   await mkdir(dirname(outputDir), { recursive: true });
   const backupDir = join(dirname(stagingDir), "previous-output");
   if (await isDirectory(outputDir)) {
@@ -1062,12 +1110,19 @@ export async function build({
 }: BuildOptions): Promise<void> {
   const resolvedOutput = resolve(outputDir);
   const resolvedSource = resolve(sourceDir);
+  const [canonicalOutput, canonicalSource] = await Promise.all([
+    canonicalPath(resolvedOutput),
+    realpath(resolvedSource),
+  ]);
   if (
-    resolvedOutput === resolvedSource ||
-    resolvedOutput.startsWith(`${resolvedSource}${sep}`)
+    containsPath(canonicalSource, canonicalOutput) ||
+    containsPath(canonicalOutput, canonicalSource)
   ) {
-    throw new Error("Build output must be outside the site source directory");
+    throw new Error(
+      "Build output must be outside the site source directory and must not contain it",
+    );
   }
+  await assertReplaceableOutput(resolvedOutput);
 
   const deploymentVersion = version ?? getDeploymentVersion(revision);
   await mkdir(dirname(resolvedOutput), { recursive: true });
