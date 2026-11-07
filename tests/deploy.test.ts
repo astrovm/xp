@@ -1426,12 +1426,17 @@ describe("output safety", () => {
     "source",
     "ancestor",
     "inside",
+    "deep inside",
+    "deep ancestor",
     "source alias",
     "ancestor alias",
   ]) {
     test(`rejects output ${destination} without losing the source or repository`, async () => {
       const project = await makeTemporaryDirectory();
-      const source = join(project, "site");
+      const source =
+        destination === "deep ancestor"
+          ? join(project, "nested", "site")
+          : join(project, "site");
       await makeSource(source);
       await writeFiles(project, { ".git/HEAD": "ref: refs/heads/fake\n" });
       const output =
@@ -1439,7 +1444,9 @@ describe("output safety", () => {
           ? source
           : destination === "inside"
             ? join(source, "dist")
-            : project;
+            : destination === "deep inside"
+              ? join(source, "nested", "dist")
+              : project;
       const alias = join(project, "alias");
       if (destination.endsWith("alias"))
         await symlink(destination === "source alias" ? source : project, alias);
@@ -1638,4 +1645,36 @@ test("shared runtime revisions are stable and change with file bytes or chunk na
   expect(revisions[1]).toBe(revisions[0]);
   expect(revisions[2]).not.toBe(revisions[0]);
   expect(revisions[3]).not.toBe(revisions[0]);
+});
+
+test("zero stability delay is accepted with valid metadata input", async () => {
+  const root = await makeTemporaryDirectory();
+  await writeFiles(root, {
+    "index.html": "shell",
+    "offline-games.json": JSON.stringify({
+      runtime: { bytes: 7 },
+      games: { fake: { bytes: 5 } },
+    }),
+  });
+  await writeVersionMetadata(new BuildPaths(root), VERSION, {
+    stabilityDelayMs: 0,
+  });
+  expect(
+    JSON.parse(await readFile(join(root, "version.json"), "utf8"))
+      .stabilityDelayMs,
+  ).toBe(0);
+});
+
+test("even a symlink to a valid previous build is not replaced", async () => {
+  const { root: target } = await makeValidArtifact();
+  const project = await makeTemporaryDirectory();
+  const output = join(project, "output");
+  const staging = join(project, "build", "output");
+  await symlink(target, output);
+  await writeFiles(staging, { "new.txt": "new" });
+  await expect(replaceOutput(staging, output)).rejects.toThrow(
+    "previous Astro XP build",
+  );
+  expect((await stat(output)).isDirectory()).toBe(true);
+  expect(await Bun.file(join(target, "index.html")).exists()).toBe(true);
 });
