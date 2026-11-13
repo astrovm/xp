@@ -1511,12 +1511,113 @@ html:not(.keyboard-cues) .menu-accesskey {
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
 }
 .explorer-items[data-view="thumbnails"] {
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 }
+/* Thumbnails: a 100px frame with the name under it, like XP. */
 .explorer-items[data-view="thumbnails"] .explorer-item {
-  min-height: 110px;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  gap: 4px;
+  min-height: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  text-align: center;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item-icon {
+  box-sizing: border-box;
+  width: 100px;
+  height: 100px;
+  border: 1px solid #d0d0bf;
+  background: #fff;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item.selected {
+  background: transparent;
+  color: inherit;
+}
+.explorer-items[data-view="thumbnails"]
+  .explorer-item.selected
+  .explorer-item-icon {
+  border: 2px solid var(--sys-highlight, #316ac5);
+}
+/* XP marks a selected thumbnail with its frame, and keeps the picture. */
+.explorer-items[data-view="thumbnails"]
+  .explorer-item.selected
+  .explorer-item-icon
+  :is(.thumbnail-picture, .folder-thumbnail img) {
+  filter: none;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item.selected b {
+  background: var(--sys-highlight, #316ac5);
+  color: #fff;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item small {
+  display: none;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item b {
+  padding: 0 2px;
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+.explorer-items[data-view="thumbnails"]
+  .explorer-item-icon
+  img.thumbnail-picture {
+  width: auto;
+  height: auto;
+  max-width: 96px;
+  max-height: 96px;
+}
+
+/* A folder with pictures in Thumbnails view: a large folder that holds up
+   to 4 of its pictures, like XP. Explorer and the file dialogs use it. */
+.folder-thumbnail {
+  position: relative;
+  display: block;
+  width: 88px;
+  height: 74px;
+}
+.folder-thumbnail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid #c39b32;
+  border-radius: 2px;
+  background: linear-gradient(#fbe7a1, #eac15c);
+  clip-path: polygon(0 0, 38% 0, 46% 10%, 100% 10%, 100% 100%, 0 100%);
+}
+.folder-thumbnail::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 14px;
+  border-top: 1px solid #c39b32;
+  background: linear-gradient(#f6d77e, #e3b44a);
+}
+.folder-thumbnail-pictures {
+  position: absolute;
+  inset: 12px 6px 6px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 3px;
+}
+.folder-thumbnail-pictures > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.folder-thumbnail .folder-thumbnail-pictures img,
+.dlg-file-list[data-view="thumbnails"] .dlg-node-icon .folder-thumbnail img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid #fff;
+  box-shadow: 0 0 0 1px #9a8a5a;
 }
 .explorer-items[data-view="list"] {
   display: block;
@@ -1527,11 +1628,16 @@ html:not(.keyboard-cues) .menu-accesskey {
 .explorer-items[data-view="details"] {
   display: block;
 }
+/* Details: a small icon and the name, then the type and the size, like XP. */
 .explorer-details-header,
-.explorer-details-row {
+.explorer-items[data-view="details"] .explorer-details-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 150px 80px;
+  grid-template-columns: 16px minmax(160px, 1fr) 150px 80px;
+  column-gap: 4px;
   align-items: center;
+}
+.explorer-details-header > span:first-child {
+  grid-column: span 2;
 }
 .explorer-details-header {
   padding: 3px 6px;
@@ -1539,14 +1645,25 @@ html:not(.keyboard-cues) .menu-accesskey {
   background: var(--xp-beige);
   font-weight: bold;
 }
-.explorer-items[data-view="details"] .explorer-item-icon {
-  grid-row: 1;
+.explorer-items[data-view="details"] .explorer-item-icon,
+.explorer-items[data-view="details"] .explorer-item-icon img {
+  width: 16px;
+  height: 16px;
 }
-.explorer-items[data-view="details"] .explorer-item > span:nth-child(2) {
+.explorer-items[data-view="details"] .explorer-item-label {
   min-width: 0;
 }
+.explorer-items[data-view="details"] .explorer-item-label small {
+  display: none;
+}
+.explorer-details-header > span:last-child,
+.explorer-detail-size {
+  text-align: right;
+}
 .explorer-items[data-view="details"] .explorer-item {
-  min-height: 30px;
+  width: 100%;
+  min-height: 20px;
+  padding: 1px 6px;
   border-bottom: 1px solid #eee;
 }
 
@@ -1587,7 +1704,7 @@ html:not(.keyboard-cues) .menu-accesskey {
   border: 1px solid #777;
 }
 
-.explorer-item span:last-child {
+.explorer-item-label {
   display: flex;
   min-width: 0;
   flex-direction: column;

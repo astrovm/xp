@@ -748,10 +748,23 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
       (element) =>
         element.querySelector(".dlg-file-item-name").textContent === name,
     );
-  const picture = (name) => item(name).querySelector(".dlg-thumbnail-picture");
+  const picture = (name) => item(name).querySelector(".thumbnail-picture");
   expect(picture("art.png").getAttribute("src")).toBe(art);
   expect(picture("notes.txt")).toBeNull();
   expect(picture("Sample Pictures")).toBeNull();
+  // A folder shows its first 4 pictures on a large folder, like XP.
+  expect(
+    [
+      ...item("Sample Pictures").querySelectorAll(
+        ".folder-thumbnail-pictures img",
+      ),
+    ].map((image) => image.getAttribute("src")),
+  ).toEqual([
+    "/assets/xp/sample-pictures/blue-hills.jpg",
+    "/assets/xp/sample-pictures/sunset.jpg",
+    "/assets/xp/sample-pictures/water-lilies.jpg",
+    "/assets/xp/sample-pictures/winter.jpg",
+  ]);
   // A picture the browser cannot draw shows its icon instead.
   picture("broken.png").dispatchEvent(new s.window.Event("error"));
   expect(picture("broken.png")).toBeNull();
@@ -759,7 +772,7 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
   // The sample pictures show the pictures from the XP CD.
   item("Sample Pictures").dispatchEvent(new s.window.MouseEvent("dblclick"));
   expect(
-    [...list.querySelectorAll(".dlg-thumbnail-picture")].map((image) =>
+    [...list.querySelectorAll(".thumbnail-picture")].map((image) =>
       image.getAttribute("src"),
     ),
   ).toEqual([
@@ -773,7 +786,7 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
   [...current(s).querySelectorAll(".dlg-file-views-menu button")]
     .find((button) => button.textContent.includes("Icons"))
     .click();
-  expect(list.querySelector(".dlg-thumbnail-picture")).toBeNull();
+  expect(list.querySelector(".thumbnail-picture")).toBeNull();
   key(s, "Escape");
   expect(await open).toBeNull();
 });

@@ -1800,9 +1800,7 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 }
 
 /* A picture keeps its shape inside the frame, like XP's thumbnails. */
-.dlg-file-list[data-view="thumbnails"]
-  .dlg-node-icon
-  img.dlg-thumbnail-picture {
+.dlg-file-list[data-view="thumbnails"] .dlg-node-icon img.thumbnail-picture {
   width: auto;
   height: auto;
   max-width: 96px;

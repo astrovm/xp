@@ -164,6 +164,8 @@ test("Explorer toolbar, address bar, tree, and task panes navigate folders", asy
     { s, fs } = h;
   await h.action("search");
   await h.action("view");
+  h.win.querySelector('[data-explorer-command="thumbnails"]').click();
+  await flushShell();
   expect(h.win.querySelector(".explorer-items").dataset.view).toBe(
     "thumbnails",
   );

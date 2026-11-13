@@ -2,12 +2,14 @@ import { createControlPanel } from "./control-panel.js";
 
 export const createSystemRuntime = (context) => {
   const {
+    EXPLORER_VIEWS,
     XPDialogs,
     closeGameWindow,
     confirmRecycleDelete,
     confirmRecycleBinDelete,
     explorerBack,
     explorerForward,
+    explorerViewFor,
     fileOps,
     fs,
     navigateExplorer,
@@ -21,6 +23,7 @@ export const createSystemRuntime = (context) => {
     selectedExplorerNodes,
     renderExplorerSelection,
     setAccessKeyText,
+    setExplorerView,
     startExplorerRename,
     wireProjectSettings,
   } = context;
@@ -527,6 +530,19 @@ export const createSystemRuntime = (context) => {
           win.currentFolderId,
         );
         const currentFolderName = fs.getNode(win.currentFolderId).name;
+        const currentView = explorerViewFor(win.currentFolderId);
+        const viewEntries = [
+          ["Thumbnails", "thumbnails"],
+          ["Tiles", "tiles"],
+          ["Icons", "icons"],
+          ["List", "list"],
+          ["Details", "details"],
+        ].map(([label, action]) => ({
+          label,
+          action,
+          radio: true,
+          checked: currentView === action,
+        }));
         const actions = {
           file: [
             {
@@ -586,36 +602,7 @@ export const createSystemRuntime = (context) => {
           view: [
             { label: "Explorer Bar", action: "explorer-bar", submenu: true },
             { separator: true },
-            {
-              label: "Thumbnails",
-              action: "thumbnails",
-              radio: true,
-              checked: win.explorerView === "thumbnails",
-            },
-            {
-              label: "Tiles",
-              action: "tiles",
-              radio: true,
-              checked: win.explorerView === "tiles",
-            },
-            {
-              label: "Icons",
-              action: "icons",
-              radio: true,
-              checked: win.explorerView === "icons",
-            },
-            {
-              label: "List",
-              action: "list",
-              radio: true,
-              checked: win.explorerView === "list",
-            },
-            {
-              label: "Details",
-              action: "details",
-              radio: true,
-              checked: win.explorerView === "details",
-            },
+            ...viewEntries,
             { separator: true },
 
             { separator: true },
@@ -624,6 +611,8 @@ export const createSystemRuntime = (context) => {
             { label: "Refresh", action: "refresh" },
           ],
 
+          // The Views toolbar button.
+          views: viewEntries,
           help: [
             { separator: true },
 
@@ -679,14 +668,7 @@ export const createSystemRuntime = (context) => {
                 "info",
               );
             if (command === "rename") startExplorerRename(win, selected[0]);
-            if (
-              ["thumbnails", "tiles", "icons", "list", "details"].includes(
-                command,
-              )
-            ) {
-              win.explorerView = command;
-              renderExplorerItems(win);
-            }
+            if (EXPLORER_VIEWS.includes(command)) setExplorerView(win, command);
             if (command === "properties-current")
               openShellProperties(selected[0] || win.currentFolderId);
             if (command === "select-all")
@@ -743,10 +725,8 @@ export const createSystemRuntime = (context) => {
             actionButton.setAttribute("aria-pressed", String(foldersVisible));
           }
           if (action === "view") {
-            const views = ["tiles", "thumbnails", "icons", "list", "details"];
-            win.explorerView =
-              views[(views.indexOf(win.explorerView) + 1) % views.length];
-            renderExplorerItems(win);
+            showExplorerMenu("views", actionButton, false);
+            return;
           }
           if (action === "search") openSearchDialog();
           if (action === "go") {

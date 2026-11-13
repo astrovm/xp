@@ -255,6 +255,7 @@ const wireSearchCompanion = (win) => {
       item.className = "explorer-item";
       item.setAttribute("role", "option");
       const label = document.createElement("span");
+      label.className = "explorer-item-label";
       const name = document.createElement("b");
       name.textContent = result.title || result.node.name;
       const description = document.createElement("small");
@@ -881,6 +882,37 @@ const explorerDisplayName = (node) =>
 // browses into a deleted folder.
 const isDeletedNode = (id) => id !== fs.RECYCLE_BIN && fs.isInRecycleBin(id);
 
+// XP remembers the view of each folder. A folder that has none opens in
+// Thumbnails inside My Pictures and in Tiles elsewhere. The newest views
+// come last, and the oldest go first when the list is full.
+const EXPLORER_VIEWS = ["thumbnails", "tiles", "icons", "list", "details"];
+const EXPLORER_VIEWS_KEY = "explorerFolderViews";
+const MAX_EXPLORER_VIEWS = 400;
+const readExplorerViews = () =>
+  readJsonStorage(
+    EXPLORER_VIEWS_KEY,
+    [],
+    (value) =>
+      Array.isArray(value) &&
+      value.every(
+        (entry) =>
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          EXPLORER_VIEWS.includes(entry[1]),
+      ),
+  );
+const explorerViewFor = (folderId) =>
+  readExplorerViews().find(([id]) => id === folderId)?.[1] ??
+  (XPDialogs.isPictureFolder(folderId) ? "thumbnails" : "tiles");
+const setExplorerView = (win, view) => {
+  const views = readExplorerViews().filter(
+    ([id]) => id !== win.currentFolderId,
+  );
+  views.push([win.currentFolderId, view]);
+  writeJsonStorage(EXPLORER_VIEWS_KEY, views.slice(-MAX_EXPLORER_VIEWS));
+  renderExplorerItems(win);
+};
+
 const navigateExplorer = (win, folderId, { history = true } = {}) => {
   const folder = fs.getNode(folderId);
   if (!folder || folder.type !== "folder" || isDeletedNode(folderId))
@@ -1479,7 +1511,8 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   main.querySelector("h2").hidden = true;
 
   const items = main.querySelector(".explorer-items");
-  items.dataset.view = win.explorerView;
+  const view = explorerViewFor(folder.id);
+  items.dataset.view = view;
   items.innerHTML = "";
 
   const myComputerGroup = (node) =>
@@ -1523,7 +1556,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     return;
   }
 
-  if (items.dataset.view === "details") {
+  if (view === "details") {
     const header = document.createElement("div");
     header.className = "explorer-details-header";
     header.innerHTML = "<span>Name</span><span>Type</span><span>Size</span>";
@@ -1550,6 +1583,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     item.title = node.name;
 
     const label = document.createElement("span");
+    label.className = "explorer-item-label";
     const name = document.createElement("b");
     name.textContent =
       folder.id === fs.MY_COMPUTER && node.id === fs.MY_DOCUMENTS
@@ -1566,9 +1600,11 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     if (folder.id === fs.MY_COMPUTER && node.id === fs.MY_DOCUMENTS) {
       itemIcon.querySelector("img").src = XP_ICON_PATHS["NewFolder.png"];
     }
+    if (view === "thumbnails")
+      XPDialogs.fillThumbnail(itemIcon, node, createExplorerIcon);
     item.append(itemIcon, label);
     if (folder.id === fs.MY_COMPUTER) item.classList.add("my-computer-item");
-    if (items.dataset.view === "details") {
+    if (view === "details") {
       item.classList.add("explorer-details-row");
       const type = document.createElement("span");
       type.className = "explorer-detail-type";
@@ -1578,7 +1614,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       size.textContent =
         node.type === "folder"
           ? ""
-          : XPDialogs.formatBytes(fs.getSize(node.id));
+          : XPDialogs.formatKilobytes(fs.getSize(node.id));
       item.append(type, size);
     }
     item.addEventListener("click", (event) => {

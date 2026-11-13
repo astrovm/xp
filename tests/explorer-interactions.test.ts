@@ -232,10 +232,13 @@ test("search companion finds files from its form", async () => {
 });
 test("Explorer menu commands switch views, select items and paste copies", async () => {
   const h = await setup();
-  const menu = async (name, command) => {
-    h.win.querySelector(`[data-explorer-menu="${name}"]`).click();
+  const menuCommand = async (command) => {
     h.win.querySelector(`[data-explorer-command="${command}"]`).click();
     await flushShell();
+  };
+  const menu = async (name, command) => {
+    h.win.querySelector(`[data-explorer-menu="${name}"]`).click();
+    await menuCommand(command);
   };
   for (const view of ["thumbnails", "tiles", "icons", "list", "details"]) {
     await menu("view", view);
@@ -272,6 +275,7 @@ test("Explorer menu commands switch views, select items and paste copies", async
   address.dispatchEvent(new h.s.window.Event("change"));
   expect(address.value).toBe(h.fs.getPath(h.folder.id));
   h.win.querySelector('[data-explorer-action="view"]').click();
+  await menuCommand("tiles");
   expect(h.win.querySelector(".explorer-items").dataset.view).toBe("tiles");
   await menu("view", "refresh");
   await menu("help", "about-windows");

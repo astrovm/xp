@@ -69,12 +69,16 @@
     return `${value.toFixed(2)} ${units[unit - 1]} (${grouped} bytes)`;
   };
 
+  // XP's Details view rounds every file up to whole KB: "1 KB", "28 KB".
+  const formatKilobytes = (bytes) =>
+    `${Math.max(1, Math.ceil(bytes / 1024)).toLocaleString("en-US")} KB`;
+
   const hasDOM = typeof document !== "undefined";
   const getFS = () => globalThis.VirtualFS;
 
   if (!hasDOM) {
     // Node: expose only the pure definitions for tests.
-    return { ICONS, BUTTON_SETS, parseAccessKey, formatBytes };
+    return { ICONS, BUTTON_SETS, parseAccessKey, formatBytes, formatKilobytes };
   }
 
   // ---- Dialog stack and shared keyboard handling ----
@@ -564,26 +568,71 @@
     return icon;
   };
 
+  // Folders that show only their own icon in Thumbnails view, like XP.
+  const plainThumbnailFolders = () => [
+    fs().MY_COMPUTER,
+    fs().RECYCLE_BIN,
+    fs().DRIVE_C,
+    fs().DRIVE_D,
+    fs().DRIVE_F,
+  ];
+  // A folder's thumbnail shows its first 4 pictures by name, like XP.
+  const FOLDER_PREVIEW_COUNT = 4;
+  const folderPreviewUrls = (folderId) =>
+    fs()
+      .getChildren(folderId)
+      .filter((child) => child.type !== "folder")
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((child) => fs().getPictureUrl(child.id))
+      .filter(Boolean)
+      .slice(0, FOLDER_PREVIEW_COUNT);
+
   // Thumbnails view shows a picture file as the picture itself, scaled to
-  // fit the frame, like XP. Other items, and pictures that fail to load,
-  // show their icon.
-  const createThumbnail = (node) => {
-    const icon = createNodeIcon(node);
+  // fit the frame, like XP. A folder with pictures shows up to 4 of them on
+  // a large folder. Other items keep `icon`. A picture that fails to load
+  // gets a new icon from `createIcon`, and a folder preview drops it.
+  const fillThumbnail = (icon, node, createIcon) => {
+    if (node.type === "folder") {
+      if (plainThumbnailFolders().includes(node.id)) return icon;
+      const urls = folderPreviewUrls(node.id);
+      if (!urls.length) return icon;
+      const folder = document.createElement("span");
+      folder.className = "folder-thumbnail";
+      const pictures = document.createElement("span");
+      pictures.className = "folder-thumbnail-pictures";
+      urls.forEach((url) => {
+        const cell = document.createElement("span");
+        const preview = document.createElement("img");
+        preview.alt = "";
+        preview.decoding = "async";
+        preview.addEventListener("error", () => cell.remove(), {
+          once: true,
+        });
+        preview.src = url;
+        cell.appendChild(preview);
+        pictures.appendChild(cell);
+      });
+      folder.appendChild(pictures);
+      icon.replaceChildren(folder);
+      return icon;
+    }
     const url = fs().getPictureUrl(node.id);
     if (!url) return icon;
     const preview = document.createElement("img");
-    preview.className = "dlg-thumbnail-picture";
+    preview.className = "thumbnail-picture";
     preview.alt = "";
     preview.decoding = "async";
     preview.addEventListener(
       "error",
-      () => icon.replaceWith(createNodeIcon(node)),
+      () => icon.replaceWith(createIcon(node)),
       { once: true },
     );
     preview.src = url;
     icon.replaceChildren(preview);
     return icon;
   };
+  const createThumbnail = (node) =>
+    fillThumbnail(createNodeIcon(node), node, createNodeIcon);
 
   const describeNodeType = (node) => {
     if (node.id === fs().DRIVE_C) return "Local Disk";
@@ -710,7 +759,7 @@
     return icon;
   };
 
-  // XP's Views menu, in its order. My Pictures opens in Thumbnails.
+  // XP's Views menu, in its order.
   const FILE_VIEWS = [
     ["thumbnails", "T&humbnails"],
     ["tiles", "Tile&s"],
@@ -718,15 +767,19 @@
     ["list", "&List"],
     ["details", "&Details"],
   ];
-  const defaultFileView = (folderId) => {
+  // Explorer and the file dialogs open My Pictures, and every folder in it,
+  // in Thumbnails view, like XP.
+  const isPictureFolder = (folderId) => {
     for (
       let node = fs().getNode(folderId);
       node;
       node = fs().getNode(node.parent)
     )
-      if (node.id === fs().MY_PICTURES) return "thumbnails";
-    return "list";
+      if (node.id === fs().MY_PICTURES) return true;
+    return false;
   };
+  const defaultFileView = (folderId) =>
+    isPictureFolder(folderId) ? "thumbnails" : "list";
 
   // File names typed into Open and Save As, newest first, for the File
   // name drop-down. They last for the session.
@@ -1396,10 +1449,7 @@
       // Details and Tiles also show each item's type, size and date.
       const itemDetails = (node) => {
         const type = describeNodeType(node);
-        const size =
-          node.type === "folder"
-            ? ""
-            : `${Math.max(1, Math.ceil(node.size / 1024)).toLocaleString("en-US")} KB`;
+        const size = node.type === "folder" ? "" : formatKilobytes(node.size);
         const date = new Date(node.modified).toLocaleString("en-US", {
           dateStyle: "short",
           timeStyle: "short",
@@ -1583,7 +1633,10 @@
     ICONS,
     BUTTON_SETS,
     parseAccessKey,
+    fillThumbnail,
     formatBytes,
+    formatKilobytes,
+    isPictureFolder,
     createDialog,
     addWhatsThisHelp,
     createDialogButton,

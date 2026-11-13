@@ -89,6 +89,15 @@ describe("XP dialogs", () => {
     expect(dialogs.formatBytes(1048576)).toBe("1.00 MB (1,048,576 bytes)");
   });
 
+  test("formats Details sizes in whole KB, rounded up, like XP", () => {
+    const dialogs = loadDialogs();
+    expect(dialogs.formatKilobytes(0)).toBe("1 KB");
+    expect(dialogs.formatKilobytes(1024)).toBe("1 KB");
+    expect(dialogs.formatKilobytes(1025)).toBe("2 KB");
+    expect(dialogs.formatKilobytes(28521)).toBe("28 KB");
+    expect(dialogs.formatKilobytes(2048 * 1024)).toBe("2,048 KB");
+  });
+
   test("formats negative and non-numeric sizes as zero bytes", () => {
     const dialogs = loadDialogs();
     expect(dialogs.formatBytes(-1)).toBe("0 bytes");
