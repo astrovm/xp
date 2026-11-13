@@ -103,7 +103,14 @@ const openDesktopItemsDialog = (ownerWindow) => {
   panels.querySelector("[data-system-icon]").focus();
 };
 
+// A modal dialog that is still open (an error over Browse, for example)
+// keeps the owner inactive. The last one to close activates it.
 const setDisplayDialogOwnerActive = (ownerWindow, active) => {
+  if (
+    active &&
+    document.querySelector(".xp-dialog-overlay:not(.xp-dialog-modeless)")
+  )
+    return;
   ownerWindow.el.classList.toggle("active", active);
   if (active) focusWindow(ownerWindow.gameId);
 };
@@ -253,11 +260,21 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
 };
 
 // XP's wallpaper Browse is the standard Open dialog in My Pictures. The
-// virtual disk keeps no picture data, so Open hands off to the browser's
-// file picker; the chosen picture fills File name and closes the dialog.
-const WALLPAPER_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
+// virtual disk keeps no picture data, so Open always hands off to the
+// browser's file picker, whatever the list or File name shows. The chosen
+// picture fills File name and closes the dialog.
+const WALLPAPER_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+const WALLPAPER_EXTENSIONS = Object.keys(WALLPAPER_TYPES);
+const WALLPAPER_MIME_TYPES = [...new Set(Object.values(WALLPAPER_TYPES))];
 const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
   let dialog = null;
+  let nameInput = null;
   setDisplayDialogOwnerActive(ownerWindow, false);
   XPDialogs.browseFiles({
     title: "Browse",
@@ -266,11 +283,16 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
     filterLabel: `Background Files (${WALLPAPER_EXTENSIONS.map((ext) => `*${ext}`).join(";")})`,
     acceptLabel: "&Open",
     folderLabel: "Look &in:",
-    onDialog: (created) => {
+    onDialog: (created, controls) => {
       dialog = created;
+      nameInput = controls.nameInput;
+      // Test and style hook for this use of the shared dialog.
       dialog.el.classList.add("wallpaper-browse-dialog");
     },
     onAccept: () => {
+      // Clear the last pick so choosing the same picture again still
+      // fires a change event.
+      fileInput.value = "";
       fileInput.click();
       return false;
     },
@@ -278,7 +300,7 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
   return {
     setChosenFile: (name) => {
       if (!dialog.el.isConnected) return;
-      dialog.body.querySelector("#dlg-file-name").value = name;
+      nameInput.value = name;
       dialog.close("open");
     },
   };
@@ -576,13 +598,7 @@ const wireDisplayProperties = (win) => {
   controls.image.addEventListener("change", () => {
     const [file] = controls.image.files;
     if (!file) return;
-    const supportedTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/gif",
-      "image/webp",
-    ];
-    if (!supportedTypes.includes(file.type)) {
+    if (!WALLPAPER_MIME_TYPES.includes(file.type)) {
       controls.image.value = "";
       openDisplayNotice(
         win,

@@ -136,8 +136,13 @@ test("Browse rejects non-pictures and lists a chosen picture by name", async () 
   const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
   expect(error.textContent).toContain("bad.txt is not a picture");
   expect(error.querySelector(".dlg-icon-error")).not.toBeNull();
+  const owner = h.d.closest(".xp-window");
+  expect(owner.classList.contains("active")).toBeFalse();
   h.dialogButton(error, "OK");
   await flushShell();
+  // Browse is still open, so the error closing keeps the owner inactive.
+  expect(s.document.querySelector(".wallpaper-browse-dialog")).not.toBeNull();
+  expect(owner.classList.contains("active")).toBeFalse();
   const custom = q(".display-custom-wallpaper");
   expect(custom.hidden).toBeTrue();
   Object.defineProperty(input, "files", {
@@ -239,11 +244,22 @@ test("secondary display dialogs cancel with Escape and ignore clicks between con
   );
   expect(browse.querySelector(".help-btn")).not.toBeNull();
   let picked = 0;
-  q("#display-image").click = () => picked++;
+  const image = q("#display-image");
+  let cleared = 0;
+  Object.defineProperty(image, "value", {
+    configurable: true,
+    get: () => "",
+    set: (value) => value === "" && cleared++,
+  });
+  image.click = () => picked++;
   h.dialogButton(browse, "Open");
+  // Open clears the last pick, so picking the same picture again works.
+  expect(cleared).toBe(1);
   expect(picked).toBe(1);
   escape(browse);
   expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  await flushShell();
+  expect(h.d.closest(".xp-window").classList.contains("active")).toBeTrue();
 });
 
 test("effects restore scroll transitions and ClearType and can turn both off", async () => {

@@ -636,7 +636,9 @@
   // Places bar, a "Look in"/"Save in" folder list with Back, Up, and New
   // Folder, a column-flowing file list, and the file name and type fields.
   // filterLabel names the filter in the type list, like XP's "Background
-  // Files". onDialog(dialog) receives the dialog before it renders.
+  // Files". onDialog(dialog, { nameInput }) receives the dialog and its
+  // File name box before they render. It must not call dialog.onResult,
+  // which would replace the callback that settles this promise.
   // onAccept({ folderId, name }) validates the current entry and returns
   // false (or Promise<false>) to keep the dialog open, or any other value
   // (or Promise of one) to close the dialog and resolve with that value.
@@ -670,7 +672,6 @@
       });
       dialog.el.classList.add("xp-file-dialog");
       dialog.onResult(resolve);
-      onDialog?.(dialog);
 
       const field = (className, labelText, control) => {
         const label = document.createElement("label");
@@ -804,6 +805,7 @@
       );
 
       dialog.body.append(toolbar, places, list, fields);
+      onDialog?.(dialog, { nameInput });
 
       const matchesFilter = (node) =>
         node.type === "folder" ||
