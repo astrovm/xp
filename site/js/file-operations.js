@@ -220,11 +220,19 @@
     const source = options.items || clipboard;
     if (!source) throw new Error("FileOperations: clipboard is empty");
     assertWritableFolder(destinationId);
-    const ids = getTopLevelIds(source.ids);
-    // An item deleted while the paste runs, also while a conflict question
-    // is open, is skipped. A paste never takes an item out of the Recycle
-    // Bin that went there after the paste started.
-    const fromBin = ids.filter((id) => fs.isInRecycleBin(id));
+    // Items destroyed since the user picked them are skipped.
+    const liveIds = Array.isArray(source.ids)
+      ? source.ids.filter((id) => !!fs.getNode(id))
+      : source.ids;
+    if (source.ids.length && !liveIds.length)
+      return { cancelled: false, results: [] };
+    const ids = getTopLevelIds(liveIds);
+    // A paste takes an item out of the Recycle Bin only if it was there
+    // when the user picked it (cut, copy or drag start), and is still
+    // there. Other items deleted before or during the paste are skipped.
+    let fromBin = (source.fromBin || ids).filter(
+      (id) => ids.includes(id) && fs.isInRecycleBin(id),
+    );
     const mode = source.mode;
     if (mode === "cut") assertMovableTo(ids, destinationId);
     else assertCopyableTo(ids, destinationId);
@@ -233,88 +241,97 @@
       ids.every((id) => fs.getNode(id).parent === destinationId)
     )
       return { cancelled: false, results: ids.map((id) => fs.getNode(id)) };
-    const decisions = [];
-    for (const conflict of getConflicts(ids, destinationId)) {
-      const response = await Promise.resolve(
-        resolveConflict?.({ ...conflict, mode }) || "rename",
-      );
-      const decision = ["replace", "rename", "cancel"].includes(response)
-        ? response
-        : "rename";
-      if (decision === "cancel") return { cancelled: true, results: [] };
-      decisions.push({ conflict, decision });
-    }
-    // Items already moved leave a cut clipboard; the rest can be retried.
-    // A new cut or copy made during the paste stays on the clipboard.
-    const pastesClipboard = () =>
-      mode === "cut" && usesClipboard && clipboard?.token === source.token;
-    const keepUnmovedOnClipboard = (index) => {
-      if (!pastesClipboard()) return;
-      setClipboardIds(
-        ids
-          .slice(index)
-          .filter(
-            (id) => clipboard.ids.includes(id) && isStillThere(id, fromBin),
-          ),
-      );
-    };
-    const results = [];
-    for (const [index, id] of ids.entries()) {
-      if (options.isCancelled?.()) {
-        keepUnmovedOnClipboard(index);
-        return { cancelled: true, results };
-      }
-      const reportProgress = () =>
-        options.onProgress?.({
-          completed: index + 1,
-          total: ids.length,
-          mode,
-          id,
-        });
-      if (!isStillThere(id, fromBin)) {
-        reportProgress();
-        continue;
-      }
-      const planned = decisions.find(
-        ({ conflict }) => conflict.source.id === id,
-      );
-      try {
-        await fs.transaction(() => {
-          // Replace only the file that still holds the clashing name; it may
-          // have been renamed or moved while the conflict dialog was open.
-          const existing =
-            planned?.decision === "replace"
-              ? fs.findChild(destinationId, fs.getNode(id).name)
-              : null;
-          if (
-            existing?.id === planned?.conflict.existing.id &&
-            existing?.type === "file" &&
-            planned.conflict.source.type === "file"
-          ) {
-            fs.destroy(existing.id);
-          }
-          results.push(
-            mode === "cut"
-              ? fs.move(id, destinationId)
-              : fs.copy(id, destinationId),
-          );
-        });
-      } catch (error) {
-        keepUnmovedOnClipboard(index);
-        throw error;
-      }
-      if (mode === "cut" && !usesClipboard) forgetCutItems([id]);
-      reportProgress();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    if (pastesClipboard()) setClipboardIds([]);
-    notify({
-      type: "paste",
-      mode,
-      destinationId,
-      ids: results.map((node) => node.id),
+    // An item that leaves the bin while the paste runs, then goes back,
+    // went there after the user picked it.
+    const unsubscribe = fs.subscribe(() => {
+      fromBin = fromBin.filter((id) => fs.isInRecycleBin(id));
     });
-    return { cancelled: false, results };
+    try {
+      const decisions = [];
+      for (const conflict of getConflicts(ids, destinationId)) {
+        const response = await Promise.resolve(
+          resolveConflict?.({ ...conflict, mode }) || "rename",
+        );
+        const decision = ["replace", "rename", "cancel"].includes(response)
+          ? response
+          : "rename";
+        if (decision === "cancel") return { cancelled: true, results: [] };
+        decisions.push({ conflict, decision });
+      }
+      // Items already moved leave a cut clipboard; the rest can be retried.
+      // A new cut or copy made during the paste stays on the clipboard.
+      const pastesClipboard = () =>
+        mode === "cut" && usesClipboard && clipboard?.token === source.token;
+      const keepUnmovedOnClipboard = (index) => {
+        if (!pastesClipboard()) return;
+        setClipboardIds(
+          ids
+            .slice(index)
+            .filter(
+              (id) => clipboard.ids.includes(id) && isStillThere(id, fromBin),
+            ),
+        );
+      };
+      const results = [];
+      for (const [index, id] of ids.entries()) {
+        if (options.isCancelled?.()) {
+          keepUnmovedOnClipboard(index);
+          return { cancelled: true, results };
+        }
+        const reportProgress = () =>
+          options.onProgress?.({
+            completed: index + 1,
+            total: ids.length,
+            mode,
+            id,
+          });
+        if (!isStillThere(id, fromBin)) {
+          reportProgress();
+          continue;
+        }
+        const planned = decisions.find(
+          ({ conflict }) => conflict.source.id === id,
+        );
+        try {
+          await fs.transaction(() => {
+            // Replace only the file that still holds the clashing name; it may
+            // have been renamed or moved while the conflict dialog was open.
+            const existing =
+              planned?.decision === "replace"
+                ? fs.findChild(destinationId, fs.getNode(id).name)
+                : null;
+            if (
+              existing?.id === planned?.conflict.existing.id &&
+              existing?.type === "file" &&
+              planned.conflict.source.type === "file"
+            ) {
+              fs.destroy(existing.id);
+            }
+            results.push(
+              mode === "cut"
+                ? fs.move(id, destinationId)
+                : fs.copy(id, destinationId),
+            );
+          });
+        } catch (error) {
+          keepUnmovedOnClipboard(index);
+          throw error;
+        }
+        if (mode === "cut" && !usesClipboard) forgetCutItems([id]);
+        reportProgress();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (pastesClipboard()) setClipboardIds([]);
+      notify({
+        type: "paste",
+        mode,
+        destinationId,
+        ids: results.map((node) => node.id),
+      });
+      return { cancelled: false, results };
+    } finally {
+      unsubscribe();
+    }
   };
 
   const createFolder = (parentId, name) => {

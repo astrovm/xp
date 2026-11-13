@@ -158,6 +158,17 @@ test("Explorer drag and drop moves internal files and imports external file cont
   target.dispatchEvent(drag("dragover"));
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
+  // A file deleted after the drag started stays in the Recycle Bin.
+  const late = h.fs.createFile(h.fs.getNode(h.file.id).parent, "late.txt");
+  await flushShell();
+  h.item(late.id).click();
+  h.item(late.id).dispatchEvent(drag("dragstart"));
+  expect(transfer.getData("application/x-astro-vfs-from-bin")).toBe("[]");
+  await h.fs.remove(late.id);
+  target.dispatchEvent(drag("drop"));
+  await flushShell();
+  await flushShell();
+  expect(h.fs.isInRecycleBin(late.id)).toBeTrue();
   // A drop ends the drag too.
   target.dispatchEvent(drag("dragstart"));
   transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));

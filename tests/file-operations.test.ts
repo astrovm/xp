@@ -346,6 +346,40 @@ describe("file operations", () => {
     expect(completed).toEqual([1, 2, 3]);
   });
 
+  test("takes items out of the Recycle Bin only if they were there when picked", async () => {
+    const { conflictSource, conflictFile, conflictTarget } =
+      createConflictFixture();
+    const binned = fs.createFile(conflictSource.id, "binned.txt");
+    const gone = fs.createFile(conflictSource.id, "gone.txt");
+    operations.removeToBin([conflictFile.id, binned.id]);
+    // Cut in the bin, restored and deleted again while the question is open.
+    fs.createFile(conflictTarget.id, conflictFile.name);
+    operations.cut([conflictFile.id]);
+    await operations.pasteWithConflicts(conflictTarget.id, () => {
+      operations.restore([conflictFile.id]);
+      operations.removeToBin([conflictFile.id]);
+      return "rename";
+    });
+    expect(fs.isInRecycleBin(conflictFile.id)).toBe(true);
+    // A drag that started outside the bin skips items deleted since.
+    await operations.pasteWithConflicts(conflictTarget.id, null, {
+      items: { mode: "cut", ids: [binned.id], fromBin: [] },
+    });
+    expect(fs.isInRecycleBin(binned.id)).toBe(true);
+    // Without fromBin, the items in the bin now count as picked there.
+    await operations.pasteWithConflicts(conflictTarget.id, null, {
+      items: { mode: "cut", ids: [binned.id] },
+    });
+    expect(fs.getNode(binned.id).parent).toBe(conflictTarget.id);
+    // Destroyed items are skipped.
+    fs.destroy(gone.id);
+    expect(
+      await operations.pasteWithConflicts(conflictTarget.id, null, {
+        items: { mode: "cut", ids: [gone.id] },
+      }),
+    ).toEqual({ cancelled: false, results: [] });
+  });
+
   test("skips an item deleted while the conflict question is open", async () => {
     const { conflictSource, conflictFile, conflictTarget } =
       createConflictFixture();

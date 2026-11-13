@@ -321,18 +321,24 @@ const wireDesktopIconDrag = (icon) => {
             markDesktopIconMoving(item, true);
           });
           let failure = null;
-          if (dropTarget.action === "recycle") {
+          // Desktop items are never in the Recycle Bin when a drag starts.
+          // Items deleted during the drag stay where they are.
+          const ids = eligibility.filesystemIds.filter(
+            (id) => !!fs.getNode(id) && !fs.isInRecycleBin(id),
+          );
+          if (ids.length && dropTarget.action === "recycle") {
             try {
-              await fileOps.removeToBin(eligibility.filesystemIds);
+              await fileOps.removeToBin(ids);
             } catch (error) {
               failure = error;
             }
-          } else {
+          } else if (ids.length) {
             // A drag moves the items without the clipboard, like XP. A
             // failure shows its own alert.
             await pasteIntoFolder(dropTarget.destinationId, {
               mode: "cut",
-              ids: eligibility.filesystemIds,
+              ids,
+              fromBin: [],
             });
           }
           returnIcons();
@@ -1095,7 +1101,7 @@ const setupDesktopContextMenu = () => {
       event.preventDefault();
       closeDesktopContextMenu();
       (
-        document.querySelector(".desktop-icon.selected") ||
+        document.querySelector(SELECTED_DESKTOP_ICONS) ||
         document.getElementById("desktop-icons")
       ).focus();
       return;

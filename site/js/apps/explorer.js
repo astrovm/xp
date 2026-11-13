@@ -832,8 +832,17 @@ const wireFolderDropTarget = (element, destinationId) => {
       // A drag moves the items without the clipboard, like XP. A folder
       // dropped on itself stays where it is.
       if (ids.includes(destinationId)) return;
+      // Only items that were in the Recycle Bin at drag start may leave it.
+      const binPayload = event.dataTransfer.getData(
+        "application/x-astro-vfs-from-bin",
+      );
+      const fromBin = binPayload ? JSON.parse(binPayload) : [];
       if (ids.length)
-        await pasteIntoFolder(destinationId, { mode: "cut", ids });
+        await pasteIntoFolder(destinationId, {
+          mode: "cut",
+          ids,
+          fromBin: Array.isArray(fromBin) ? fromBin : [],
+        });
       else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {
       XPDialogs.alert(
@@ -1585,6 +1594,10 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       event.dataTransfer.setData(
         "application/x-astro-vfs-ids",
         JSON.stringify(explorerDragIds),
+      );
+      event.dataTransfer.setData(
+        "application/x-astro-vfs-from-bin",
+        JSON.stringify(explorerDragIds.filter((id) => fs.isInRecycleBin(id))),
       );
       event.dataTransfer.effectAllowed = "move";
     });

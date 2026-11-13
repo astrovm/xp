@@ -332,7 +332,10 @@ document.addEventListener("keydown", async (e) => {
     const desktopHasFocus =
       desktopIcon || document.activeElement?.id === "desktop-icons";
     if (desktopHasFocus) {
-      const desktopIcons = [...document.querySelectorAll(".desktop-icon")];
+      // Keys never move to an icon that is still moving away.
+      const desktopIcons = [
+        ...document.querySelectorAll(".desktop-icon:not(.desktop-moving)"),
+      ];
       if (e.key === "F5") {
         e.preventDefault();
         refreshDesktop();
