@@ -290,8 +290,7 @@ test("window keys work from a text box, like XP", async () => {
   clickStartAction(s, "documents");
   clickStartAction(s, "pictures");
   await settle();
-  const win = (id) =>
-    s.document.querySelector(`.xp-window[data-game="${id}"]`);
+  const win = (id) => s.document.querySelector(`.xp-window[data-game="${id}"]`);
   const address = () =>
     s.document.querySelector(".xp-window.active .explorer-address input");
   expect(win("__my-pictures").classList.contains("active")).toBeTrue();
