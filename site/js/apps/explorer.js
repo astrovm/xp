@@ -856,12 +856,17 @@ const wireFolderDropTarget = (element, destinationId) => {
     }
   });
 };
-// Each Explorer window closes its own menus, so it also gives back the keys
-// and resets its menu buttons.
-const closeExplorerMenu = (root = document) => {
-  root
-    .querySelectorAll(".explorer-menu")
-    .forEach((menu) => menu.closeMenus?.());
+// Each Explorer-style window closes its own menus, so it also gives back
+// the keys and resets its menu buttons. A press on a menu, or on a button
+// in the same window that opens one, leaves the menu to the window.
+const closeExplorerMenu = (target = null) => {
+  document.querySelectorAll(".explorer-menu").forEach((menu) => {
+    const chrome = menu.parentElement;
+    const keep =
+      target?.closest(".explorer-menu")?.parentElement === chrome ||
+      (chrome.contains(target) && !!target.closest('[aria-haspopup="menu"]'));
+    if (!keep) menu.closeMenus?.();
+  });
 };
 
 const systemFolderShortcuts = {

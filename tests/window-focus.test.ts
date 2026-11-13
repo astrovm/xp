@@ -207,6 +207,26 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   expect(focused()).toBe("explorer-items");
   release(docs.querySelector(".title-text"));
 
+  // A press on the address bar closes the File menu with the window's own
+  // close, so the File button is reset and the keys leave the menu.
+  list.focus();
+  list.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  press(docs.querySelector(".explorer-address input"), "pointerdown");
+  expect(menu.hidden).toBeTrue();
+  expect(
+    docs
+      .querySelector('[data-explorer-menu="file"]')
+      .getAttribute("aria-expanded"),
+  ).toBe("false");
+  expect(focused()).toBe("explorer-items");
+  release(docs.querySelector(".explorer-address input"));
+
   // A task pane press gives the keys back to the address bar, the control
   // that had them before the menu.
   const fileHeading = docs.querySelector('[data-explorer-menu="file"]');

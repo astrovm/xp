@@ -166,12 +166,50 @@ test("Control Panel's menus close, show About and close the window", async () =>
   refresh.focus();
   refresh.click();
   expect(s.document.activeElement === address).toBeTrue();
-  // Without that control, the window keeps the keys.
+  // Without that control, the page takes the keys.
   menu("view");
   command("refresh").focus();
   address.remove();
   command("refresh").click();
-  expect(s.document.activeElement === win).toBeTrue();
+  expect(s.document.activeElement === $(".control-panel-main")).toBeTrue();
+
+  // A command that renders the page again keeps the keys in the window.
+  $('[data-control-panel-action="classic"]').click();
+  $(".control-panel-icon").focus();
+  menu("view");
+  command("view-list").focus();
+  command("view-list").click();
+  expect(s.document.activeElement === $(".control-panel-icons")).toBeTrue();
+  // So does a toolbar button that leaves the page.
+  $(".control-panel-icon").focus();
+  $('.explorer-toolbar [data-control-panel-action="back"]').click();
+  expect(win.contains(s.document.activeElement)).toBeTrue();
+  expect(
+    $(".control-panel-main").hasAttribute("data-default-focus") ||
+      !!$(".control-panel-icons[data-default-focus]"),
+  ).toBeTrue();
+
+  // A press in another Explorer window's toolbar, or keys that move to
+  // that window, close the menu.
+  clickStartAction(s, "documents");
+  await flushShell();
+  const docs = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  menu("file");
+  // With no keys in Control Panel, only the press can close its menu.
+  s.document.activeElement.blur();
+  docs
+    .querySelector(".explorer-toolbar")
+    .dispatchEvent(new s.window.PointerEvent("pointerdown", { bubbles: true }));
+  expect($(".explorer-menu").hidden).toBeTrue();
+  expect(
+    $('[data-control-panel-menu="file"]').getAttribute("aria-expanded"),
+  ).toBe("false");
+  menu("file");
+  $(".control-panel-main").focus();
+  docs.querySelector(".explorer-items").focus();
+  expect($(".explorer-menu").hidden).toBeTrue();
   menu("help");
   command("about").click();
   expect(

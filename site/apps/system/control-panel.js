@@ -80,14 +80,14 @@ export const createControlPanel = (context) => {
         <button type="button" data-control-panel-action="search"><img src="assets/xp/explorer/toolbar-search.png" alt=""> Search</button>
         <button type="button" data-control-panel-action="folders" aria-pressed="false"><img src="assets/xp/explorer/toolbar-folders.png" alt=""> Folders</button>
         <span class="explorer-toolbar-separator" aria-hidden="true"></span>
-        <button type="button" data-control-panel-action="views" aria-label="Views"><img src="assets/xp/explorer/toolbar-views.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
+        <button type="button" data-control-panel-action="views" aria-label="Views" aria-haspopup="menu"><img src="assets/xp/explorer/toolbar-views.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
       </div>
       <form class="explorer-address"><span>Address</span><span class="explorer-address-field"><img src="${CONTROL_PANEL_ICON}" alt=""><input type="text" aria-label="Address" value="Control Panel"></span><button type="submit" aria-label="Go"><img src="assets/xp/icons/Go.png" alt=""></button></form>
       <div class="game-menu explorer-menu" role="menu" hidden></div>
     </div>
     <div class="control-panel-body">
       <aside class="explorer-sidebar control-panel-sidebar"></aside>
-      <main class="control-panel-main"></main>
+      <main class="control-panel-main" tabindex="-1"></main>
     </div>`;
     return content;
   };
@@ -121,7 +121,10 @@ export const createControlPanel = (context) => {
     const section = (links) =>
       `<section class="control-panel-special"><h3><button type="button" class="explorer-section-toggle" aria-expanded="true"><img src="${CONTROL_PANEL_ICON}" alt=""><span>Control Panel</span><b aria-hidden="true"></b></button></h3><div class="explorer-section-body">${links}</div></section>`;
 
-    const renderPage = () => {
+    // The page's own control: the Classic View icons, else the page itself.
+    const pageControl = () =>
+      main.querySelector(".control-panel-icons") || main;
+    const drawPage = () => {
       const page = history[position];
       const category = CATEGORIES[page];
       const title = category?.title || "Control Panel";
@@ -174,6 +177,17 @@ export const createControlPanel = (context) => {
             `<button type="button" data-control-panel-category="${id}" title="${tip}"><img src="${icon}" alt=""><span>${label}</span></button>`,
         )
         .join("")}</div>`;
+    };
+    // A render that removes the control with the keys gives them to the
+    // page, so they stay in the window. The page is also the window's
+    // default control, like Explorer's list.
+    const renderPage = () => {
+      const hadKeys = win.el.contains(document.activeElement);
+      drawPage();
+      main.toggleAttribute("data-default-focus", pageControl() === main);
+      pageControl().toggleAttribute("data-default-focus", true);
+      if (hadKeys && !win.el.contains(document.activeElement))
+        pageControl().focus({ preventScroll: true });
     };
     const go = (page) => {
       history.splice(position + 1, history.length, page);
@@ -294,12 +308,17 @@ export const createControlPanel = (context) => {
       menuAnchor?.setAttribute("aria-expanded", "false");
       menuAnchor = null;
       if (holdsKeys)
-        (menuReturnFocus?.isConnected ? menuReturnFocus : win.el).focus({
+        (menuReturnFocus?.isConnected ? menuReturnFocus : pageControl()).focus({
           preventScroll: true,
         });
     };
-    // A press outside the window closes the menu through the shell.
+    // A press outside the window closes the menu through the shell. Keys
+    // that move to another window close it too, like XP.
     menu.closeMenus = closeMenu;
+    win.el.addEventListener("focusout", (event) => {
+      if (event.relatedTarget && !win.el.contains(event.relatedTarget))
+        closeMenu();
+    });
     const showMenu = (name, anchor) => {
       menu.innerHTML = menus()
         [name].map((entry) =>

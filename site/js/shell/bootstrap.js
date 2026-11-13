@@ -233,7 +233,7 @@ window.addEventListener("hashchange", () => {
 // Close the start menu when clicking outside of it
 document.addEventListener("pointerdown", (e) => {
   if (suspended) return;
-  if (!e.target.closest(".explorer-chrome")) closeExplorerMenu();
+  closeExplorerMenu(e.target);
   if (!e.target.closest("#desktop-context-menu")) {
     closeDesktopContextMenu();
   }
@@ -263,14 +263,17 @@ document.addEventListener("pointerdown", (e) => {
   }
 
   if (!e.target.closest(".game-menu-bar") && !e.target.closest(".game-menu")) {
-    document.querySelectorAll(".game-menu:not([hidden])").forEach((menu) => {
-      menu.hidden = true;
-      menu.parentElement
-        ?.querySelector(
-          `.game-menu-button[data-game-menu="${menu.dataset.gameMenu}"]`,
-        )
-        ?.setAttribute("aria-expanded", "false");
-    });
+    // Explorer-style menus close above, through their windows.
+    document
+      .querySelectorAll(".game-menu:not([hidden]):not(.explorer-menu)")
+      .forEach((menu) => {
+        menu.hidden = true;
+        menu.parentElement
+          ?.querySelector(
+            `.game-menu-button[data-game-menu="${menu.dataset.gameMenu}"]`,
+          )
+          ?.setAttribute("aria-expanded", "false");
+      });
   }
   const startMenu = document.getElementById("start-menu");
   if (startMenu.hidden) return;
