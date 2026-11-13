@@ -541,9 +541,12 @@ test("Filmstrip shows the first picture, and Previous and Next wrap like XP", as
   await flushShell();
   expect(f.selected()).toEqual([b.id]);
   expect(f.preview()).toBe(art("b"));
-  // Typing in the address bar does not step.
-  f.key("ArrowRight", {}, f.win.querySelector(".explorer-address input"));
+  // Keys in the rename box do not step.
+  f.key("F2", {}, h.item(f.win, b.id));
+  const rename = f.win.querySelector(".explorer-rename");
+  f.key("ArrowRight", {}, rename);
   expect(f.selected()).toEqual([b.id]);
+  f.key("Escape", {}, rename);
   // Another view drops the Filmstrip, and the arrows stop stepping there.
   await h.viewMenu(f.win, "thumbnails");
   expect(f.win.querySelector(".explorer-filmstrip")).toBeNull();
@@ -627,6 +630,18 @@ test("Filmstrip rotates pictures and saves them in their own type", async () => 
   f.button("rotate-clockwise").click();
   await settle();
   expect(drawn).toHaveLength(before + 1);
+  // An error without a message gets XP's general one.
+  const setContent = h.fs.setContent;
+  h.fs.setContent = () => {
+    throw new Error("");
+  };
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  await settle();
+  h.fs.setContent = setContent;
+  const failed = h.s.document.querySelector(".xp-dialog");
+  expect(failed.textContent).toContain("Windows cannot rotate this picture.");
+  failed.querySelector(".dlg-buttons button").click();
 });
 
 test("Filmstrip rotations of one window run one after another", async () => {

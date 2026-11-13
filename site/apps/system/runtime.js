@@ -440,8 +440,8 @@ export const createSystemRuntime = (context) => {
         l: "rotate-counterclockwise",
       };
       main.addEventListener("keydown", (event) => {
+        // The rename box keeps its own keys.
         if (main.dataset.view !== "filmstrip") return;
-        if (event.target.closest("input, textarea")) return;
         const key =
           event.key.length === 1 ? event.key.toLowerCase() : event.key;
         const action = filmstripKeys[key];
