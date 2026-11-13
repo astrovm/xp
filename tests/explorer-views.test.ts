@@ -377,27 +377,57 @@ test("drives, My Computer and the Recycle Bin keep their icons in Thumbnails", a
 });
 
 // The harness draws nothing, so a picture loads with the given size, or
-// fails. Only the next image the page creates is affected.
-function stubNextPicture(h, { width = 8, height = 6, fail = false } = {}) {
-  const document = h.s.document;
-  const createElement = document.createElement;
-  document.createElement = function (name, ...args) {
-    const element = createElement.call(this, name, ...args);
-    if (name !== "img") return element;
-    document.createElement = createElement;
-    Object.defineProperty(element, "src", {
-      set() {
-        Object.defineProperties(element, {
-          naturalWidth: { value: width },
-          naturalHeight: { value: height },
-        });
-        queueMicrotask(() =>
-          element.dispatchEvent(new h.s.window.Event(fail ? "error" : "load")),
-        );
-      },
-    });
-    return element;
-  };
+// fails. Each call affects the next image that waits for its "load" event
+// (the rotation's image). Previews and thumbnails wait for nothing.
+function stubNextPicture(
+  h,
+  { width = 8, height = 6, fail = false, held = false } = {},
+) {
+  // A held picture loads only when the test calls the returned function.
+  let release = () => {};
+  const loaded = held
+    ? new Promise((resolve) => (release = resolve))
+    : Promise.resolve();
+  if (!h.pictureStubs) {
+    h.pictureStubs = [];
+    const document = h.s.document;
+    const setSrc = Object.getOwnPropertyDescriptor(
+      h.s.window.HTMLImageElement.prototype,
+      "src",
+    ).set;
+    const createElement = document.createElement;
+    document.createElement = function (name, ...args) {
+      const element = createElement.call(this, name, ...args);
+      if (name !== "img") return element;
+      let waits = false;
+      const addEventListener = element.addEventListener;
+      element.addEventListener = function (type, ...rest) {
+        if (type === "load") waits = true;
+        return addEventListener.call(this, type, ...rest);
+      };
+      Object.defineProperty(element, "src", {
+        set(value) {
+          if (!waits || !h.pictureStubs.length) {
+            setSrc.call(element, value);
+            return;
+          }
+          const stub = h.pictureStubs.shift();
+          Object.defineProperties(element, {
+            naturalWidth: { value: stub.width },
+            naturalHeight: { value: stub.height },
+          });
+          stub.loaded.then(() =>
+            element.dispatchEvent(
+              new h.s.window.Event(stub.fail ? "error" : "load"),
+            ),
+          );
+        },
+      });
+      return element;
+    };
+  }
+  h.pictureStubs.push({ width, height, fail, loaded });
+  return release;
 }
 
 function recordCanvas(h) {
@@ -693,17 +723,35 @@ test("a queued rotation acts on the picture shown when the user asked for it", a
   // The save draws the items again, and b keeps the selection and the focus.
   expect(f.selected()).toEqual([b.id]);
   expect(h.s.document.activeElement).toBe(h.item(f.win, b.id));
-  // A picture deleted before its turn is not rotated, and shows no error.
-  h.item(f.win, c.id).click();
-  stubNextPicture(h);
-  f.button("rotate-clockwise").click();
+  // A picture deleted before its turn is not rotated, shows no error, and
+  // does not stop later rotations.
+  const writes = [];
+  const setContent = h.fs.setContent;
+  h.fs.setContent = (id, ...rest) => {
+    writes.push(id);
+    return setContent(id, ...rest);
+  };
+  const release = stubNextPicture(h, { held: true });
   f.button("rotate-clockwise").click();
   await flushShell();
+  h.item(f.win, c.id).click();
+  h.item(f.win, c.id).focus();
+  f.button("rotate-clockwise").click();
   h.fs.delete(c.id);
   h.fs.delete(c.id);
-  await settle();
+  await flushShell();
   expect(h.fs.getNode(c.id)).toBeFalsy();
+  // The deleted item had the focus, so the list keeps it.
+  expect(h.s.document.activeElement).toBe(h.items(f.win));
+  release();
+  await settle();
+  expect(writes).toEqual([b.id]);
   expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
+  h.item(f.win, a.id).click();
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  await settle();
+  expect(writes).toEqual([b.id, a.id]);
 });
 
 test("Filmstrip shows the picture of every new selection", async () => {

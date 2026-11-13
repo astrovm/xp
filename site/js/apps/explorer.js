@@ -1656,10 +1656,16 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   );
   // The focused item keeps the focus too, so the keys still act on it.
   const focusedItem = document.activeElement?.closest?.(".explorer-item");
+  const itemHadFocus = items.contains(focusedItem);
   const focusedId =
-    win.renderedFolderId === folder.id && items.contains(focusedItem)
+    win.renderedFolderId === folder.id && itemHadFocus
       ? focusedItem.dataset.nodeId
       : null;
+  // If that item is gone, the list keeps the focus, like XP's list view.
+  const keepFocus = () => {
+    if (itemHadFocus && !items.contains(document.activeElement))
+      items.focus({ preventScroll: true });
+  };
   win.renderedFolderId = folder.id;
   items.dataset.view = view;
   items.innerHTML = "";
@@ -1705,6 +1711,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   if (!children.length) {
     // XP leaves an empty folder's view blank.
     explorerContent.querySelector(".explorer-status").textContent = "0 objects";
+    keepFocus();
     renderExplorerSelection(win);
     return;
   }
@@ -1829,6 +1836,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   });
   explorerContent.querySelector(".explorer-status").textContent =
     `${children.length} ${children.length === 1 ? "object" : "objects"}`;
+  keepFocus();
   renderExplorerSelection(win);
 };
 
