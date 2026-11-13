@@ -1600,17 +1600,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     if (folder.id !== fs.MY_COMPUTER && !node.protected)
       label.appendChild(description);
 
-    // My Computer shows My Documents with a plain folder icon, also when
-    // its thumbnail falls back to an icon.
-    const createItemIcon = (entry) => {
-      const icon = createExplorerIcon(entry);
-      if (folder.id === fs.MY_COMPUTER && entry.id === fs.MY_DOCUMENTS)
-        icon.querySelector("img").src = XP_ICON_PATHS["NewFolder.png"];
-      return icon;
-    };
-    const itemIcon = createItemIcon(node);
+    const itemIcon = createExplorerIcon(node);
     if (view === "thumbnails")
-      XPDialogs.fillThumbnail(itemIcon, node, createItemIcon);
+      XPDialogs.fillThumbnail(itemIcon, node, createExplorerIcon);
     item.append(itemIcon, label);
     if (folder.id === fs.MY_COMPUTER) item.classList.add("my-computer-item");
     if (view === "details") {
