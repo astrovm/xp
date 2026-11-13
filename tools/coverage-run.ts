@@ -5,7 +5,8 @@
 // 20 GB. Each shard starts new workers, so its memory goes back to zero.
 // Arguments go to tools/coverage-report.ts.
 import { rm } from "node:fs/promises";
-import { rawCoverageDirectory } from "../tests/helpers/coverage";
+import type { Subprocess } from "bun";
+import { rawCoverageDirectory } from "../tests/helpers/coverage-config";
 
 const SHARDS = 4;
 
@@ -13,15 +14,33 @@ const SHARDS = 4;
 // run's counters.
 await rm(rawCoverageDirectory, { recursive: true, force: true });
 
-const run = async (command: string[], env = process.env) =>
-  Bun.spawn(command, { env, stdio: ["inherit", "inherit", "inherit"] }).exited;
+// A signal sent only to this process also stops the step that runs now, so
+// no shard keeps writing counters after the run ends.
+let current: Subprocess | undefined;
+for (const [signal, number] of [
+  ["SIGINT", 2],
+  ["SIGTERM", 15],
+] as const) {
+  process.on(signal, () => {
+    current?.kill(signal);
+    process.exit(128 + number);
+  });
+}
+
+// The steps use the same Bun binary as this script, not the one on PATH.
+const run = async (arguments_: string[], env = process.env) => {
+  current = Bun.spawn([process.execPath, ...arguments_], {
+    env,
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  return current.exited;
+};
 
 // Every shard runs, so one report shows all failures.
 const failedShards: number[] = [];
 for (let shard = 1; shard <= SHARDS; shard++) {
   const code = await run(
     [
-      "bun",
       "test",
       "--parallel=4",
       "--timeout",
@@ -36,6 +55,4 @@ if (failedShards.length) {
   console.error(`Tests failed in shard ${failedShards.join(", ")}.`);
   process.exit(1);
 }
-process.exit(
-  await run(["bun", "tools/coverage-report.ts", ...process.argv.slice(2)]),
-);
+process.exit(await run(["tools/coverage-report.ts", ...process.argv.slice(2)]));

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Glob } from "bun";
 import { resolve } from "node:path";
-import { isCovered } from "../tests/helpers/coverage";
+import { isCovered } from "../tests/helpers/coverage-config";
 import {
   changedRanges,
   inScope,
