@@ -259,6 +259,12 @@ describe("file operations", () => {
     });
     operations.removeToBin([a.id]);
     expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [b.id] });
+    // A drag of an item that is not cut leaves the clipboard as it is.
+    const dragged = fs.createFile(conflictSource.id, "dragged.txt");
+    await operations.pasteWithConflicts(conflictTarget.id, () => "rename", {
+      items: { mode: "cut", ids: [dragged.id] },
+    });
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [b.id] });
     // A drag of the last cut item empties the clipboard, so Paste cannot
     // move it again.
     await operations.pasteWithConflicts(conflictTarget.id, () => "rename", {
