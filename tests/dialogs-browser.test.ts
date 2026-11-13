@@ -151,7 +151,7 @@ test("open dialog navigates folders, filters files, validates names and cancels"
   );
   item.dispatchEvent(new s.window.MouseEvent("dblclick"));
   expect(
-    current(s).querySelector(".dlg-file-folder").selectedOptions[0].textContent,
+    current(s).querySelector(".dlg-file-folder-value").textContent,
   ).toContain("Fixture");
   const note = [...current(s).querySelectorAll(".dlg-file-item")].find((x) =>
     x.textContent.endsWith("note.txt"),
@@ -395,9 +395,9 @@ test("file dialogs go up, sort folders first and keep typed names for folders", 
   await flushShell();
   for (let depth = 0; depth < 6; depth++)
     current(s).querySelector('[data-action="up"]').click();
-  expect(
-    current(s).querySelector(".dlg-file-folder").selectedOptions[0].textContent,
-  ).toBe("My Computer");
+  expect(current(s).querySelector(".dlg-file-folder-value").textContent).toBe(
+    "My Computer",
+  );
   key(s, "Escape");
   expect(await open).toBeNull();
   const save = d.saveFile();

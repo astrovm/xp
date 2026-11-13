@@ -311,9 +311,9 @@ test("Paint saves through the shell's Save As dialog into My Pictures", async ()
   await settle();
   const dialog = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
   expect(dialog.textContent).toContain("Save As");
-  expect(
-    dialog.querySelector(".dlg-file-folder").selectedOptions[0].textContent,
-  ).toContain("My Pictures");
+  expect(dialog.querySelector(".dlg-file-folder-value").textContent).toContain(
+    "My Pictures",
+  );
   dialog.querySelector("#dlg-file-name").value = "sketch";
   dialog
     .querySelector("#dlg-file-name")

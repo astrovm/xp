@@ -230,6 +230,166 @@ describe("filesystem persistence failures", () => {
     b.close();
   });
 
+  // Documents stored before Recent and My Network Places existed: the
+  // records lack both folders, and the user made a folder named Recent.
+  const storeOldDocuments = async (indexedDB, { keepRecent = false } = {}) => {
+    const first = tab(indexedDB, storage());
+    await first.ready;
+    first.close();
+    const db = await request(indexedDB.open("astro-documents", 1));
+    const store = db.transaction("nodes", "readwrite").objectStore("nodes");
+    const profile = await request(store.get(first.USER_PROFILE));
+    if (!keepRecent) store.delete(first.RECENT);
+    store.delete(first.MY_NETWORK_PLACES);
+    store.put({
+      ...profile,
+      children: [
+        ...profile.children.filter((id) => id !== first.RECENT),
+        "user-recent",
+      ],
+    });
+    store.put({
+      ...profile,
+      id: "user-recent",
+      name: "Recent",
+      parent: first.USER_PROFILE,
+      children: [],
+      protected: false,
+    });
+    await new Promise((resolve) => (store.transaction.oncomplete = resolve));
+    return db;
+  };
+
+  test("stores new system folders for documents saved before them", async () => {
+    const indexedDB = new IDBFactory();
+    const db = await storeOldDocuments(indexedDB);
+    const fs = tab(indexedDB, storage());
+    await fs.ready;
+    expect(fs.getNode(fs.RECENT).hidden).toBeTrue();
+    expect(fs.getNode(fs.MY_NETWORK_PLACES)).toBeTruthy();
+    // The user's own Recent folder moves aside and stays visible.
+    expect(fs.getNode("user-recent").name).toBe("Recent (2)");
+    expect(fs.findChild(fs.USER_PROFILE, "Recent").id).toBe(fs.RECENT);
+    const records = await request(
+      db.transaction("nodes").objectStore("nodes").getAll(),
+    );
+    expect(records.map((node) => node.id)).toContain(fs.RECENT);
+    expect(records.find((node) => node.id === "user-recent").name).toBe(
+      "Recent (2)",
+    );
+    fs.close();
+    db.close();
+  });
+
+  const storedNode = async (db, id) =>
+    request(db.transaction("nodes").objectStore("nodes").get(id));
+
+  test("puts a stored system folder back in its parent folder", async () => {
+    const indexedDB = new IDBFactory();
+    const db = await storeOldDocuments(indexedDB, { keepRecent: true });
+    const fs = tab(indexedDB, storage());
+    await fs.ready;
+    expect(fs.getNode(fs.USER_PROFILE).children).toContain(fs.RECENT);
+    expect(fs.getNode("user-recent").name).toBe("Recent (2)");
+    expect((await storedNode(db, fs.USER_PROFILE)).children).toContain(
+      fs.RECENT,
+    );
+    fs.close();
+    db.close();
+  });
+
+  test("stores the system folders after another tab's write conflicts", async () => {
+    const indexedDB = new IDBFactory();
+    const db = await storeOldDocuments(indexedDB);
+    const profile = await storedNode(db, "user-profile");
+    const prototype = Object.getPrototypeOf(db);
+    const transaction = prototype.transaction;
+    let writes = 0;
+    prototype.transaction = function (names, mode, ...args) {
+      const result = transaction.call(this, names, mode, ...args);
+      // Before the heal's revision check reads the profile, another tab's
+      // write appears to have changed it.
+      if (mode === "readwrite" && ++writes === 2)
+        result
+          .objectStore("nodes")
+          .put({ ...profile, revision: (profile.revision || 0) + 5 });
+      return result;
+    };
+    const fs = tab(indexedDB, storage());
+    try {
+      await fs.ready;
+    } finally {
+      prototype.transaction = transaction;
+    }
+    expect(writes).toBeGreaterThan(2);
+    expect(await storedNode(db, fs.RECENT)).toBeTruthy();
+    expect((await storedNode(db, fs.USER_PROFILE)).children).toContain(
+      fs.RECENT,
+    );
+    fs.close();
+    db.close();
+  });
+
+  test("stays read-only when the database closes while it heals", async () => {
+    const indexedDB = new IDBFactory();
+    const db = await storeOldDocuments(indexedDB);
+    const prototype = Object.getPrototypeOf(db);
+    const transaction = prototype.transaction;
+    let writes = 0;
+    prototype.transaction = function (names, mode, ...args) {
+      // The second write is the heal: another tab upgrades the database
+      // just before it.
+      if (mode === "readwrite" && ++writes === 2) this.onversionchange();
+      return transaction.call(this, names, mode, ...args);
+    };
+    const fs = tab(indexedDB, storage(), { console: { error: () => {} } });
+    try {
+      await fs.ready;
+    } finally {
+      prototype.transaction = transaction;
+    }
+    expect(fs.canWrite).toBeFalse();
+    expect(fs.getNode(fs.RECENT)).toBeTruthy();
+    db.close();
+  });
+
+  test("heals system folders in memory when storing them fails", async () => {
+    const indexedDB = new IDBFactory();
+    const db = await storeOldDocuments(indexedDB);
+    const prototype = Object.getPrototypeOf(
+      db.transaction("nodes").objectStore("nodes"),
+    );
+    const put = prototype.put;
+    prototype.put = function (value, ...args) {
+      const result = put.call(this, value, ...args);
+      this.transaction.abort();
+      return result;
+    };
+    const errors = [];
+    let pageshow;
+    const fs = tab(indexedDB, storage(), {
+      console: { error: (...args) => errors.push(args) },
+      addEventListener: (type, listener) => {
+        if (type === "pageshow") pageshow = listener;
+      },
+    });
+    try {
+      await fs.ready;
+    } finally {
+      prototype.put = put;
+    }
+    expect(fs.canWrite).toBeTrue();
+    expect(fs.getNode(fs.RECENT)).toBeTruthy();
+    expect(errors[0][0]).toContain("failed to store system folders");
+    // A reload of the stored folders heals them again in memory.
+    const shown = new Promise((resolve) => fs.subscribe(resolve));
+    pageshow();
+    await shown;
+    expect(fs.getNode(fs.MY_NETWORK_PLACES)).toBeTruthy();
+    fs.close();
+    db.close();
+  });
+
   test("explains a full browser storage quota", async () => {
     const indexedDB = new IDBFactory();
     const fs = tab(indexedDB, storage());

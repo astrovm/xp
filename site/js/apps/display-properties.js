@@ -7,8 +7,8 @@ const openDesktopItemsDialog = (ownerWindow) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("desktop-items-dialog");
-  ownerWindow.el.classList.remove("active");
+  dialog.el.classList.add("desktop-items-dialog", "display-owned-dialog");
+  setDisplayDialogOwnerActive(ownerWindow, false);
 
   const tabs = document.createElement("div");
   tabs.className = "desktop-items-tabs";
@@ -96,14 +96,15 @@ const openDesktopItemsDialog = (ownerWindow) => {
   buttons.append(ok, cancel);
   dialog.body.append(tabs, panels, buttons);
   dialog.defaultButton = ok;
-  dialog.onResult(() => {
-    ownerWindow.el.classList.add("active");
-    focusWindow(ownerWindow.gameId);
-  });
+  dialog.onResult(() => setDisplayDialogOwnerActive(ownerWindow, true));
   panels.querySelector("[data-system-icon]").focus();
 };
 
+// A Display Properties dialog that is still open (Browse under an error
+// box, for example) keeps the owner inactive. The last one to close
+// activates it. Other apps' dialogs do not count.
 const setDisplayDialogOwnerActive = (ownerWindow, active) => {
+  if (active && document.querySelector(".display-owned-dialog")) return;
   ownerWindow.el.classList.toggle("active", active);
   if (active) focusWindow(ownerWindow.gameId);
 };
@@ -122,7 +123,7 @@ const openDisplayEffectsDialog = (ownerWindow, settings, onCommit) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("display-effects-dialog");
+  dialog.el.classList.add("display-effects-dialog", "display-owned-dialog");
   setDisplayDialogOwnerActive(ownerWindow, false);
   dialog.body.innerHTML = `
     <div class="effects-option"><label><input type="checkbox" data-effect-enabled="transition"> Use the following transition effect for menus and tooltips:</label><select class="xp-select" data-effect="transitionEffect"><option value="fade">Fade effect</option><option value="scroll">Scroll effect</option></select></div>
@@ -203,7 +204,7 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("advanced-appearance-dialog");
+  dialog.el.classList.add("advanced-appearance-dialog", "display-owned-dialog");
   setDisplayDialogOwnerActive(ownerWindow, false);
   dialog.body.innerHTML = `
     <div class="advanced-appearance-preview">
@@ -252,39 +253,54 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
   dialog.body.querySelector("[data-advanced-color]").focus();
 };
 
+// XP's wallpaper Browse is the standard Open dialog in My Pictures. The
+// virtual disk keeps no picture data, so Open always hands off to the
+// browser's file picker, whatever the list or File name shows. The chosen
+// picture fills File name and closes the dialog.
+const WALLPAPER_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+const WALLPAPER_EXTENSIONS = Object.keys(WALLPAPER_TYPES);
+const WALLPAPER_MIME_TYPES = [...new Set(Object.values(WALLPAPER_TYPES))];
 const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
-  const dialog = XPDialogs.createDialog({
-    title: "Browse",
-    onCancel: () => dialog.close("cancel"),
-  });
-  dialog.el.classList.add("wallpaper-browse-dialog");
+  let dialog = null;
+  let nameInput = null;
   setDisplayDialogOwnerActive(ownerWindow, false);
-  dialog.body.innerHTML = `
-    <div class="browse-location"><label>Look in:</label><span><img src="assets/xp/icons/MyPictures.png" alt="">My Pictures</span><button type="button" disabled>◀</button><button type="button" disabled>↥</button><button type="button" disabled>☆</button><button type="button" disabled>▦</button></div>
-    <div class="browse-body"><aside><button><img src="assets/xp/icons/RecentDocuments.png" alt="">My Recent<br>Documents</button><button><img src="assets/xp/icons/Programs.png" alt="">Desktop</button><button><img src="assets/xp/icons/MyDocuments.png" alt="">My Documents</button><button><img src="assets/xp/icons/MyComputer.png" alt="">My Computer</button><button><img src="assets/xp/icons/MyNetworkPlaces.png" alt="">My Network</button></aside><main><button type="button" class="sample-pictures-folder"><span><i></i><i></i><i></i><i></i></span>Sample Pictures</button></main></div>
-    <div class="browse-fields"><label>File name:<input class="xp-input browse-file-name" readonly></label><label>Files of type:<select class="xp-select" disabled><option>Background Files</option></select></label></div>
-  `;
-  const buttons = document.createElement("div");
-  buttons.className = "browse-buttons";
-  const open = XPDialogs.createDialogButton(
-    { id: "open", label: "Open", isDefault: true },
-    () => fileInput.click(),
-  );
-  const cancel = XPDialogs.createDialogButton(
-    { id: "cancel", label: "Cancel", isCancel: true },
-    () => dialog.close("cancel"),
-  );
-  buttons.append(open, cancel);
-  dialog.body.append(buttons);
-  dialog.defaultButton = open;
-  dialog.onResult(() => setDisplayDialogOwnerActive(ownerWindow, true));
-  dialog.setChosenFile = (name) => {
-    if (!dialog.el.isConnected) return;
-    dialog.body.querySelector(".browse-file-name").value = name;
-    dialog.close("open");
+  XPDialogs.browseFiles({
+    title: "Browse",
+    startFolder: window.VirtualFS.MY_PICTURES,
+    filter: WALLPAPER_EXTENSIONS,
+    filterLabel: "Background Files",
+    acceptLabel: "&Open",
+    folderLabel: "Look &in:",
+    onDialog: (created, controls) => {
+      dialog = created;
+      nameInput = controls.nameInput;
+      // Test and style hook for this use of the shared dialog.
+      dialog.el.classList.add(
+        "wallpaper-browse-dialog",
+        "display-owned-dialog",
+      );
+    },
+    onAccept: () => {
+      // Clear the last pick so choosing the same picture again still
+      // fires a change event.
+      fileInput.value = "";
+      fileInput.click();
+      return false;
+    },
+  }).then(() => setDisplayDialogOwnerActive(ownerWindow, true));
+  return {
+    setChosenFile: (name) => {
+      if (!dialog.el.isConnected) return;
+      nameInput.value = name;
+      dialog.close("open");
+    },
   };
-  dialog.body.querySelector(".sample-pictures-folder").focus();
-  return dialog;
 };
 
 const wireDisplayProperties = (win) => {
@@ -325,6 +341,8 @@ const wireDisplayProperties = (win) => {
   };
   // The browser reports its real color depth; XP names 24-bit "High" and
   // 32-bit "Highest".
+  // The browser picker offers the same picture types that Browse lists.
+  controls.image.accept = WALLPAPER_MIME_TYPES.join(",");
   controls.colorQuality.innerHTML = `<option>${screen.colorDepth > 24 ? "Highest (32 bit)" : "High (24 bit)"}</option>`;
   const syncScreenSaverPreview = () =>
     renderScreenSaver(
@@ -579,13 +597,7 @@ const wireDisplayProperties = (win) => {
   controls.image.addEventListener("change", () => {
     const [file] = controls.image.files;
     if (!file) return;
-    const supportedTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/gif",
-      "image/webp",
-    ];
-    if (!supportedTypes.includes(file.type)) {
+    if (!WALLPAPER_MIME_TYPES.includes(file.type)) {
       controls.image.value = "";
       openDisplayNotice(
         win,

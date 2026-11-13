@@ -35,6 +35,16 @@ describe("virtual filesystem", () => {
     return { folder, file };
   };
 
+  test("hides XP's Recent folder from listings but keeps its name taken", () => {
+    const recent = fs.getNode(fs.RECENT);
+    expect(recent.parent).toBe(fs.USER_PROFILE);
+    expect(
+      fs.getChildren(fs.USER_PROFILE).map((node) => node.name),
+    ).not.toContain("Recent");
+    expect(fs.findChild(fs.USER_PROFILE, "recent")).toBe(recent);
+    expect(fs.createFolder(fs.USER_PROFILE, "Recent").name).not.toBe("Recent");
+  });
+
   test("seeds the well-known locations", () => {
     expect(fs.getNode(fs.MY_COMPUTER), "My Computer exists").toBeTruthy();
     expect(fs.getNode(fs.DESKTOP), "Desktop exists").toBeTruthy();

@@ -29,7 +29,7 @@ async function open() {
   const saved = () =>
     JSON.parse(s.window.localStorage.getItem("displaySettings"));
   const dialogButton = (dialog, label) =>
-    [...dialog.querySelectorAll(".dlg-buttons button,.browse-buttons button")]
+    [...dialog.querySelectorAll(".dlg-buttons button")]
       .find((b) => b.textContent === label)
       .click();
   return { s, d, q, change, key, saved, dialogButton };
@@ -136,8 +136,13 @@ test("Browse rejects non-pictures and lists a chosen picture by name", async () 
   const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
   expect(error.textContent).toContain("bad.txt is not a picture");
   expect(error.querySelector(".dlg-icon-error")).not.toBeNull();
+  const owner = h.d.closest(".xp-window");
+  expect(owner.classList.contains("active")).toBeFalse();
   h.dialogButton(error, "OK");
   await flushShell();
+  // Browse is still open, so the error closing keeps the owner inactive.
+  expect(s.document.querySelector(".wallpaper-browse-dialog")).not.toBeNull();
+  expect(owner.classList.contains("active")).toBeFalse();
   const custom = q(".display-custom-wallpaper");
   expect(custom.hidden).toBeTrue();
   Object.defineProperty(input, "files", {
@@ -218,12 +223,48 @@ test("secondary display dialogs cancel with Escape and ignore clicks between con
   escape(s.document.querySelector(".advanced-appearance-dialog"));
   q(".display-browse").click();
   const browse = s.document.querySelector(".wallpaper-browse-dialog");
+  // Browse is XP's standard Open dialog: Look in My Pictures, real toolbar
+  // icons, and an enabled Background Files type list.
+  expect(browse.classList.contains("xp-file-dialog")).toBeTrue();
+  const lookIn = browse.querySelector(".dlg-file-folder");
+  expect(lookIn.querySelector(".dlg-file-folder-value").textContent).toBe(
+    "My Pictures",
+  );
+  expect(
+    [...browse.querySelectorAll(".dlg-file-tool img")].map((img) =>
+      img.getAttribute("src"),
+    ),
+  ).toEqual([
+    "assets/xp/icons/Back.png",
+    "assets/xp/icons/Up.png",
+    "assets/xp/icons/NewFolder.png",
+    "assets/xp/explorer/toolbar-views-small.png",
+  ]);
+  // My Pictures opens in Thumbnails, like XP.
+  expect(browse.querySelector(".dlg-file-list").dataset.view).toBe(
+    "thumbnails",
+  );
+  const type = browse.querySelector(".dlg-file-type");
+  expect(type.disabled).toBeFalse();
+  expect(type.selectedOptions[0].textContent).toBe("Background Files");
+  expect(browse.querySelector(".help-btn")).not.toBeNull();
   let picked = 0;
-  q("#display-image").click = () => picked++;
+  const image = q("#display-image");
+  let cleared = 0;
+  Object.defineProperty(image, "value", {
+    configurable: true,
+    get: () => "",
+    set: (value) => value === "" && cleared++,
+  });
+  image.click = () => picked++;
   h.dialogButton(browse, "Open");
+  // Open clears the last pick, so picking the same picture again works.
+  expect(cleared).toBe(1);
   expect(picked).toBe(1);
   escape(browse);
   expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  await flushShell();
+  expect(h.d.closest(".xp-window").classList.contains("active")).toBeTrue();
 });
 
 test("effects restore scroll transitions and ClearType and can turn both off", async () => {
@@ -485,4 +526,34 @@ test("Color quality names the screen's real color depth", async () => {
     );
     cleanupShells();
   }
+});
+
+test("Browse offers the browser picker the same picture types it lists", async () => {
+  const h = await open();
+  expect(h.q("#display-image").accept).toBe(
+    "image/png,image/jpeg,image/gif,image/webp",
+  );
+});
+
+test("another app's open dialog does not keep Display Properties inactive", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const owner = h.d.closest(".xp-window");
+  q(".display-effects").click();
+  const effects = s.document.querySelector(".display-effects-dialog");
+  expect(owner.classList.contains("active")).toBeFalse();
+  // A dialog from elsewhere in the shell opens over the Effects dialog.
+  s.window.XPDialogs.alert("Elsewhere", "Other app");
+  h.dialogButton(effects, "Cancel");
+  expect(owner.classList.contains("active")).toBeTrue();
+});
+
+test("Desktop Items keeps the owner inactive until it closes", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const owner = h.d.closest(".xp-window");
+  q(".display-customize").click();
+  expect(owner.classList.contains("active")).toBeFalse();
+  h.dialogButton(s.document.querySelector(".desktop-items-dialog"), "Cancel");
+  expect(owner.classList.contains("active")).toBeTrue();
 });

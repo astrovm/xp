@@ -13377,6 +13377,25 @@
       "pixelSha256": "d732f261e1dba4a2f8c0b04def47997cf42759696664aafb06824bbe36c3b5f9"
     }
   },
+  "assets/xp/explorer/toolbar-views-small.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHELL32.DL_",
+    "sha256": "6fe25d8972f3cfa2f77a4d25a07c7f6d3dbbc58c3d080fb6c943bec290f49c0d",
+    "resource": {
+      "parentSha256": "7c201e812138e2b9cbc2aa94e41d5573775d893b8104833a997acc79486d9a3a",
+      "type": 2,
+      "id": 216,
+      "crop": {
+        "left": 512,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      },
+      "language": 1033,
+      "frame": "16x16x32",
+      "pixelSha256": "f2cea9a21efdc462f8f316425255d65a0832d0d25ecf5984988de644747c467a"
+    }
+  },
   "assets/xp/explorer/toolbar-folders.png": {
     "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
     "member": "I386/SHELL32.DL_",

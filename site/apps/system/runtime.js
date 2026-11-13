@@ -116,7 +116,7 @@ export const createSystemRuntime = (context) => {
                       .join("")}
                 </div>
                 <button type="button" class="xp-btn display-browse" data-help="Opens a picture from your computer to use as the background."><span class="menu-accesskey">B</span>rowse...</button>
-                <input id="display-image" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+                <input id="display-image" type="file" hidden>
                 <label class="display-position-label" for="display-position"><span class="menu-accesskey">P</span>osition:</label>
                 <select id="display-position" data-help="Sets how the picture fills the desktop."><option value="center">Center</option><option value="tile">Tile</option><option value="stretch">Stretch</option></select>
                 <label class="display-color-label" for="display-color"><span class="menu-accesskey">C</span>olor:</label>

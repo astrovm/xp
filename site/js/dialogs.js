@@ -234,6 +234,8 @@
       },
       cancel: onCancel || (() => dialog.close(null)),
       onKeydown(e) {
+        // An open drop-down list or menu in the dialog takes keys first.
+        if (dialog.popupKeydown?.(e)) return;
         if (
           !modal &&
           (!el.contains(e.target) ||
@@ -258,7 +260,14 @@
           // focus is elsewhere. preventDefault suppresses the
           // browser's own button activation to avoid double-fire.
           const active = document.activeElement;
-          if (active && el.contains(active) && active.tagName === "BUTTON") {
+          // A drop-down box is a button here, but Enter on it runs the
+          // default button, like XP's combo boxes.
+          if (
+            active &&
+            el.contains(active) &&
+            active.tagName === "BUTTON" &&
+            active.getAttribute("role") !== "combobox"
+          ) {
             e.preventDefault();
             active.click();
           } else if (active?.tagName !== "TEXTAREA" && dialog.defaultButton) {
@@ -314,27 +323,43 @@
     overlay.style.zIndex = (modal ? BASE_Z_INDEX : 6900) + dialogStack.length;
     document.body.appendChild(overlay);
 
-    // Dialogs start centered, then switch to explicit viewport-relative
-    // coordinates when dragged by their title bar.
-    titleBar.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || event.target.closest(".title-buttons")) return;
-
+    // Dialogs start centered. Moving or resizing one pins it at explicit
+    // overlay coordinates first, so it does not re-center.
+    dialog.pinPosition = () => {
       const overlayRect = overlay.getBoundingClientRect();
       const dialogRect = el.getBoundingClientRect();
-      const offsetX = event.clientX - dialogRect.left;
-      const offsetY = event.clientY - dialogRect.top;
-
       el.style.position = "absolute";
       el.style.left = `${dialogRect.left - overlayRect.left}px`;
       el.style.top = `${dialogRect.top - overlayRect.top}px`;
+      return { overlayRect, dialogRect };
+    };
+
+    // Follows one drag from its pointerdown until the button is released or
+    // the drag is canceled, even outside the window.
+    dialog.followPointer = (target, event, move) => {
       try {
-        titleBar.setPointerCapture(event.pointerId);
+        target.setPointerCapture(event.pointerId);
       } catch (error) {
         /* pointer capture unsupported */
       }
       event.preventDefault();
+      const stop = () => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", stop);
+        document.removeEventListener("pointercancel", stop);
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", stop);
+      document.addEventListener("pointercancel", stop);
+    };
 
-      const move = (moveEvent) => {
+    titleBar.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest(".title-buttons")) return;
+
+      const { overlayRect, dialogRect } = dialog.pinPosition();
+      const offsetX = event.clientX - dialogRect.left;
+      const offsetY = event.clientY - dialogRect.top;
+      dialog.followPointer(titleBar, event, (moveEvent) => {
         const maxLeft = Math.max(0, overlay.clientWidth - el.offsetWidth);
         const maxTop = Math.max(0, overlay.clientHeight - el.offsetHeight);
         const left = Math.min(
@@ -347,39 +372,33 @@
         );
         el.style.left = `${left}px`;
         el.style.top = `${top}px`;
-      };
-
-      const stop = () => {
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", stop);
-        document.removeEventListener("pointercancel", stop);
-      };
-
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", stop);
-      document.addEventListener("pointercancel", stop);
+      });
     });
     return dialog;
   };
 
   // ---- Shared building blocks ----
 
-  const createDialogButton = ({ id, label, isDefault }, onChoose) => {
+  // Writes a label with its access key (&X) underlined.
+  const appendAccessLabel = (element, label) => {
     const { text, key } = parseAccessKey(label);
+    const amp = label.indexOf("&");
+    if (!key || amp === -1) {
+      element.append(text);
+      return;
+    }
+    const underlined = document.createElement("span");
+    underlined.className = "menu-accesskey";
+    underlined.textContent = label[amp + 1];
+    element.append(label.slice(0, amp), underlined, label.slice(amp + 2));
+  };
+
+  const createDialogButton = ({ id, label, isDefault }, onChoose) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `xp-btn${isDefault ? " default" : ""}`;
     button.dataset.action = id;
-    const amp = label.indexOf("&");
-    if (key && amp !== -1) {
-      button.append(label.slice(0, amp));
-      const underlined = document.createElement("span");
-      underlined.className = "menu-accesskey";
-      underlined.textContent = label[amp + 1];
-      button.append(underlined, label.slice(amp + 2));
-    } else {
-      button.textContent = text;
-    }
+    appendAccessLabel(button, label);
     button.addEventListener("click", () => onChoose(id));
     return button;
   };
@@ -632,32 +651,182 @@
     );
   };
 
-  // Shared folder browser laid out like XP's Open and Save As dialogs: a
-  // Places bar, a "Look in"/"Save in" folder list with Back, Up, and New
-  // Folder, a column-flowing file list, and the file name and type fields.
-  // onAccept({ folderId, name }) validates the current entry and returns
-  // false (or Promise<false>) to keep the dialog open, or any other value
-  // (or Promise of one) to close the dialog and resolve with that value.
-  // Cancel resolves with null.
+  // Open and Save As, laid out like XP's common file dialog: a Places bar,
+  // a "Look in"/"Save in" folder box with Back, Up, New Folder and Views,
+  // a file list in five views, the File name and type boxes, and a size
+  // grip. filterLabel names the filter in the type list, like XP's
+  // "Background Files". onDialog(dialog, { nameInput }) receives the
+  // dialog and its File name box before the file list renders. It must not
+  // call dialog.onResult, which would replace the callback that settles
+  // this promise. onAccept({ folderId, name }) validates the current entry
+  // and returns false (or Promise<false>) to keep the dialog open, or any
+  // other value (or Promise of one) to close the dialog and resolve with
+  // that value. Cancel resolves with null.
   const describeFilter = (filter) =>
     filter?.length
       ? `${filter.map((ext) => ext.replace(".", "").toUpperCase()).join(", ")} Files (${filter.map((ext) => `*${ext}`).join(";")})`
       : "All Files (*.*)";
 
+  // Shell folders draw their own icons in the Places bar and Look in box.
+  const PLACE_ICONS = {
+    recent: "assets/xp/icons/RecentDocuments.png",
+    desktop: "assets/xp/icons/Desktop.png",
+    "my-documents": "assets/xp/icons/MyDocuments.png",
+    "my-computer": "assets/xp/icons/MyComputer.png",
+    "my-network-places": "assets/xp/icons/MyNetworkPlaces.png",
+  };
+  const createFolderIcon = (node) => {
+    const path = PLACE_ICONS[node.id];
+    if (!path) return createNodeIcon(node);
+    const icon = document.createElement("span");
+    icon.className = "dlg-node-icon";
+    const image = document.createElement("img");
+    image.src = path;
+    image.alt = "";
+    icon.appendChild(image);
+    return icon;
+  };
+
+  // XP's Views menu, in its order. My Pictures opens in Thumbnails.
+  const FILE_VIEWS = [
+    ["thumbnails", "T&humbnails"],
+    ["tiles", "Tile&s"],
+    ["icons", "Ico&ns"],
+    ["list", "&List"],
+    ["details", "&Details"],
+  ];
+  const defaultFileView = (folderId) => {
+    for (
+      let node = fs().getNode(folderId);
+      node;
+      node = fs().getNode(node.parent)
+    )
+      if (node.id === fs().MY_PICTURES) return "thumbnails";
+    return "list";
+  };
+
+  // File names typed into Open and Save As, newest first, for the File
+  // name drop-down. They last for the session.
+  const recentFileNames = [];
+  const rememberFileName = (name) => {
+    if (!name) return;
+    const index = recentFileNames.indexOf(name);
+    if (index !== -1) recentFileNames.splice(index, 1);
+    recentFileNames.unshift(name);
+    recentFileNames.length = Math.min(recentFileNames.length, 10);
+  };
+
+  // A drop-down list or menu that belongs to a dialog. Only one is open at
+  // a time. While it is open it gets the dialog's keys first, and a click
+  // outside it and its owner closes it. The owner's own click toggles it.
+  // Tab and Alt+key close it and then work as usual. Other typed keys stay
+  // with it, so they never press a dialog button behind it.
+  const attachPopup = (dialog, popup, owner, { onKeydown, onClose }) => {
+    dialog.closePopup?.();
+    popup.hidden = false;
+    const outside = (event) => {
+      if (!popup.contains(event.target) && !owner.contains(event.target))
+        close();
+    };
+    const close = () => {
+      popup.hidden = true;
+      dialog.el.removeEventListener("pointerdown", outside, true);
+      dialog.popupKeydown = null;
+      dialog.closePopup = null;
+      onClose();
+    };
+    dialog.el.addEventListener("pointerdown", outside, true);
+    dialog.popupKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return true;
+      }
+      if (onKeydown(event, close)) return true;
+      // AltGr sends Ctrl+Alt, and its characters type as usual.
+      if (event.key === "Tab" || (event.altKey && !event.ctrlKey)) {
+        close();
+        return false;
+      }
+      if (event.key.length !== 1 || event.ctrlKey || event.metaKey)
+        return false;
+      // Outside a text box a typed key does nothing, so Space does not
+      // click the box under the list.
+      if (event.target.tagName !== "INPUT") event.preventDefault();
+      return true;
+    };
+    dialog.closePopup = close;
+  };
+
+  // Moves the highlight in an open list with the arrow keys, and chooses
+  // the highlighted row with Enter. F4 and Alt+Up or Alt+Down close it.
+  // With letterOf, a typed letter goes to the next row with that letter,
+  // and chooses it when chooseLetter is set, like a menu's access keys.
+  const listKeys =
+    (rows, getIndex, setIndex, choose, { letterOf, chooseLetter } = {}) =>
+    (event, close) => {
+      const all = rows();
+      const moves = { ArrowDown: 1, ArrowUp: -1 };
+      if (event.key === "F4" || (event.altKey && event.key in moves)) {
+        event.preventDefault();
+        close();
+        return true;
+      }
+      if (event.key in moves) {
+        event.preventDefault();
+        setIndex(
+          Math.max(0, Math.min(all.length - 1, getIndex() + moves[event.key])),
+        );
+        return true;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const row = all[getIndex()];
+        close();
+        if (row) choose(row);
+        return true;
+      }
+      if (
+        !letterOf ||
+        event.key.length !== 1 ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return false;
+      const letter = event.key.toLowerCase();
+      const index = all
+        .map((row, offset) => (getIndex() + 1 + offset) % all.length)
+        .find((rowIndex) => letterOf(all[rowIndex]) === letter);
+      if (index === undefined) return false;
+      event.preventDefault();
+      if (chooseLetter) {
+        close();
+        choose(all[index]);
+      } else setIndex(index);
+      return true;
+    };
+
+  // Gives each file dialog's lists their own element ids.
+  let fileDialogCount = 0;
+
   const browseFiles = ({
     title,
     startFolder,
     filter,
+    filterLabel = null,
     initialName = "",
     acceptLabel,
     folderLabel,
     onAccept,
+    onDialog = null,
   }) =>
     new Promise((resolve) => {
       let currentFolderId = startFolder || fs().MY_DOCUMENTS;
       if (!fs().getNode(currentFolderId)) currentFolderId = fs().MY_DOCUMENTS;
       const history = [];
       let activeFilter = filter;
+      let chosenView = null;
 
       const dialog = createDialog({
         title,
@@ -666,23 +835,202 @@
       });
       dialog.el.classList.add("xp-file-dialog");
       dialog.onResult(resolve);
+      const idBase = `dlg-file-${++fileDialogCount}`;
 
-      const field = (className, labelText, control) => {
-        const label = document.createElement("label");
+      // A field label with its access key underlined. The key focuses the
+      // field, like XP's dialog labels.
+      const field = (className, labelText, control, focusTarget = control) => {
+        // A label would pass its clicks to a button and open its list.
+        const label = document.createElement(
+          control.tagName === "BUTTON" ? "div" : "label",
+        );
         label.className = className;
         const text = document.createElement("span");
-        text.textContent = parseAccessKey(labelText).text;
+        appendAccessLabel(text, labelText);
         label.append(text, control);
+        registerAccessKey(
+          dialog,
+          { disabled: false, click: () => focusTarget.focus() },
+          labelText,
+        );
         return label;
       };
 
-      // "Save in" / "Look in" lists the current folder's ancestors and the
-      // usual top-level places.
-      const folderSelect = document.createElement("select");
-      folderSelect.className = "dlg-file-folder";
-      folderSelect.addEventListener("change", () =>
-        navigate(folderSelect.value),
-      );
+      // Choosing a row with the mouse keeps the focus in the box that owns
+      // the list, like XP's drop-down lists.
+      const keepFocus = (popup) =>
+        popup.addEventListener("pointerdown", (event) =>
+          event.preventDefault(),
+        );
+      // Rows get ids so the box can name its highlighted row.
+      const highlightRow = (owner, rows, index) =>
+        rows.forEach((row, rowIndex) => {
+          const selected = rowIndex === index;
+          row.classList.toggle("selected", selected);
+          row.setAttribute("aria-selected", String(selected));
+          if (selected) owner.setAttribute("aria-activedescendant", row.id);
+          else if (owner.getAttribute("aria-activedescendant") === row.id)
+            owner.removeAttribute("aria-activedescendant");
+        });
+
+      // "Look in" / "Save in" is a drop-down of folders with their icons,
+      // indented like XP's: Desktop, then My Documents, My Computer and its
+      // drives, and My Network Places, with the open folder's path shown
+      // under the place that holds it. A <select> cannot draw icons.
+      const folderBox = document.createElement("button");
+      folderBox.type = "button";
+      folderBox.className = "dlg-file-folder";
+      folderBox.setAttribute("role", "combobox");
+      folderBox.setAttribute("aria-haspopup", "listbox");
+      folderBox.setAttribute("aria-expanded", "false");
+      folderBox.setAttribute("aria-label", parseAccessKey(folderLabel).text);
+      const folderValue = document.createElement("span");
+      folderValue.className = "dlg-file-folder-value";
+      folderBox.appendChild(folderValue);
+      const folderList = document.createElement("div");
+      folderList.className = "dlg-file-folder-list";
+      folderList.setAttribute("role", "listbox");
+      folderList.id = `${idBase}-folders`;
+      folderList.hidden = true;
+      folderBox.setAttribute("aria-controls", folderList.id);
+      keepFocus(folderList);
+
+      const folderEntries = () => {
+        const entries = [];
+        let placed = false;
+        const pathTo = (rootId) => {
+          const chain = [];
+          for (
+            let node = fs().getNode(currentFolderId);
+            node && node.id !== rootId;
+            node = fs().getNode(node.parent)
+          ) {
+            chain.unshift(node);
+            if (!node.parent) return null;
+          }
+          return chain;
+        };
+        const branch = (rootId, depth) => {
+          entries.push([fs().getNode(rootId), depth]);
+          if (placed) return;
+          const chain = rootId === currentFolderId ? [] : pathTo(rootId);
+          if (!chain) return;
+          placed = true;
+          chain.forEach((node, index) =>
+            entries.push([node, depth + 1 + index]),
+          );
+        };
+        branch(fs().DESKTOP, 0);
+        branch(fs().MY_DOCUMENTS, 1);
+        entries.push([fs().getNode(fs().MY_COMPUTER), 1]);
+        if (currentFolderId === fs().MY_COMPUTER) placed = true;
+        fs()
+          .getChildren(fs().MY_COMPUTER)
+          .forEach((drive) => branch(drive.id, 2));
+        branch(fs().MY_NETWORK_PLACES, 1);
+        // A folder outside these places, like the Recycle Bin, is listed
+        // by its own path under Desktop.
+        if (!placed) {
+          const chain = [];
+          for (
+            let node = fs().getNode(currentFolderId);
+            node;
+            node = fs().getNode(node.parent)
+          )
+            chain.unshift(node);
+          chain.forEach((node, index) => entries.push([node, 1 + index]));
+        }
+        return entries;
+      };
+
+      let folderIndex = 0;
+      const folderRows = () => [...folderList.children];
+      const highlightFolder = (index) => {
+        folderIndex = index;
+        highlightRow(folderBox, folderRows(), index);
+      };
+      const renderFolders = () => {
+        const node = fs().getNode(currentFolderId);
+        const name = document.createElement("span");
+        name.className = "dlg-file-folder-name";
+        name.textContent = node.name;
+        folderValue.replaceChildren(createFolderIcon(node), name);
+        folderBox.dataset.value = currentFolderId;
+        folderList.replaceChildren(
+          ...folderEntries().map(([entry, depth], index) => {
+            const row = document.createElement("div");
+            row.className = "dlg-file-folder-option";
+            row.setAttribute("role", "option");
+            row.id = `${idBase}-folder-${index}`;
+            row.dataset.folderId = entry.id;
+            row.style.paddingLeft = `${2 + depth * 10}px`;
+            const text = document.createElement("span");
+            text.textContent = entry.name;
+            row.append(createFolderIcon(entry), text);
+            row.addEventListener("pointerenter", () => highlightFolder(index));
+            row.addEventListener("click", () => {
+              dialog.closePopup();
+              navigate(entry.id);
+            });
+            return row;
+          }),
+        );
+        highlightCurrentFolder();
+
+        places.querySelectorAll(".dlg-file-place").forEach((place) => {
+          place.classList.toggle(
+            "selected",
+            place.dataset.folderId === currentFolderId,
+          );
+        });
+      };
+      // The highlight goes back to the open folder when the list closes
+      // without a choice, so the arrow keys step from there.
+      const highlightCurrentFolder = () =>
+        highlightFolder(
+          folderRows().findIndex(
+            (row) => row.dataset.folderId === currentFolderId,
+          ),
+        );
+      const openFolderList = () => {
+        folderBox.setAttribute("aria-expanded", "true");
+        attachPopup(dialog, folderList, folderBox, {
+          onKeydown: listKeys(
+            folderRows,
+            () => folderIndex,
+            highlightFolder,
+            (row) => navigate(row.dataset.folderId),
+            { letterOf: (row) => row.textContent[0].toLowerCase() },
+          ),
+          onClose: () => {
+            folderBox.setAttribute("aria-expanded", "false");
+            highlightCurrentFolder();
+          },
+        });
+      };
+      folderBox.addEventListener("click", () => {
+        if (folderList.hidden) openFolderList();
+        else dialog.closePopup();
+      });
+      // With the list closed, the arrow keys step through the folders, and
+      // F4, Alt+Down or Alt+Up opens the list, like an XP drop-down list.
+      folderBox.addEventListener("keydown", (event) => {
+        // While the list is open, or when it just closed, it handled the key.
+        if (!folderList.hidden || event.defaultPrevented) return;
+        if (
+          event.key === "F4" ||
+          (event.altKey && /^Arrow(Down|Up)$/.test(event.key))
+        ) {
+          event.preventDefault();
+          openFolderList();
+          return;
+        }
+        const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+        if (!step) return;
+        event.preventDefault();
+        const row = folderRows()[folderIndex + step];
+        if (row) navigate(row.dataset.folderId);
+      });
 
       const toolButton = (action, label, icon, onClick) => {
         const button = document.createElement("button");
@@ -732,28 +1080,101 @@
           }
         },
       );
+
+      // Views opens XP's menu of list views; the open one has a bullet.
+      const viewsMenu = document.createElement("div");
+      viewsMenu.className = "xp-context-menu dlg-file-views-menu";
+      viewsMenu.setAttribute("role", "menu");
+      viewsMenu.hidden = true;
+      let viewIndex = 0;
+      const viewRows = () => [...viewsMenu.children];
+      const highlightView = (index) => {
+        viewIndex = index;
+        viewRows()[index].focus();
+      };
+      FILE_VIEWS.forEach(([view, label], index) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.setAttribute("role", "menuitemradio");
+        item.dataset.view = view;
+        const check = document.createElement("span");
+        check.className = "context-check";
+        const text = document.createElement("span");
+        text.className = "context-label";
+        appendAccessLabel(text, label);
+        item.dataset.accessKey = parseAccessKey(label).key;
+        item.append(check, text);
+        item.addEventListener("pointerenter", () => highlightView(index));
+        item.addEventListener("click", () => {
+          dialog.closePopup();
+          chosenView = view;
+          renderList();
+        });
+        viewsMenu.appendChild(item);
+      });
+      const viewsBtn = toolButton(
+        "views",
+        "View Menu",
+        "assets/xp/explorer/toolbar-views-small.png",
+        () => {
+          if (!viewsMenu.hidden) {
+            dialog.closePopup();
+            return;
+          }
+          const current = list.dataset.view;
+          viewRows().forEach((row) => {
+            const checked = row.dataset.view === current;
+            row.setAttribute("aria-checked", String(checked));
+            row.firstChild.textContent = checked ? "•" : "";
+          });
+          viewsBtn.setAttribute("aria-expanded", "true");
+          attachPopup(dialog, viewsMenu, viewsBtn, {
+            onKeydown: listKeys(
+              viewRows,
+              () => viewIndex,
+              highlightView,
+              (row) => {
+                chosenView = row.dataset.view;
+                renderList();
+              },
+              { letterOf: (row) => row.dataset.accessKey, chooseLetter: true },
+            ),
+            onClose: () => {
+              viewsBtn.setAttribute("aria-expanded", "false");
+              viewsBtn.focus();
+            },
+          });
+          highlightView(FILE_VIEWS.findIndex(([view]) => view === current));
+        },
+      );
+      viewsBtn.setAttribute("aria-haspopup", "menu");
+      viewsBtn.setAttribute("aria-expanded", "false");
+
       const toolbar = document.createElement("div");
       toolbar.className = "dlg-file-toolbar";
       toolbar.append(
-        field("dlg-file-folder-field", folderLabel, folderSelect),
+        field("dlg-file-folder-field", folderLabel, folderBox),
         backBtn,
         upBtn,
         newFolderBtn,
+        viewsBtn,
       );
 
       const places = document.createElement("div");
       places.className = "dlg-file-places";
       [
-        ["Desktop", "assets/xp/icons/Desktop.png", fs().DESKTOP],
-        ["My Documents", "assets/xp/icons/MyDocuments.png", fs().MY_DOCUMENTS],
-        ["My Computer", "assets/xp/icons/MyComputer.png", fs().MY_COMPUTER],
-      ].forEach(([label, icon, folderId]) => {
+        ["My Recent Documents", fs().RECENT],
+        ["Desktop", fs().DESKTOP],
+        ["My Documents", fs().MY_DOCUMENTS],
+        ["My Computer", fs().MY_COMPUTER],
+        ["My Network", fs().MY_NETWORK_PLACES],
+      ].forEach(([label, folderId]) => {
         const place = document.createElement("button");
         place.type = "button";
         place.className = "dlg-file-place";
         place.dataset.folderId = folderId;
         const image = document.createElement("img");
-        image.src = icon;
+        image.src = PLACE_ICONS[folderId];
         image.alt = "";
         const text = document.createElement("span");
         text.textContent = label;
@@ -766,18 +1187,92 @@
       list.className = "dlg-file-list";
       list.setAttribute("role", "listbox");
 
+      // File name is an editable drop-down of the names typed before.
       const nameInput = document.createElement("input");
       nameInput.type = "text";
       nameInput.className = "xp-input";
       nameInput.value = initialName;
       nameInput.id = "dlg-file-name";
+      nameInput.setAttribute("role", "combobox");
+      nameInput.setAttribute("aria-autocomplete", "list");
+      nameInput.setAttribute("aria-expanded", "false");
+      const nameArrow = document.createElement("button");
+      nameArrow.type = "button";
+      nameArrow.className = "dlg-file-name-arrow";
+      nameArrow.tabIndex = -1;
+      nameArrow.setAttribute("aria-label", "Recent file names");
+      const nameList = document.createElement("div");
+      nameList.className = "dlg-file-name-list";
+      nameList.setAttribute("role", "listbox");
+      nameList.id = `${idBase}-names`;
+      nameList.hidden = true;
+      nameInput.setAttribute("aria-controls", nameList.id);
+      keepFocus(nameList);
+      keepFocus(nameArrow);
+      let nameIndex = -1;
+      const nameRows = () => [...nameList.children];
+      const highlightName = (index) => {
+        nameIndex = index;
+        highlightRow(nameInput, nameRows(), index);
+      };
+      const openNameList = () => {
+        nameList.replaceChildren(
+          ...recentFileNames.map((name, index) => {
+            const row = document.createElement("div");
+            row.className = "dlg-file-name-option";
+            row.setAttribute("role", "option");
+            row.id = `${idBase}-name-${index}`;
+            row.textContent = name;
+            row.addEventListener("pointerenter", () => highlightName(index));
+            row.addEventListener("click", () => {
+              dialog.closePopup();
+              nameInput.value = name;
+            });
+            return row;
+          }),
+        );
+        highlightName(-1);
+        nameInput.setAttribute("aria-expanded", "true");
+        attachPopup(dialog, nameList, nameArrow, {
+          onKeydown: listKeys(
+            nameRows,
+            () => nameIndex,
+            highlightName,
+            (row) => {
+              nameInput.value = row.textContent;
+            },
+          ),
+          onClose: () => {
+            nameInput.setAttribute("aria-expanded", "false");
+            nameInput.removeAttribute("aria-activedescendant");
+          },
+        });
+        nameInput.focus();
+      };
+      nameArrow.addEventListener("click", () => {
+        if (nameList.hidden) openNameList();
+        else dialog.closePopup();
+      });
+      // F4, Alt+Down or Down opens the list from the keyboard.
+      nameInput.addEventListener("keydown", (event) => {
+        if (!nameList.hidden || event.defaultPrevented) return;
+        if (event.key === "F4" || event.key === "ArrowDown") {
+          event.preventDefault();
+          openNameList();
+        }
+      });
+      const nameBox = document.createElement("span");
+      nameBox.className = "dlg-file-name-box";
+      nameBox.append(nameInput, nameArrow);
+
       const typeSelect = document.createElement("select");
       typeSelect.className = "dlg-file-type";
       [filter, null]
         .filter((entry, index) => index === 0 || filter?.length)
         .forEach((entry) => {
           const option = document.createElement("option");
-          option.textContent = describeFilter(entry);
+          option.textContent =
+            entry && filterLabel ? filterLabel : describeFilter(entry);
           option.value = entry ? entry.join(",") : "";
           typeSelect.appendChild(option);
         });
@@ -789,7 +1284,7 @@
       const fields = document.createElement("div");
       fields.className = "dlg-file-fields";
       fields.append(
-        field("dlg-file-name-row", "File &name:", nameInput),
+        field("dlg-file-name-row", "File &name:", nameBox, nameInput),
         field(
           "dlg-file-type-row",
           acceptLabel === "&Save" ? "Save as &type:" : "Files of &type:",
@@ -797,7 +1292,46 @@
         ),
       );
 
-      dialog.body.append(toolbar, places, list, fields);
+      // The size grip resizes the dialog; the list and fields grow with it.
+      // It never makes the dialog smaller than it opened, nor larger than
+      // the screen.
+      const grip = document.createElement("div");
+      grip.className = "dlg-file-grip";
+      let minimumSize = null;
+      grip.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        const width = dialog.el.offsetWidth;
+        const height = dialog.body.offsetHeight;
+        minimumSize ??= { width, height };
+        const { overlayRect, dialogRect } = dialog.pinPosition();
+        const frameHeight = dialog.el.offsetHeight - height;
+        const maximumWidth = Math.max(
+          minimumSize.width,
+          overlayRect.right - dialogRect.left,
+        );
+        const maximumHeight = Math.max(
+          minimumSize.height,
+          overlayRect.bottom - dialogRect.top - frameHeight,
+        );
+        const clamp = (value, minimum, maximum) =>
+          Math.min(Math.max(value, minimum), maximum);
+        dialog.followPointer(grip, event, (moveEvent) => {
+          dialog.el.style.width = `${clamp(width + moveEvent.clientX - event.clientX, minimumSize.width, maximumWidth)}px`;
+          dialog.body.style.height = `${clamp(height + moveEvent.clientY - event.clientY, minimumSize.height, maximumHeight)}px`;
+        });
+      });
+
+      dialog.body.append(
+        toolbar,
+        places,
+        list,
+        fields,
+        grip,
+        folderList,
+        viewsMenu,
+        nameList,
+      );
+      onDialog?.(dialog, { nameInput });
 
       const matchesFilter = (node) =>
         node.type === "folder" ||
@@ -812,53 +1346,49 @@
       };
 
       const accept = () => {
-        const context = {
-          folderId: currentFolderId,
-          name: nameInput.value.trim(),
-        };
+        // A message box must not open behind a drop-down list.
+        dialog.closePopup?.();
+        const name = nameInput.value.trim();
+        const context = { folderId: currentFolderId, name };
         Promise.resolve(onAccept(context)).then((result) => {
-          if (result !== false) dialog.close(result);
+          if (result === false) return;
+          rememberFileName(name);
+          dialog.close(result);
         });
       };
 
-      const renderFolders = () => {
-        const chain = [];
-        for (
-          let node = fs().getNode(currentFolderId);
-          node;
-          node = node.parent ? fs().getNode(node.parent) : null
-        )
-          chain.unshift(node);
-        const roots = [fs().DESKTOP, fs().MY_DOCUMENTS, fs().MY_COMPUTER];
-        folderSelect.replaceChildren();
-        [
-          ...new Map(
-            [...roots.map((id) => fs().getNode(id)), ...chain].map((node) => [
-              node.id,
-              node,
-            ]),
-          ).values(),
-        ].forEach((node) => {
-          const option = document.createElement("option");
-          option.value = node.id;
-          option.textContent = node.name;
-          folderSelect.appendChild(option);
+      // Details and Tiles also show each item's type, size and date.
+      const itemDetails = (node) => {
+        const type = describeNodeType(node);
+        const size =
+          node.type === "folder"
+            ? ""
+            : `${Math.max(1, Math.ceil(node.size / 1024)).toLocaleString("en-US")} KB`;
+        const date = new Date(node.modified).toLocaleString("en-US", {
+          dateStyle: "short",
+          timeStyle: "short",
         });
-        folderSelect.value = currentFolderId;
-        places.querySelectorAll(".dlg-file-place").forEach((place) => {
-          place.classList.toggle(
-            "selected",
-            place.dataset.folderId === currentFolderId,
-          );
-        });
+        return { type, size, date };
       };
 
       const renderList = () => {
         const folder = fs().getNode(currentFolderId);
+        const view = chosenView || defaultFileView(currentFolderId);
+        list.dataset.view = view;
         renderFolders();
         upBtn.disabled = !folder.parent;
         backBtn.disabled = !history.length;
-        list.innerHTML = "";
+        list.replaceChildren();
+        if (view === "details") {
+          const header = document.createElement("div");
+          header.className = "dlg-file-header";
+          ["Name", "Size", "Type", "Date Modified"].forEach((label) => {
+            const cell = document.createElement("span");
+            cell.textContent = label;
+            header.appendChild(cell);
+          });
+          list.appendChild(header);
+        }
         fs()
           .getChildren(folder.id)
           .filter(matchesFilter)
@@ -875,8 +1405,20 @@
             item.className = "dlg-file-item";
             item.setAttribute("role", "option");
             const label = document.createElement("span");
+            label.className = "dlg-file-item-name";
             label.textContent = child.name;
             item.append(createNodeIcon(child), label);
+            if (view === "details" || view === "tiles") {
+              const { type, size, date } = itemDetails(child);
+              (view === "details" ? [size, type, date] : [type, size]).forEach(
+                (value) => {
+                  const cell = document.createElement("span");
+                  cell.className = "dlg-file-item-detail";
+                  cell.textContent = value;
+                  item.appendChild(cell);
+                },
+              );
+            }
             item.addEventListener("click", () => {
               list.querySelectorAll(".selected").forEach((el) => {
                 el.classList.remove("selected");
@@ -992,6 +1534,7 @@
     progress,
     properties,
     setNodeIconFactory,
+    browseFiles,
     openFile,
     saveFile,
   };
