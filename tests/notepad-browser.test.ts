@@ -179,14 +179,17 @@ test("Notepad reports invalid and failed saves and ignores empty clipboard actio
   const h = await setup();
   const dialogText = () =>
     [...h.s.document.querySelectorAll(".xp-dialog")].at(-1)?.textContent || "";
-  // Save As adds .txt before it looks for a file, so the name can lead to a
-  // folder. Typing the folder's whole name would open it instead.
-  h.fs.createFolder(h.fs.MY_DOCUMENTS, "Folder.txt");
+  // Save As adds .txt before it looks for a file. A name that leads to a
+  // folder opens the folder; it never offers to replace it.
+  const folder = h.fs.createFolder(h.fs.MY_DOCUMENTS, "Folder.txt");
   await h.command("save-as");
   await h.choose("Folder");
-  await h.answer("yes");
-  expect(dialogText()).toContain('"Folder.txt" is not a text file.');
-  await h.answer("ok");
+  expect(dialogText()).not.toContain("already exists");
+  expect(
+    h.s.document.querySelector(".xp-dialog .dlg-file-folder").textContent,
+  ).toContain("Folder.txt");
+  await h.choose("draft");
+  expect(h.fs.findChild(folder.id, "draft.txt")).toBeTruthy();
 
   const createFile = h.s.window.FileOperations.createFile;
   h.s.window.FileOperations.createFile = async () => {

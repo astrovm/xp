@@ -60,10 +60,8 @@ const mountNotepad = (context, instance) => {
     const { name } = result;
     const contentToSave = editor.value;
     try {
+      // Save As never names a folder: its name opens the folder instead.
       let target = result.existingId && fs.getNode(result.existingId);
-      if (target && target.type !== "file") {
-        throw new Error(`"${name}" is not a text file.`);
-      }
       if (!target) {
         target = await fileOps.createFile(result.parentId, name, {
           content: contentToSave,

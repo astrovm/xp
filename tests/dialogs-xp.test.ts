@@ -797,12 +797,25 @@ test("Save adds the default extension before it looks for a file to replace", as
     name: "readme.txt",
     existingId: readme.id,
   });
-  // A name with its own extension keeps it.
-  expect(await save("server.log")).toEqual({
-    parentId: fs.MY_DOCUMENTS,
-    name: "server.log",
-    existingId: null,
-  });
+  // A name keeps an extension of the listed types. Any other dot is part
+  // of the name, so Notepad can still open the file.
+  const typed = async (name, filter) => {
+    const result = d.saveFile({
+      startFolder: fs.MY_DOCUMENTS,
+      defaultExtension: ".txt",
+      filter,
+    });
+    const dialog = current(s);
+    dialog.querySelector("#dlg-file-name").value = name;
+    [...dialog.querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === "Save")
+      .click();
+    return (await result).name;
+  };
+  expect(await typed("server.log")).toBe("server.log");
+  expect(await typed("NOTES.TXT", [".txt"])).toBe("NOTES.TXT");
+  expect(await typed("v1.2 draft", [".txt"])).toBe("v1.2 draft.txt");
+  expect(await typed("server.log", [".txt"])).toBe("server.log.txt");
 });
 
 test("Open and Save open a folder whose name is typed, like XP", async () => {

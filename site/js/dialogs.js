@@ -682,7 +682,8 @@
   // this promise. onAccept({ folderId, name }) validates the current entry
   // and returns false (or Promise<false>) to keep the dialog open, or any
   // other value (or Promise of one) to close the dialog and resolve with
-  // that value. Cancel resolves with null.
+  // that value. Cancel resolves with null. completeName(name) gives the
+  // full name for the typed one, such as the name with a default extension.
   const describeFilter = (filter) =>
     filter?.length
       ? `${filter.map((ext) => ext.replace(".", "").toUpperCase()).join(", ")} Files (${filter.map((ext) => `*${ext}`).join(";")})`
@@ -841,6 +842,7 @@
     folderLabel,
     onAccept,
     onDialog = null,
+    completeName = (name) => name,
   }) =>
     new Promise((resolve) => {
       let currentFolderId = startFolder || fs().MY_DOCUMENTS;
@@ -1369,10 +1371,13 @@
       const accept = () => {
         // A message box must not open behind a drop-down list.
         dialog.closePopup?.();
-        const name = nameInput.value.trim();
+        const typed = nameInput.value.trim();
+        const name = typed && completeName(typed);
         // Like XP, a folder's name opens that folder instead.
-        const folder = findChildByName(currentFolderId, name);
-        if (folder?.type === "folder") {
+        const folder = [typed, name]
+          .map((candidate) => findChildByName(currentFolderId, candidate))
+          .find((node) => node?.type === "folder");
+        if (folder) {
           nameInput.value = "";
           navigate(folder.id);
           nameInput.focus();
@@ -1523,6 +1528,14 @@
   //   Promise resolving with { parentId, name, existingId }, or null.
   // defaultExtension is added to a name without an extension before the
   // dialog looks for a file to replace, like XP's default extension.
+  // A name keeps an extension of the listed types; any extension when no
+  // types are listed. Other names get the default extension, like XP's.
+  const withDefaultExtension = (name, defaultExtension, filter) => {
+    const extension = /\.[^.]+$/.exec(name)?.[0].toLowerCase();
+    const kept = filter?.length ? filter.includes(extension) : !!extension;
+    return defaultExtension && !kept ? `${name}${defaultExtension}` : name;
+  };
+
   const saveFile = ({
     title = "Save As",
     startFolder = null,
@@ -1537,12 +1550,10 @@
       initialName: defaultName,
       acceptLabel: "&Save",
       folderLabel: "Save &in:",
-      onAccept: ({ folderId, name: typedName }) => {
-        if (!typedName) return false;
-        const name =
-          defaultExtension && !/\.[^.]+$/.test(typedName)
-            ? `${typedName}${defaultExtension}`
-            : typedName;
+      completeName: (name) =>
+        withDefaultExtension(name, defaultExtension, filter),
+      onAccept: ({ folderId, name }) => {
+        if (!name) return false;
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,
