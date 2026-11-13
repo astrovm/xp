@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pointerAt } from "./helpers/hit-test";
 
 afterEach(cleanupShells);
 
@@ -274,15 +275,42 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   folderItem.focus();
   key(folderItem, "ArrowRight");
   expect(submenu.contains(s.document.activeElement)).toBeTrue();
+  // The hover goes where Chrome sends it, so a CSS rule cannot hide it.
   const disabledItem = menu.querySelector(".game-menu-item:disabled");
-  disabledItem.dispatchEvent(
-    new s.window.PointerEvent("pointerover", { bubbles: true }),
-  );
+  expect(pointerAt(s, disabledItem, "pointerover") === disabledItem).toBe(true);
   expect(submenu.hidden).toBeTrue();
   expect(s.document.activeElement === folderItem).toBeTrue();
+
+  // A press on a disabled item keeps the keys, like XP. Chrome sends no
+  // mousedown for it, but it gives the keys to the window frame, which
+  // passes them to the list. They come back after the press.
+  expect(pointerAt(s, disabledItem, "pointerdown") === disabledItem).toBe(true);
+  docs.focus();
+  expect(s.document.activeElement === folderItem).toBeFalse();
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(s.document.activeElement === folderItem).toBeTrue();
+  expect(menu.hidden).toBeFalse();
   key(folderItem, "Escape");
   key(docs.querySelector('[data-explorer-menu="file"]'), "Escape");
   list.focus();
+
+  // A control that is gone when the menus close gives the keys to the list.
+  const gone = s.document.createElement("button");
+  docs.querySelector(".explorer-sidebar").append(gone);
+  gone.focus();
+  gone.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  expect(menu.contains(s.document.activeElement)).toBeTrue();
+  gone.remove();
+  key(s.document.activeElement, "Escape");
+  key(s.document.activeElement, "Escape");
+  expect(menu.hidden).toBeTrue();
+  expect(focused()).toBe("explorer-items");
 
   // Views opened from the address bar gives the keys back to it.
   const address = docs.querySelector(".explorer-address input");

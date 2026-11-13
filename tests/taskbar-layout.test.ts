@@ -115,8 +115,18 @@ test("hidden tray icons expand and collapse after inactivity", async () => {
   pointer(s, s.document.getElementById("taskbar-tray"), "pointerenter");
   pointer(s, s.document.getElementById("taskbar-tray"), "pointerleave");
   pointer(s, volume, "pointerdown");
+  // In Chrome the press gives the volume icon the keys, with no focus ring.
+  // When it hides, the arrow next to it takes them, so they never go to the
+  // page.
+  volume.focus();
+  const matches = s.window.Element.prototype.matches;
+  s.window.Element.prototype.matches = function (selector) {
+    return selector !== ":focus-visible" && matches.call(this, selector);
+  };
   await s.advanceTime(2100);
+  s.window.Element.prototype.matches = matches;
   expect(volume.hidden).toBeTrue();
+  expect(s.document.activeElement === expand).toBeTrue();
 });
 
 test("large docked toolbars and edges change the taskbar layout", async () => {

@@ -252,6 +252,26 @@
 
     let resultCallback = null;
 
+    // The keys go back to the control that had them. A control that is
+    // gone or hidden, like the item of a closed menu, cannot take them.
+    // Then the dialog under this one, the active window or the desktop gets
+    // them, like XP. They never stay on the page.
+    const giveKeysBack = () => {
+      if (
+        previouslyFocused !== document.body &&
+        previouslyFocused.isConnected &&
+        !previouslyFocused.closest("[hidden]")
+      ) {
+        previouslyFocused.focus();
+        if (document.activeElement === previouslyFocused) return;
+      }
+      (
+        dialogStack.at(-1)?.defaultButton ||
+        document.querySelector(".xp-window.active:not(.xp-dialog)") ||
+        document.getElementById("desktop-icons")
+      ).focus();
+    };
+
     const dialog = {
       el,
       body,
@@ -268,9 +288,7 @@
         if (!dialogStack.length) {
           document.removeEventListener("keydown", handleGlobalKeydown, true);
         }
-        if (previouslyFocused && previouslyFocused.isConnected) {
-          previouslyFocused.focus();
-        }
+        giveKeysBack();
         if (resultCallback) resultCallback(result);
       },
       cancel: onCancel || (() => dialog.close(null)),

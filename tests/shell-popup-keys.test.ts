@@ -2,10 +2,12 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   cleanupShells,
+  clickStartAction,
   flushShell,
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pointerAt } from "./helpers/hit-test";
 
 afterEach(cleanupShells);
 
@@ -237,4 +239,206 @@ test("keys that came from nowhere, or from a control that is gone, go to the act
   // The frame passes them on to the window's own control.
   expect(win.contains(active())).toBeTrue();
   expect(menu.contains(active())).toBeFalse();
+});
+
+test("a gray item takes the hover, and a press on it keeps the keys", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  s.document.getElementById("desktop-icons").focus();
+  const menu = desktopMenu(s);
+  await settle();
+  const first = active();
+  expect(menu.contains(first)).toBeTrue();
+  // Chrome sends the pointer to the gray item itself, so a program can
+  // follow the hover.
+  const gray = menu.querySelector("button:disabled");
+  expect(pointerAt(s, gray, "pointerover") === gray).toBeTrue();
+  // Chrome sends no mousedown for it, but the press still takes the keys
+  // to the page. They come back after the press.
+  expect(pointerAt(s, gray, "pointerdown") === gray).toBeTrue();
+  first.blur();
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(active() === first).toBeTrue();
+  expect(menu.hidden).toBeFalse();
+  // Keys that cannot go back, like on a control that a style hides, go to
+  // the desktop when no window is open.
+  const focus = first.focus;
+  first.focus = () => {};
+  pointerAt(s, gray, "pointerdown");
+  first.blur();
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(active() === s.document.getElementById("desktop-icons")).toBeTrue();
+  first.focus = focus;
+  first.focus();
+  // A press on an enabled item is left to the item, so the keys do not
+  // come back to it.
+  pointerAt(s, first, "pointerdown");
+  first.blur();
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(active() === first).toBeFalse();
+});
+
+test("a submenu that the pointer closes gives the keys to its item", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  const pointer = (target, type) =>
+    target.dispatchEvent(new s.window.PointerEvent(type, { bubbles: false }));
+
+  // The desktop's Arrange Icons By.
+  s.document.getElementById("desktop-icons").focus();
+  const menu = desktopMenu(s);
+  await settle();
+  const arrange = menu.querySelector(".context-submenu-button");
+  arrange.focus();
+  key(s, arrange, "ArrowRight");
+  await settle();
+  const arrangeMenu = arrange.nextElementSibling;
+  expect(arrangeMenu.contains(active())).toBeTrue();
+  pointer(arrange.parentElement, "pointerleave");
+  expect(active() === arrange).toBeTrue();
+  key(s, arrange, "Escape");
+  await settle();
+
+  // The taskbar's Toolbars.
+  s.document.getElementById("task-buttons").dispatchEvent(
+    new s.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 400,
+      clientY: 590,
+    }),
+  );
+  await settle();
+  const toolbars = s.document.getElementById("taskbar-toolbar-parent");
+  const toolbarsButton = toolbars.firstElementChild;
+  toolbarsButton.focus();
+  key(s, toolbarsButton, "ArrowRight");
+  const toolbarsMenu = s.document.getElementById("taskbar-toolbar-submenu");
+  expect(toolbarsMenu.contains(active())).toBeTrue();
+  pointer(toolbars, "pointerleave");
+  expect(active() === toolbarsButton).toBeTrue();
+});
+
+test("keys on a control that a command removes go to the active window", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  clickStartAction(s, "documents");
+  await settle();
+  clickStartAction(s, "pictures");
+  await settle();
+  const docs = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  const pictures = s.document.querySelector(
+    '.xp-window[data-game="__my-pictures"]',
+  );
+  expect(pictures.classList.contains("active")).toBeTrue();
+  // A task button only shows when the taskbar has room for it.
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800, configurable: true },
+  );
+  s.window.dispatchEvent(new s.window.Event("resize"));
+  await settle();
+
+  // In Chrome a right press on a taskbar button gives it the keys. Close
+  // on its window menu removes the button, after the menu gives the keys
+  // back to it.
+  const button = s.document.querySelector(
+    '.task-button[data-game="__my-documents"]',
+  );
+  button.focus();
+  button.dispatchEvent(
+    new s.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 100,
+      clientY: 590,
+    }),
+  );
+  await settle();
+  const systemMenu = s.document.getElementById("window-system-menu");
+  expect(systemMenu.contains(active())).toBeTrue();
+  systemMenu.querySelector('[data-command="close"]').click();
+  await settle();
+  expect(docs.isConnected).toBeFalse();
+  expect(button.isConnected).toBeFalse();
+  expect(pictures.contains(active())).toBeTrue();
+});
+
+test("a popup skips a control that does not take the keys back", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  const fs = s.window.VirtualFS;
+  fs.open(fs.MY_DOCUMENTS);
+  await settle();
+  const win = s.document.querySelector(".xp-window.active");
+  const items = win.querySelector(".explorer-items");
+  items.focus();
+  const menu = desktopMenu(s);
+  await settle();
+  expect(menu.contains(active())).toBeTrue();
+  // Chrome skips focus() on a control that a style hides, such as one in a
+  // minimized window.
+  items.focus = () => {};
+  menu.querySelector('[data-action="refresh"]').click();
+  await settle();
+  expect(menu.hidden).toBeTrue();
+  expect(menu.contains(active())).toBeFalse();
+  expect(active() === s.document.body).toBeFalse();
+
+  // A window that a style hides takes no keys at all, so the desktop gets
+  // them.
+  for (const element of [win, ...win.querySelectorAll("*")])
+    element.focus = () => {};
+  menu.querySelector('[data-action="refresh"]').focus();
+  desktopMenu(s);
+  await settle();
+  expect(menu.contains(active())).toBeTrue();
+  menu.querySelector('[data-action="refresh"]').click();
+  await settle();
+  expect(active() === s.document.getElementById("desktop-icons")).toBeTrue();
+});
+
+test("keys on a control that something hides go to the active window", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  const fs = s.window.VirtualFS;
+  fs.open(fs.MY_DOCUMENTS);
+  await settle();
+  const win = s.document.querySelector(".xp-window.active");
+  const control = s.document.createElement("button");
+  win.querySelector(".explorer-items").append(control);
+  control.focus();
+  // Chrome blurs a control that a class or a style hides, with no new
+  // owner for the keys. Happy DOM does not, so the test does it.
+  control.style.display = "none";
+  control.blur();
+  control.dispatchEvent(
+    new s.window.FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+  );
+  expect(active() === s.document.body).toBeTrue();
+  await settle();
+  expect(active() === s.document.body).toBeFalse();
+  expect(win.contains(active())).toBeTrue();
+
+  // A move to another control, or keys that something else takes, stay.
+  const other = s.document.getElementById("start-button");
+  other.focus();
+  other.dispatchEvent(
+    new s.window.FocusEvent("focusout", {
+      bubbles: true,
+      relatedTarget: win,
+    }),
+  );
+  await settle();
+  expect(active() === other).toBeTrue();
+  other.blur();
+  other.dispatchEvent(
+    new s.window.FocusEvent("focusout", { bubbles: true, relatedTarget: null }),
+  );
+  other.focus();
+  await settle();
+  expect(active() === other).toBeTrue();
 });

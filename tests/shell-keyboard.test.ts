@@ -285,6 +285,38 @@ test("global shortcuts manage windows, task buttons and fullscreen", async () =>
   ).toBeTrue();
 });
 
+test("window keys work from a text box, like XP", async () => {
+  const s = await login(await loadShell());
+  clickStartAction(s, "documents");
+  clickStartAction(s, "pictures");
+  await settle();
+  const win = (id) =>
+    s.document.querySelector(`.xp-window[data-game="${id}"]`);
+  const address = () =>
+    s.document.querySelector(".xp-window.active .explorer-address input");
+  expect(win("__my-pictures").classList.contains("active")).toBeTrue();
+  address().focus();
+  press(s, address(), " ", { altKey: true, code: "Space" });
+  const systemMenu = s.document.getElementById("window-system-menu");
+  expect(systemMenu.hidden).toBeFalse();
+  press(s, s.document.activeElement, "Escape");
+  address().focus();
+  press(s, address(), "Tab", { altKey: true });
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keyup", { key: "Alt", bubbles: true }),
+  );
+  await settle();
+  expect(win("__my-documents").classList.contains("active")).toBeTrue();
+  address().focus();
+  press(s, address(), "Escape", { altKey: true });
+  await settle();
+  expect(win("__my-pictures").classList.contains("active")).toBeTrue();
+  address().focus();
+  press(s, address(), "F4", { altKey: true });
+  await settle();
+  expect(win("__my-pictures")).toBeNull();
+});
+
 test("keyboard file operation failures are reported", async () => {
   const s = await login(await loadShell()),
     fs = s.window.VirtualFS;

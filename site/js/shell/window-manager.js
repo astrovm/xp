@@ -1659,17 +1659,84 @@ document.addEventListener(
   true,
 );
 
+// Chrome skips focus() on a control that a style or a class hides, such as
+// a control in a minimized window. So a move counts only when the control
+// has the keys after it.
+const keysTaken = (target) => {
+  if (!target?.isConnected || target.closest("[hidden]")) return false;
+  target.focus({ preventScroll: true });
+  return document.activeElement === target;
+};
+// The keys go to the active window, like XP, or else to the desktop.
+const giveKeysToActiveWindow = () => {
+  const win = openWindows.get(focusedGameId);
+  if (win && !win.minimized) {
+    focusWindowContent(win);
+    if (win.el.contains(document.activeElement)) return;
+  }
+  document.getElementById("desktop-icons").focus({ preventScroll: true });
+};
+
+// Chrome sends no mousedown for a disabled item, but it still moves the
+// keys, to the page or to the window. They go back to where they were, like
+// XP, after the press. A hover still reaches the item.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (
+      !event.target.closest(SHELL_POPUP) ||
+      !event.target.closest(":disabled")
+    )
+      return;
+    const keys = document.activeElement;
+    setTimeout(() => {
+      if (document.activeElement !== keys && !keysTaken(keys))
+        giveKeysToActiveWindow();
+    });
+  },
+  true,
+);
+
+// Chrome puts the keys on the page when it removes the control that has
+// them, for example a taskbar button of a window that closes. XP never
+// leaves the keys on nothing, so they go to the active window.
+let lastKeys = null;
+document.addEventListener(
+  "focusin",
+  (event) => (lastKeys = event.target),
+  true,
+);
+new MutationObserver(() => {
+  if (
+    document.activeElement === document.body &&
+    lastKeys?.isConnected === false
+  )
+    giveKeysToActiveWindow();
+}).observe(document.body, { childList: true, subtree: true });
+
+// Chrome also puts the keys on the page when it hides the control that has
+// them, by an attribute, a style or a class. The control then loses the keys
+// with no new owner. If nothing takes them after that, the active window
+// gets them.
+document.addEventListener(
+  "focusout",
+  (event) => {
+    if (event.relatedTarget) return;
+    setTimeout(() => {
+      if (document.activeElement === document.body && document.hasFocus())
+        giveKeysToActiveWindow();
+    });
+  },
+  true,
+);
+
 // Call when the popup hides, before it hides. The keys go back to the
 // control that had them, or else to the active window or the desktop.
 const giveKeysBackFrom = (popup) => {
   const target = popupReturnFocus.get(popup);
   popupReturnFocus.delete(popup);
-  if (!popup.contains(document.activeElement)) return;
-  const fallback =
-    openWindows.get(focusedGameId)?.el ||
-    document.getElementById("desktop-icons");
-  const usable = target?.isConnected && !target.closest("[hidden]");
-  (usable ? target : fallback).focus({ preventScroll: true });
+  if (popup.contains(document.activeElement) && !keysTaken(target))
+    giveKeysToActiveWindow();
 };
 
 // ============================================

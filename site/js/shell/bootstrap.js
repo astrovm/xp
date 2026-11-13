@@ -341,8 +341,7 @@ document.addEventListener("keydown", async (e) => {
       return;
     }
 
-    if (isEditableTarget(e.target)) return;
-
+    // Window keys work from anywhere, text boxes included, like XP.
     if (e.altKey && e.key === "Tab") {
       e.preventDefault();
       cycleShellWindow(e.shiftKey ? -1 : 1, true);
@@ -353,6 +352,29 @@ document.addEventListener("keydown", async (e) => {
       cycleShellWindow(1, false);
       return;
     }
+
+    if (e.altKey && e.key === "F4" && focusedGameId) {
+      e.preventDefault();
+      closeGameWindow(focusedGameId);
+      return;
+    }
+
+    if (e.altKey && e.key === "F4" && !focusedGameId) {
+      e.preventDefault();
+      showShutdownDialog();
+      return;
+    }
+
+    if (e.altKey && (e.key === " " || e.code === "Space") && focusedGameId) {
+      e.preventDefault();
+      // Minimizing a window moves focus away, so the focused one is visible.
+      const win = openWindows.get(focusedGameId);
+      const rect = win.el.getBoundingClientRect();
+      openWindowSystemMenu(win, rect.left + 6, rect.top + 28);
+      return;
+    }
+
+    if (isEditableTarget(e.target)) return;
 
     const desktopIcon = document.activeElement?.closest?.(".desktop-icon");
     const desktopHasFocus =
@@ -593,27 +615,6 @@ document.addEventListener("keydown", async (e) => {
               ];
       e.preventDefault();
       target?.focus();
-      return;
-    }
-
-    if (e.altKey && e.key === "F4" && focusedGameId) {
-      e.preventDefault();
-      closeGameWindow(focusedGameId);
-      return;
-    }
-
-    if (e.altKey && e.key === "F4" && !focusedGameId) {
-      e.preventDefault();
-      showShutdownDialog();
-      return;
-    }
-
-    if (e.altKey && (e.key === " " || e.code === "Space") && focusedGameId) {
-      e.preventDefault();
-      // Minimizing a window moves focus away, so the focused one is visible.
-      const win = openWindows.get(focusedGameId);
-      const rect = win.el.getBoundingClientRect();
-      openWindowSystemMenu(win, rect.left + 6, rect.top + 28);
       return;
     }
 

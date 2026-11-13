@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pointerAt } from "./helpers/hit-test";
 import { checkMenuBar } from "./helpers/menu-bar";
 
 afterEach(cleanupShells);
@@ -637,9 +638,38 @@ test("Task Manager's Update Speed submenu works from the keys and the pointer", 
     new s.window.PointerEvent("pointerover", { bubbles: true }),
   );
   expect(active() === low).toBeTrue();
+  // The submenu's own edge is not its parent: the pointer there moves
+  // nothing, and a click there closes nothing.
+  submenu.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(active() === low).toBeTrue();
+  submenu.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  expect(active() === low).toBeTrue();
+  // A gray item cannot take the keys, so the pointer on one gives them to
+  // the parent before its submenu closes.
+  refresh.disabled = true;
+  refresh.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === parent).toBeTrue();
+  refresh.disabled = false;
+  await key(parent, "ArrowRight");
+  low.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
   // A click on the parent toggles the submenu.
   parent.click();
   expect(submenu.classList.contains("open")).toBeFalse();
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  // Keys outside a submenu do not move to its parent when it closes.
+  refresh.focus();
+  pointerAt(s, refresh, "pointerover");
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === refresh).toBeTrue();
   parent.click();
   expect(submenu.classList.contains("open")).toBeTrue();
   // Choosing an item closes every menu and gives the keys back.

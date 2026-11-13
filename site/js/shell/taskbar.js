@@ -664,6 +664,7 @@ const setupTaskbarContextMenu = () => {
       toolbarSubmenu.style.left = `${-toolbarSubmenu.offsetWidth + 5}px`;
   };
   const closeToolbarSubmenu = () => {
+    giveKeysBackFrom(toolbarSubmenu);
     toolbarParent.classList.remove("open");
     toolbarButton.setAttribute("aria-expanded", "false");
   };

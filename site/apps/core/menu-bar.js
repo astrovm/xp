@@ -8,6 +8,12 @@
 const ITEM =
   '[role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 const SUBMENU = '[role="menu"]';
+// Keys that the shell runs from anywhere: the Windows key, Ctrl+Esc,
+// Ctrl+Shift+Esc, Alt+Tab, Alt+Esc, Alt+F4 and Alt+Space.
+const shellKey = ({ key, ctrlKey, altKey }) =>
+  key === "Meta" ||
+  (ctrlKey && key === "Escape") ||
+  (altKey && ["Tab", "Escape", "F4", " "].includes(key));
 
 export const wireMenuBar = ({
   windowElement,
@@ -30,6 +36,12 @@ export const wireMenuBar = ({
   const items = (menu) =>
     [...menu.children].filter((item) => item.matches(ITEM) && !item.disabled);
   const hasMenu = (title) => title.getAttribute("aria-haspopup") === "menu";
+  // The item under the pointer. A submenu sits inside its parent item, so a
+  // spot in the submenu that is not one of its items is no item at all.
+  const itemAt = (target) => {
+    const item = target.closest(ITEM);
+    return item && !item.contains(target.closest(SUBMENU)) ? item : null;
+  };
   const accessKey = (title) =>
     title.querySelector(".menu-accesskey")?.textContent.toLowerCase();
 
@@ -104,7 +116,7 @@ export const wireMenuBar = ({
   });
 
   bar.addEventListener("click", (event) => {
-    const item = event.target.closest(ITEM);
+    const item = itemAt(event.target);
     if (!item || !hasMenu(item)) return;
     if (item.closest(SUBMENU)) {
       if (item.getAttribute("aria-expanded") === "true") closeSubmenu(item);
@@ -120,22 +132,27 @@ export const wireMenuBar = ({
   });
 
   bar.addEventListener("pointerover", (event) => {
-    const item = event.target.closest(ITEM);
+    const item = itemAt(event.target);
     const menu = item?.closest(SUBMENU);
     if (!menu || !bar.contains(document.activeElement)) return;
     // A submenu that the keys opened closes when the pointer moves to
-    // another item of its menu.
+    // another item of its menu. Keys in it go to its parent first.
     menu
       .querySelectorAll(':scope > [aria-expanded="true"]')
       .forEach((parent) => {
-        if (parent !== item) closeSubmenu(parent);
+        if (parent === item) return;
+        if (parent.contains(document.activeElement))
+          parent.focus({ preventScroll: true });
+        closeSubmenu(parent);
       });
     if (!item.disabled) item.focus({ preventScroll: true });
   });
 
   const titleKey = (event, title) => {
     const key = event.key;
-    if (key === "ArrowLeft" || key === "ArrowRight") {
+    // Tab does nothing while a menu is open, like XP.
+    if (key === "Tab" && openMenu) event.preventDefault();
+    else if (key === "ArrowLeft" || key === "ArrowRight") {
       event.preventDefault();
       moveTo(nextTitle(title, key === "ArrowRight" ? 1 : -1), openMenu);
     } else if (
@@ -194,12 +211,21 @@ export const wireMenuBar = ({
   windowElement.addEventListener(
     "keydown",
     (event) => {
-      if (event.ctrlKey || event.metaKey) return;
-      if (event.altKey) {
-        const key = event.key.toLowerCase();
-        const title = titles().find((entry) => accessKey(entry) === key);
-        if (!title) return;
+      const inBar = bar.contains(event.target);
+      // The shell's own keys work from the menus too. The menus close
+      // first, like XP, and the shell gets the key.
+      if (inBar && shellKey(event)) {
+        close();
+        return;
+      }
+      const title =
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        titles().find((entry) => accessKey(entry) === event.key.toLowerCase());
+      if (title) {
         event.preventDefault();
+        event.stopPropagation();
         if (!hasMenu(title)) {
           close();
           title.click();
@@ -209,12 +235,15 @@ export const wireMenuBar = ({
         open(title, true);
         return;
       }
-      const target = event.target;
-      if (!bar.contains(target)) return;
-      // An open menu owns the keys, like XP: the program never sees them.
-      // Keys with Ctrl, Alt or the Windows key still reach the shell.
+      if (!inBar) return;
+      // The menus own the keys, like XP: the program never sees them, and
+      // no shortcut of the program runs.
       event.stopPropagation();
-      const item = target.closest(ITEM);
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        event.preventDefault();
+        return;
+      }
+      const item = event.target.closest(ITEM);
       if (!item) return;
       if (item.closest(SUBMENU)) itemKey(event, item);
       else titleKey(event, item);

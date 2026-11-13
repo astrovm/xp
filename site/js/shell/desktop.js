@@ -824,6 +824,7 @@ const addDesktopSubmenu = (menu, label, buildItems) => {
       child.style.top = `${-2 - (rect.bottom - bottom)}px`;
   };
   const close = () => {
+    giveKeysBackFrom(child);
     parent.classList.remove("open");
     button.setAttribute("aria-expanded", "false");
   };

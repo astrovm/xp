@@ -1,5 +1,6 @@
 // @ts-nocheck -- The XP menu bar rules, checked the same way in every program.
 import { expect } from "bun:test";
+import { pointerAt } from "./hit-test";
 
 // Happy DOM never moves the keys on a click, so each check focuses what
 // Chrome would focus. Results are booleans and labels, so a failure never
@@ -83,16 +84,25 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   await key(active(), "Home");
   expect(keysOn(first)).toBeTrue();
 
-  // 6. Tab stays in the menu. Other keys never reach the program.
+  // 6. Tab stays in the menu. Other keys never reach the program, and
+  // neither do its shortcuts, such as Ctrl+I or Alt+Shift+2.
   expect((await key(first, "Tab")).defaultPrevented).toBeTrue();
   let reached = 0;
   const count = () => (reached += 1);
   win.addEventListener("keydown", count);
   await key(first, "F2");
   await key(first, "1");
+  for (const init of [
+    { key: "i", ctrlKey: true },
+    { key: "n", ctrlKey: true },
+    { key: "x", metaKey: true },
+    { key: "2", altKey: true, shiftKey: true },
+  ])
+    expect((await key(first, init.key, init)).defaultPrevented).toBeTrue();
   win.removeEventListener("keydown", count);
   expect(reached).toBe(0);
   expect(keysOn(first)).toBeTrue();
+  expect(title.getAttribute("aria-expanded")).toBe("true");
 
   // 3. Right and Left move to the next menu, open.
   if (nextTitle) {
@@ -117,17 +127,26 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   await clickTitle();
   expect(title.getAttribute("aria-expanded")).toBe("true");
   expect(keysOn(title)).toBeTrue();
+  // 6. Tab on the title of an open menu does nothing, so the keys stay.
+  expect((await key(title, "Tab")).defaultPrevented).toBeTrue();
+  expect((await key(title, "Tab", { shiftKey: true })).defaultPrevented).toBe(
+    true,
+  );
+  expect(keysOn(title)).toBeTrue();
+  expect(title.getAttribute("aria-expanded")).toBe("true");
   // 11. The pointer moves the keys to the item under it.
   const hovered = items().at(-1);
-  hovered.dispatchEvent(
-    new s.window.PointerEvent("pointerover", { bubbles: true }),
-  );
+  pointerAt(s, hovered, "pointerover");
   expect(keysOn(hovered)).toBeTrue();
+  // A gray item gets the pointer too, but it cannot take the keys.
+  const gray = openMenu().querySelector(":scope > :disabled");
+  if (gray) {
+    expect(pointerAt(s, gray, "pointerover") === gray).toBeTrue();
+    expect(keysOn(hovered)).toBeTrue();
+  }
   // The pointer on a title, a separator or the menu itself moves nothing.
   for (const target of [title, openMenu()]) {
-    target.dispatchEvent(
-      new s.window.PointerEvent("pointerover", { bubbles: true }),
-    );
+    pointerAt(s, target, "pointerover");
     expect(keysOn(hovered)).toBeTrue();
   }
   // Keys on the menu itself, not on an item, stay there.
@@ -139,9 +158,7 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   // A menu that the keys left keeps them where they are.
   await clickTitle();
   control.focus();
-  items()[0].dispatchEvent(
-    new s.window.PointerEvent("pointerover", { bubbles: true }),
-  );
+  pointerAt(s, items()[0], "pointerover");
   expect(keysOn(control)).toBeTrue();
   await clickTitle();
   expectClosed();
@@ -159,8 +176,8 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
     expect(keysOn(items()[0])).toBeTrue();
     await key(active(), "Escape");
   }
-  // Other keys on a title do nothing, and keys with the Windows key or Ctrl
-  // stay with the shell.
+  // Other keys on a title do nothing, and so do keys with the Windows key
+  // or Ctrl.
   await key(title, "x");
   await key(title, "ArrowDown", { metaKey: true });
   await key(title, "ArrowDown", { ctrlKey: true });
@@ -230,4 +247,19 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   await key(active(), "Escape");
   await key(title, "Escape");
   expect(keysOn(control)).toBeTrue();
+
+  // 6. The shell's keys work from a menu. The menu closes first, like XP,
+  // and the shell gets the key: Ctrl+Esc opens Start.
+  await openByKey();
+  const start = s.document.getElementById("start-menu");
+  expect(
+    (await key(active(), "Escape", { ctrlKey: true })).defaultPrevented,
+  ).toBeTrue();
+  expect(start.hidden).toBeFalse();
+  expect(openMenu() === null).toBeTrue();
+  // Escape closes Start and leaves the keys on the Start button, like XP.
+  await key(active(), "Escape");
+  expect(start.hidden).toBeTrue();
+  expect(keysOn(s.document.getElementById("start-button"))).toBeTrue();
+  control.focus();
 };

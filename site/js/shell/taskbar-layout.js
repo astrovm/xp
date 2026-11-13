@@ -189,8 +189,13 @@ const renderTrayVisibility = () => {
     taskbarTrayExpanded ? "Hide inactive icons" : "Show hidden icons",
   );
   expand.setAttribute("aria-expanded", String(taskbarTrayExpanded));
-  document.getElementById("tray-volume-button").hidden =
-    hidden && !taskbarTrayExpanded;
+  const volume = document.getElementById("tray-volume-button");
+  const hideVolume = hidden && !taskbarTrayExpanded;
+  // A control that hides loses the keys to the page. The arrow next to it
+  // takes them instead.
+  if (hideVolume && document.activeElement === volume)
+    expand.focus({ preventScroll: true });
+  volume.hidden = hideVolume;
 };
 
 const applyTaskbarSettings = () => {

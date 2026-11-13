@@ -1757,7 +1757,8 @@ const mountSpider = (context) => {
       if (event.key === "Escape") menus.close();
       return;
     }
-    if (event.key === "Escape") {
+    // Ctrl+Esc and Alt+Esc belong to the shell.
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
       // Esc hides Spider, the boss key.
       event.preventDefault();
       context.minimize();

@@ -924,8 +924,8 @@ const mountHearts = (context) => {
       return;
     }
     // Esc closes an open menu; otherwise it hides the game, mshearts.exe's
-    // boss key.
-    if (event.key === "Escape") {
+    // boss key. Ctrl+Esc and Alt+Esc belong to the shell.
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       if (menus.isOpen()) menus.close();
       else context.minimize();
