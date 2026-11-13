@@ -361,6 +361,32 @@ test("clicking elsewhere closes open application menus but not the menu being us
   expect(fileOf(truck).contains(s.document.activeElement)).toBeFalse();
   expect(truck.contains(s.document.activeElement)).toBeTrue();
 
+  // Tab does nothing in an open menu, like XP.
+  truck.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  const tab = new s.window.KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  });
+  s.document.activeElement.dispatchEvent(tab);
+  expect(tab.defaultPrevented).toBeTrue();
+  const outsideTab = new s.window.KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  });
+  s.document.body.dispatchEvent(outsideTab);
+  expect(outsideTab.defaultPrevented).toBeFalse();
+  s.document.activeElement.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+
   // Escape and Volume move the keys first, so the program never gets them.
   let programFocus = 0;
   truck.querySelector("[data-default-focus]").addEventListener("focus", () => {

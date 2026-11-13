@@ -230,6 +230,16 @@ window.addEventListener("hashchange", () => {
   }
 });
 
+// Tab does nothing in an open menu, like XP, so the keys stay in it.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key === "Tab" && event.target.closest?.('[role="menu"]'))
+      event.preventDefault();
+  },
+  true,
+);
+
 // A click into a program's frame sends no press to the page. The page then
 // loses the keys, and every window closes its menus, like XP.
 window.addEventListener("blur", () => {
