@@ -963,11 +963,7 @@ const setupDesktopContextMenu = () => {
           async () => {
             try {
               for (const file of input.files) {
-                const content =
-                  file.type.startsWith("text/") ||
-                  /\.(txt|log|csv|md)$/i.test(file.name)
-                    ? await file.text()
-                    : await dataUrlFromBlob(file);
+                const content = await fileOps.readFileContent(file);
                 await fileOps.createFile(fs.DESKTOP, file.name, {
                   content,
                   size: file.size,

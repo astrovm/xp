@@ -216,12 +216,15 @@ const createMenuBar = (run, panelVisible) => {
   return bar;
 };
 
-const imageFromFile = async (file) => {
+// The shell gives the picture's address: stored picture data, or an XP
+// sample picture. A file with neither is not a picture Paint can read.
+const imageFromFile = async (url) => {
+  if (!url) throw new Error("No picture data");
   const image = document.createElement("img");
   await new Promise((resolve, reject) => {
     image.addEventListener("load", resolve, { once: true });
     image.addEventListener("error", reject, { once: true });
-    image.src = file.content;
+    image.src = url;
   });
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
@@ -403,7 +406,7 @@ const mountPaint = (shell, instance) => {
 
   const loadFile = async (file) => {
     try {
-      engine.replace(await imageFromFile(file));
+      engine.replace(await imageFromFile(shell.pictureUrl(file)));
       fileId = file.id;
       fileName = file.name;
       savedContent = file.content;

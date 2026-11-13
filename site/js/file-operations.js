@@ -363,6 +363,24 @@
 
   const emptyRecycleBin = () => fs.emptyRecycleBin();
 
+  // Files from the user's computer keep their data: text stays text, and
+  // everything else, like pictures, becomes a data URL.
+  const dataUrlFromBlob = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(reader.result), {
+        once: true,
+      });
+      reader.addEventListener("error", () => reject(reader.error), {
+        once: true,
+      });
+      reader.readAsDataURL(blob);
+    });
+  const readFileContent = (file) =>
+    file.type.startsWith("text/") || /\.(txt|log|csv|md)$/i.test(file.name)
+      ? file.text()
+      : dataUrlFromBlob(file);
+
   const resetForTests = () => {
     clipboard = null;
     listeners.clear();
@@ -378,6 +396,8 @@
     cut,
     paste: (...args) => fs.transaction(() => paste(...args)),
     getConflicts,
+    dataUrlFromBlob,
+    readFileContent,
     pasteWithConflicts,
     createFolder,
     createFile,

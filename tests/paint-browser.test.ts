@@ -44,6 +44,7 @@ async function setup() {
   const context = {
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
+    pictureUrl: (file) => file.content || null,
     setTitle: (title) => titles.push(title),
     showMessage: (...args) => messages.push(args),
     close: () => messages.push(["close"]),
@@ -197,6 +198,10 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
   h.context.openFile = async () => null;
   await h.command("open");
   await h.mounted.openFile({ content: "invalid" });
+  expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
+  // A file without picture data never reaches the image loader.
+  h.messages.length = 0;
+  await h.mounted.openFile({ id: "empty", name: "empty.png", content: "" });
   expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
   await h.mounted.openFile({ id: "other", name: "other.bmp", content: "data" });
   expect(h.titles.at(-1)).toBe("other.bmp - Paint");

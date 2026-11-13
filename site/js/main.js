@@ -475,7 +475,7 @@ const isDisplaySettings = (value) =>
   Object.hasOwn(DISPLAY_WALLPAPERS, value.wallpaper) &&
   typeof value.customWallpaper === "string" &&
   (value.customWallpaper === "" ||
-    /^data:image\/(png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(
+    /^data:image\/(bmp|png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(
       value.customWallpaper,
     )) &&
   typeof value.customWallpaperName === "string" &&

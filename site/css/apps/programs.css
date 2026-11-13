@@ -1799,6 +1799,16 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
   height: 48px;
 }
 
+/* A picture keeps its shape inside the frame, like XP's thumbnails. */
+.dlg-file-list[data-view="thumbnails"]
+  .dlg-node-icon
+  img.dlg-thumbnail-picture {
+  width: auto;
+  height: auto;
+  max-width: 96px;
+  max-height: 96px;
+}
+
 /* Tiles: a large icon beside the name, type and size. */
 .dlg-file-list[data-view="tiles"] .dlg-file-item {
   display: grid;

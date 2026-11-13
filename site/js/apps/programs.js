@@ -56,6 +56,7 @@ const applicationContext = (win) => ({
   openFile: (options) => XPDialogs.openFile(options),
   saveFile: (options) => XPDialogs.saveFile(options),
   myPictures: fs.MY_PICTURES,
+  pictureUrl: (file) => fs.getPictureUrl(file.id),
   setFileContent: (id, content, options) => fs.setContent(id, content, options),
   createFile: (parentId, name, content) =>
     fs.createFile(parentId, name, { content }),
@@ -176,18 +177,6 @@ const openXPProgram = (programId, options = {}) => {
   if (program.window.startMaximized) toggleMaximize(programId);
   return win;
 };
-
-const dataUrlFromBlob = (blob) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => resolve(reader.result), {
-      once: true,
-    });
-    reader.addEventListener("error", () => reject(reader.error), {
-      once: true,
-    });
-    reader.readAsDataURL(blob);
-  });
 
 const openNotepad = (file = null) => openXPProgram("__notepad", { file });
 

@@ -4,6 +4,26 @@
     "member": "I386/DOG.BM_",
     "sha256": "4cb21f95bccd80bca6baa955d8f9dcc1837e5a561d1585c9aaecdd7d377db8ab"
   },
+  "assets/xp/sample-pictures/blue-hills.jpg": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/BLUEHILL.JP_",
+    "sha256": "62e85a0f3a4cbc01b6d3390d63de0f7d051e1e723aeb071416a38799c50738ea"
+  },
+  "assets/xp/sample-pictures/sunset.jpg": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SUNSET.JP_",
+    "sha256": "ea3b1238a38f72b330aac53364bd0a0481946b93fc757dde7314ce3319f1840e"
+  },
+  "assets/xp/sample-pictures/water-lilies.jpg": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/WATERLIL.JP_",
+    "sha256": "e073f22bff5d22fdbf3665855d2f979d300c4e28421a7edf5d616dd92c71580f"
+  },
+  "assets/xp/sample-pictures/winter.jpg": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/WINTER.JP_",
+    "sha256": "553d0e053fe0af1b5c9886305fd34c46c5e122e6dc356891929bdae3712fe76b"
+  },
   "assets/xp/wallpapers/ascent.jpg": {
     "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
     "member": "I386/ASCENT.JP_",

@@ -257,7 +257,10 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
 // virtual disk keeps no picture data, so Open always hands off to the
 // browser's file picker, whatever the list or File name shows. The chosen
 // picture fills File name and closes the dialog.
+// XP's "Background Files" list, minus web pages.
 const WALLPAPER_TYPES = {
+  ".bmp": "image/bmp",
+  ".dib": "image/bmp",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -266,7 +269,14 @@ const WALLPAPER_TYPES = {
 };
 const WALLPAPER_EXTENSIONS = Object.keys(WALLPAPER_TYPES);
 const WALLPAPER_MIME_TYPES = [...new Set(Object.values(WALLPAPER_TYPES))];
-const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
+// Display settings store only base64 picture data of these types.
+const isWallpaperDataUrl = (value) => {
+  const match = /^data:([^;,]+);base64,[a-z0-9+/=]+$/i.exec(value);
+  return !!match && WALLPAPER_MIME_TYPES.includes(match[1].toLowerCase());
+};
+// Open uses a picture from the virtual disk when the name matches one.
+// Other names open the browser's file picker, for pictures on the computer.
+const openWallpaperBrowseDialog = (ownerWindow, fileInput, usePicture) => {
   let dialog = null;
   let nameInput = null;
   setDisplayDialogOwnerActive(ownerWindow, false);
@@ -286,9 +296,16 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
         "display-owned-dialog",
       );
     },
-    onAccept: () => {
+    onAccept: ({ folderId, name }) => {
+      const fs = window.VirtualFS;
+      const node = name ? fs.findChild(folderId, name) : null;
+      const url =
+        node && WALLPAPER_EXTENSIONS.includes(node.ext.toLowerCase())
+          ? fs.getPictureUrl(node.id)
+          : null;
+      if (url) return usePicture(node.name, url).then((used) => used && "open");
       // Clear the last pick so choosing the same picture again still
-      // fires a change event.
+      // fires a change event. The picker opens in this click's event.
       fileInput.value = "";
       fileInput.click();
       return false;
@@ -591,36 +608,66 @@ const wireDisplayProperties = (win) => {
     sync();
   });
   let wallpaperBrowseDialog = null;
-  controls.browse.addEventListener("click", () => {
-    wallpaperBrowseDialog = openWallpaperBrowseDialog(win, controls.image);
-  });
-  controls.image.addEventListener("change", () => {
-    const [file] = controls.image.files;
-    if (!file) return;
-    if (!WALLPAPER_MIME_TYPES.includes(file.type)) {
-      controls.image.value = "";
+  // Sets the picture as the pending wallpaper, or explains why it cannot.
+  const useWallpaperPicture = (fileName, dataUrl) => {
+    if (!isWallpaperDataUrl(dataUrl)) {
       openDisplayNotice(
         win,
         "Display Properties",
-        `${file.name} is not a picture that can be used as a background. Choose a PNG, JPEG, GIF, or WebP file.`,
+        `${fileName} is not a picture that can be used as a background. Choose a BMP, PNG, JPEG, GIF, or WebP file.`,
         "error",
       );
-      return;
+      return false;
     }
-    const reader = new FileReader();
-    // The type check above guarantees an image data URL.
-    reader.addEventListener("load", () => {
-      pending = {
-        ...pending,
-        customWallpaper: reader.result,
-        customWallpaperName: file.name.replace(/\.[^.]+$/, ""),
-      };
-      sync();
-      controls.customWallpaper.scrollIntoView({ block: "nearest" });
-      wallpaperBrowseDialog?.setChosenFile(file.name);
-      wallpaperBrowseDialog = null;
-    });
-    reader.readAsDataURL(file);
+    pending = {
+      ...pending,
+      customWallpaper: dataUrl,
+      customWallpaperName: fileName.replace(/\.[^.]+$/, ""),
+    };
+    sync();
+    controls.customWallpaper.scrollIntoView({ block: "nearest" });
+    return true;
+  };
+  // Display settings keep picture data, so a sample picture's file is read
+  // into a data URL. A failed read counts as a file that is not a picture.
+  const useVirtualPicture = async (fileName, url) => {
+    let dataUrl = url;
+    if (!url.startsWith("data:")) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        dataUrl = await window.FileOperations.dataUrlFromBlob(
+          await response.blob(),
+        );
+      } catch {
+        dataUrl = "";
+      }
+    }
+    return useWallpaperPicture(fileName, dataUrl);
+  };
+  controls.browse.addEventListener("click", () => {
+    wallpaperBrowseDialog = openWallpaperBrowseDialog(
+      win,
+      controls.image,
+      useVirtualPicture,
+    );
+  });
+  controls.image.addEventListener("change", async () => {
+    const [file] = controls.image.files;
+    if (!file) return;
+    // Clear the pick so the same file can be chosen again after an error.
+    controls.image.value = "";
+    let dataUrl = "";
+    if (WALLPAPER_MIME_TYPES.includes(file.type)) {
+      try {
+        dataUrl = await window.FileOperations.dataUrlFromBlob(file);
+      } catch {
+        dataUrl = "";
+      }
+    }
+    if (!useWallpaperPicture(file.name, dataUrl)) return;
+    wallpaperBrowseDialog?.setChosenFile(file.name);
+    wallpaperBrowseDialog = null;
   });
   controls.customize.addEventListener("click", () => {
     openDesktopItemsDialog(win);

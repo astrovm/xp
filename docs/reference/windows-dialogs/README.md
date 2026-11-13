@@ -60,7 +60,13 @@ Measurements were taken from pixel rows and columns of both captures.
   in/Save in drop-down folder tree, Back, Up, Create New Folder, and a Views
   menu (Thumbnails, Tiles, Icons, List, Details), a file name combo box with
   recent names, the file type field, and a resize grip. My Pictures opens in
-  Thumbnails view.
+  Thumbnails view, which shows each picture scaled to fit its frame. Typing a
+  folder's name and pressing Open or Save opens that folder.
+- My Pictures has XP's Sample Pictures folder with Blue hills, Sunset, Water
+  lilies, and Winter, extracted from the SP3 CD. Paint opens them, and the
+  wallpaper Browse dialog sets them as the background.
+- The wallpaper Browse dialog lists XP's Background Files types, BMP
+  included.
 - Properties and file dialogs show Explorer's icons instead of an emoji.
 
 ## Animations
@@ -95,15 +101,20 @@ Reference captures were recorded on the local XP VM with
 
 - Windows Classic keeps its own 3D frames, controls, and scrollbars.
 - My Recent Documents and My Network Places are empty folders.
-- The wallpaper Browse dialog opens the browser's file picker on Open, because
-  the virtual file system keeps no picture data.
+- The wallpaper Browse dialog opens the browser's file picker on Open when the
+  file name matches no picture in the current folder, so pictures on the
+  computer can still be chosen. XP shows a "file not found" error.
+- Sample Pictures is a system folder that cannot be deleted. In XP it is a
+  link to the shared Sample Pictures folder. Its pictures can be deleted.
+- Background Files leaves out web pages (.htm, .html), because Active
+  Desktop is not part of Astro XP.
 
 ## Remaining differences
 
 - The browser cannot tell when a scrollbar has nothing to scroll, so its
   arrows keep their normal look where XP grays them out.
 - Text rasterization differs from XP, so text is about 1px off in places.
-- My Pictures has no Sample Pictures folder.
-- Thumbnails view shows each file's icon, not a preview of the picture.
+- Thumbnails view shows a folder's icon. XP draws a folder with previews of
+  up to four pictures inside it.
 - The Date and Time clock, calendar border, and year spinner belong to the
   system utilities pass.

@@ -143,6 +143,11 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(fs.getContent(file.id)).toBe("old");
   context.setFileContent(file.id, "new");
   expect(fs.getContent(file.id)).toBe("new");
+  // Paint reads pictures through the shell, sample pictures included.
+  expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(
+    "/assets/xp/sample-pictures/winter.jpg",
+  );
+  expect(context.pictureUrl(file)).toBeNull();
 
   context.setWallpaper("data:image/png;base64,AAAA");
   const desktop = s.document.getElementById("desktop");

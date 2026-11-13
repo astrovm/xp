@@ -720,3 +720,83 @@ test("a file dialog that accepts an empty name remembers nothing", async () => {
   key(s, "Escape");
   expect(await open).toBeNull();
 });
+
+test("Thumbnails view shows pictures, and other items keep their icons", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const art = "data:image/png;base64,iVBORw0KGgo=";
+  fs.createFile(fs.MY_PICTURES, "art.png", { content: art });
+  fs.createFile(fs.MY_PICTURES, "broken.png", {
+    content: "data:image/png;base64,AAAA",
+  });
+  fs.createFile(fs.MY_PICTURES, "notes.txt", { content: "hello" });
+  const open = d.openFile({ startFolder: fs.MY_PICTURES });
+  const list = current(s).querySelector(".dlg-file-list");
+  expect(list.dataset.view).toBe("thumbnails");
+  const item = (name) =>
+    [...list.querySelectorAll(".dlg-file-item")].find(
+      (element) =>
+        element.querySelector(".dlg-file-item-name").textContent === name,
+    );
+  const picture = (name) => item(name).querySelector(".dlg-thumbnail-picture");
+  expect(picture("art.png").getAttribute("src")).toBe(art);
+  expect(picture("notes.txt")).toBeNull();
+  expect(picture("Sample Pictures")).toBeNull();
+  // A picture the browser cannot draw shows its icon instead.
+  picture("broken.png").dispatchEvent(new s.window.Event("error"));
+  expect(picture("broken.png")).toBeNull();
+  expect(item("broken.png").querySelector(".dlg-node-icon img")).not.toBeNull();
+  // The sample pictures show the pictures from the XP CD.
+  item("Sample Pictures").dispatchEvent(new s.window.MouseEvent("dblclick"));
+  expect(
+    [...list.querySelectorAll(".dlg-thumbnail-picture")].map((image) =>
+      image.getAttribute("src"),
+    ),
+  ).toEqual([
+    "/assets/xp/sample-pictures/blue-hills.jpg",
+    "/assets/xp/sample-pictures/sunset.jpg",
+    "/assets/xp/sample-pictures/water-lilies.jpg",
+    "/assets/xp/sample-pictures/winter.jpg",
+  ]);
+  // Other views keep the icons.
+  current(s).querySelector('[data-action="views"]').click();
+  [...current(s).querySelectorAll(".dlg-file-views-menu button")]
+    .find((button) => button.textContent.includes("Icons"))
+    .click();
+  expect(list.querySelector(".dlg-thumbnail-picture")).toBeNull();
+  key(s, "Escape");
+  expect(await open).toBeNull();
+});
+
+test("Open and Save open a folder whose name is typed, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  for (const [show, label] of [
+    [() => d.openFile({ startFolder: fs.MY_DOCUMENTS }), "Open"],
+    [() => d.saveFile({ startFolder: fs.MY_DOCUMENTS }), "Save"],
+  ]) {
+    const result = show();
+    const dialog = current(s);
+    const name = dialog.querySelector("#dlg-file-name");
+    name.value = "my pictures";
+    [...dialog.querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === label)
+      .click();
+    await flushShell();
+    expect(current(s)).toBe(dialog);
+    expect(dialog.querySelector(".dlg-file-folder").textContent).toContain(
+      "My Pictures",
+    );
+    expect(name.value).toBe("");
+    expect(s.document.activeElement).toBe(name);
+    // Back returns to the folder the dialog came from.
+    dialog.querySelector('[data-action="back"]').click();
+    expect(dialog.querySelector(".dlg-file-folder").textContent).toContain(
+      "My Documents",
+    );
+    key(s, "Escape");
+    expect(await result).toBeNull();
+  }
+});

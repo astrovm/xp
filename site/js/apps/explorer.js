@@ -664,7 +664,7 @@ const importFileEntry = (entry, destinationId, state) =>
     entry.file(async (file) => {
       try {
         if (state.cancelled) return resolve(false);
-        const content = file.type.startsWith("text/") ? await file.text() : "";
+        const content = await fileOps.readFileContent(file);
         const existing = fs.findChild(destinationId, file.name);
         let replaceId;
         if (existing) {

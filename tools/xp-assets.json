@@ -12,6 +12,22 @@
       "output": "site/assets/xp/SearchDog.bmp"
     },
     {
+      "member": "BLUEHILL.JP_",
+      "output": "site/assets/xp/sample-pictures/blue-hills.jpg"
+    },
+    {
+      "member": "SUNSET.JP_",
+      "output": "site/assets/xp/sample-pictures/sunset.jpg"
+    },
+    {
+      "member": "WATERLIL.JP_",
+      "output": "site/assets/xp/sample-pictures/water-lilies.jpg"
+    },
+    {
+      "member": "WINTER.JP_",
+      "output": "site/assets/xp/sample-pictures/winter.jpg"
+    },
+    {
       "member": "ASCENT.JP_",
       "output": "site/assets/xp/wallpapers/ascent.jpg"
     },

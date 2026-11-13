@@ -564,6 +564,27 @@
     return icon;
   };
 
+  // Thumbnails view shows a picture file as the picture itself, scaled to
+  // fit the frame, like XP. Other items, and pictures that fail to load,
+  // show their icon.
+  const createThumbnail = (node) => {
+    const icon = createNodeIcon(node);
+    const url = fs().getPictureUrl(node.id);
+    if (!url) return icon;
+    const preview = document.createElement("img");
+    preview.className = "dlg-thumbnail-picture";
+    preview.alt = "";
+    preview.decoding = "async";
+    preview.addEventListener(
+      "error",
+      () => icon.replaceWith(createNodeIcon(node)),
+      { once: true },
+    );
+    preview.src = url;
+    icon.replaceChildren(preview);
+    return icon;
+  };
+
   const describeNodeType = (node) => {
     if (node.id === fs().DRIVE_C) return "Local Disk";
     if (node.id === fs().DRIVE_D) return "Local Disk";
@@ -1349,6 +1370,14 @@
         // A message box must not open behind a drop-down list.
         dialog.closePopup?.();
         const name = nameInput.value.trim();
+        // Like XP, a folder's name opens that folder instead.
+        const folder = findChildByName(currentFolderId, name);
+        if (folder?.type === "folder") {
+          nameInput.value = "";
+          navigate(folder.id);
+          nameInput.focus();
+          return;
+        }
         const context = { folderId: currentFolderId, name };
         Promise.resolve(onAccept(context)).then((result) => {
           if (result === false) return;
@@ -1407,7 +1436,12 @@
             const label = document.createElement("span");
             label.className = "dlg-file-item-name";
             label.textContent = child.name;
-            item.append(createNodeIcon(child), label);
+            item.append(
+              view === "thumbnails"
+                ? createThumbnail(child)
+                : createNodeIcon(child),
+              label,
+            );
             if (view === "details" || view === "tiles") {
               const { type, size, date } = itemDetails(child);
               (view === "details" ? [size, type, date] : [type, size]).forEach(
