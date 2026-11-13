@@ -1838,8 +1838,13 @@ const wireWindowControls = (win) => {
     );
     if (holdsKeys) win.el.focus({ preventScroll: true });
   };
-  // A press outside the window closes the menus through the shell.
+  // A press outside the window closes the menus through the shell. Keys
+  // that move to another window close them too, like XP.
   menus.forEach((menu) => (menu.closeMenus = closeGameMenus));
+  win.el.addEventListener("focusout", (event) => {
+    if (event.relatedTarget && !win.el.contains(event.relatedTarget))
+      closeGameMenus();
+  });
 
   const openGameMenu = (name, focusFirstItem = false) => {
     const menu = menus.find((item) => item.dataset.gameMenu === name);
@@ -1939,8 +1944,9 @@ const wireWindowControls = (win) => {
         const button = menuButtons.find(
           (item) => item.dataset.gameMenu === menu.dataset.gameMenu,
         );
-        closeGameMenus();
+        // The keys move first, so the program never gets them for a moment.
         button?.focus();
+        closeGameMenus();
       } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         items[
@@ -1959,8 +1965,8 @@ const wireWindowControls = (win) => {
       const item = event.target.closest("[data-game-action]");
       if (!item || item.disabled) return;
       if (item.dataset.gameAction === "volume-popup") {
-        closeGameMenus();
         win.volumeSlider.focus();
+        closeGameMenus();
         return;
       }
       switch (item.dataset.gameAction) {

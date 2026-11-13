@@ -230,6 +230,14 @@ window.addEventListener("hashchange", () => {
   }
 });
 
+// A click into a program's frame sends no press to the page. The page then
+// loses the keys, and every window closes its menus, like XP.
+window.addEventListener("blur", () => {
+  document
+    .querySelectorAll(".game-menu:not([hidden])")
+    .forEach((menu) => menu.closeMenus?.());
+});
+
 // Close the start menu when clicking outside of it
 document.addEventListener("pointerdown", (e) => {
   if (suspended) return;

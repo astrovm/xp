@@ -361,6 +361,40 @@ test("clicking elsewhere closes open application menus but not the menu being us
   expect(fileOf(truck).contains(s.document.activeElement)).toBeFalse();
   expect(truck.contains(s.document.activeElement)).toBeTrue();
 
+  // Escape and Volume move the keys first, so the program never gets them.
+  let programFocus = 0;
+  truck.querySelector("[data-default-focus]").addEventListener("focus", () => {
+    programFocus += 1;
+  });
+  const altF = () =>
+    truck.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        key: "f",
+        altKey: true,
+        bubbles: true,
+      }),
+    );
+  altF();
+  s.document.activeElement.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  expect(s.document.activeElement === buttonOf(truck)).toBeTrue();
+  altF();
+  fileOf(truck).querySelector('[data-game-action="volume-popup"]').click();
+  expect(
+    s.document.activeElement === truck.querySelector(".game-volume-slider"),
+  ).toBeTrue();
+  expect(programFocus).toBe(0);
+
+  // Keys that move to another window, or into a program's frame, close it.
+  buttonOf(truck).click();
+  buttonOf(truck).focus();
+  bike.querySelector("[data-default-focus]").focus();
+  expect(fileOf(truck).hidden).toBeTrue();
+  buttonOf(truck).click();
+  s.window.dispatchEvent(new s.window.Event("blur"));
+  expect(fileOf(truck).hidden).toBeTrue();
+
   s.document.getElementById("start-button").click();
   pointerDown(s, s.document.getElementById("start-menu"));
   expect(s.document.getElementById("start-menu").hidden).toBeFalse();
