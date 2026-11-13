@@ -209,8 +209,10 @@
   // Resolver receives { source, existing, mode } and returns "replace",
   // "rename", or "cancel" (sync or Promise). Replace is limited to files;
   // folders always use the filesystem's deterministic copy naming.
-  // options.items ({ mode, ids }) moves or copies those items instead of
-  // the clipboard, and leaves the clipboard as it is, like a drag.
+  // options.items ({ mode, ids, fromBin }) moves or copies those items
+  // instead of the clipboard, and leaves the clipboard as it is, like a
+  // drag. fromBin lists the items that were in the Recycle Bin at drag
+  // start. Without it, the items in the bin when the paste starts count.
   const pasteWithConflicts = async (
     destinationId,
     resolveConflict,
@@ -220,17 +222,17 @@
     const source = options.items || clipboard;
     if (!source) throw new Error("FileOperations: clipboard is empty");
     assertWritableFolder(destinationId);
+    if (!Array.isArray(source.ids))
+      throw new Error("FileOperations: items must be an array");
     // Items destroyed since the user picked them are skipped.
-    const liveIds = Array.isArray(source.ids)
-      ? source.ids.filter((id) => !!fs.getNode(id))
-      : source.ids;
+    const liveIds = source.ids.filter((id) => !!fs.getNode(id));
     if (source.ids.length && !liveIds.length)
       return { cancelled: false, results: [] };
     const ids = getTopLevelIds(liveIds);
     // A paste takes an item out of the Recycle Bin only if it was there
     // when the user picked it (cut, copy or drag start), and is still
     // there. Other items deleted before or during the paste are skipped.
-    let fromBin = (source.fromBin || ids).filter(
+    let fromBin = (Array.isArray(source.fromBin) ? source.fromBin : ids).filter(
       (id) => ids.includes(id) && fs.isInRecycleBin(id),
     );
     const mode = source.mode;

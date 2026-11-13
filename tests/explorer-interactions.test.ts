@@ -169,6 +169,16 @@ test("Explorer drag and drop moves internal files and imports external file cont
   await flushShell();
   await flushShell();
   expect(h.fs.isInRecycleBin(late.id)).toBeTrue();
+  // A drag from an older tab has no Recycle Bin list. Items in the bin
+  // at the drop count as picked there.
+  const older = new w.DataTransfer();
+  older.setData("application/x-astro-vfs-ids", JSON.stringify([late.id]));
+  const olderDrop = new w.Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(olderDrop, "dataTransfer", { value: older });
+  target.dispatchEvent(olderDrop);
+  await flushShell();
+  await flushShell();
+  expect(h.fs.getNode(late.id).parent).toBe(h.child.id);
   // A drop ends the drag too.
   target.dispatchEvent(drag("dragstart"));
   transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));

@@ -833,15 +833,17 @@ const wireFolderDropTarget = (element, destinationId) => {
       // dropped on itself stays where it is.
       if (ids.includes(destinationId)) return;
       // Only items that were in the Recycle Bin at drag start may leave it.
+      // A drag from an older tab has no such list, so the items in the bin
+      // at the drop count.
       const binPayload = event.dataTransfer.getData(
         "application/x-astro-vfs-from-bin",
       );
-      const fromBin = binPayload ? JSON.parse(binPayload) : [];
+      const fromBin = binPayload ? JSON.parse(binPayload) : null;
       if (ids.length)
         await pasteIntoFolder(destinationId, {
           mode: "cut",
           ids,
-          fromBin: Array.isArray(fromBin) ? fromBin : [],
+          fromBin: Array.isArray(fromBin) ? fromBin : undefined,
         });
       else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {

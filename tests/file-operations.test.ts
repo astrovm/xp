@@ -371,6 +371,17 @@ describe("file operations", () => {
       items: { mode: "cut", ids: [binned.id] },
     });
     expect(fs.getNode(binned.id).parent).toBe(conflictTarget.id);
+    await expect(
+      operations.pasteWithConflicts(conflictTarget.id, null, {
+        items: { mode: "cut" },
+      }),
+    ).rejects.toThrow("items must be an array");
+    // A fromBin that is not a list counts as missing.
+    operations.removeToBin([binned.id]);
+    await operations.pasteWithConflicts(conflictSource.id, null, {
+      items: { mode: "cut", ids: [binned.id], fromBin: "bad" },
+    });
+    expect(fs.getNode(binned.id).parent).toBe(conflictSource.id);
     // Destroyed items are skipped.
     fs.destroy(gone.id);
     expect(
