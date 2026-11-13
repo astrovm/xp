@@ -126,7 +126,8 @@ const resolveShellCommand = (value) => {
     };
   const nodeId = fs.resolvePath(String(value).trim());
   const node = nodeId && fs.getNode(nodeId);
-  if (node)
+  // Like XP, Run cannot find an item by its place in the Recycle Bin.
+  if (node && !isDeletedNode(node.id))
     return {
       kind: node.type === "folder" ? "folder" : "file",
       title: node.name,
@@ -835,18 +836,23 @@ const navigateExplorer = (win, folderId, { history = true } = {}) => {
   return true;
 };
 
-// Back is disabled at the first entry, which is always an existing protected
-// folder. Forward can stay enabled after a failed step into a deleted folder.
-const explorerBack = (win) => {
-  win.historyIndex -= 1;
-  navigateExplorer(win, win.history[win.historyIndex], { history: false });
+// Back and Forward skip folders that were deleted since. Back is disabled
+// at the first entry, which is always an existing protected folder. When no
+// later folder still exists, Forward stays where it is.
+const stepExplorerHistory = (win, step) => {
+  const from = win.historyIndex;
+  for (
+    let index = from + step;
+    index >= 0 && index < win.history.length;
+    index += step
+  ) {
+    win.historyIndex = index;
+    if (navigateExplorer(win, win.history[index], { history: false })) return;
+  }
+  win.historyIndex = from;
 };
-
-const explorerForward = (win) => {
-  if (win.historyIndex >= win.history.length - 1) return;
-  win.historyIndex += 1;
-  navigateExplorer(win, win.history[win.historyIndex], { history: false });
-};
+const explorerBack = (win) => stepExplorerHistory(win, -1);
+const explorerForward = (win) => stepExplorerHistory(win, 1);
 
 const selectedExplorerNodes = (win) =>
   [...win.el.querySelectorAll(".explorer-item.selected")]
@@ -856,6 +862,8 @@ const selectedExplorerNodes = (win) =>
 // Inline rename, like XP: the label becomes an edit box; Enter or leaving
 // it commits, and Escape cancels.
 const startExplorerRename = (win, nodeId) => {
+  // Like XP, items in the Recycle Bin keep their names until restored.
+  if (fs.isInRecycleBin(nodeId)) return;
   const item = win.el.querySelector(
     `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
   );
@@ -1168,12 +1176,13 @@ const renderExplorerTree = (win) => {
       navigateExplorer(win, id);
     });
     row.addEventListener("dblclick", () => {
+      if (!hasFolders) return;
       if (expanded.has(id)) expanded.delete(id);
       else expanded.add(id);
       renderExplorerTree(win);
     });
     tree.appendChild(row);
-    if (expanded.has(id))
+    if (hasFolders && expanded.has(id))
       fs.getChildren(id)
         .filter((child) => child.type === "folder")
         .forEach((child) => addNode(child.id, depth + 1));

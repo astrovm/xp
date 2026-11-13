@@ -2,6 +2,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   cleanupShells,
+  clickStartAction,
   flushShell,
   loadShell,
   login,
@@ -324,6 +325,26 @@ test("Explorer never browses into the Recycle Bin's folders", async () => {
     `.explorer-tree-item[data-node-id="${fs.RECYCLE_BIN}"]`,
   );
   expect(row.textContent).toBe("  Recycle Bin");
+  row.dispatchEvent(new s.window.MouseEvent("dblclick"));
+  expect(
+    !!bin.querySelector(`.explorer-tree-item[data-node-id="${folder.id}"]`),
+  ).toBeFalse();
+  // Items in the Recycle Bin keep their names: F2 does not rename them.
+  bin
+    .querySelector(`.explorer-item[data-node-id="${folder.id}"]`)
+    .dispatchEvent(
+      new s.window.KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+    );
+  expect(!!bin.querySelector(".explorer-rename")).toBeFalse();
+  // Run cannot find an item by its place in the Recycle Bin.
+  clickStartAction(s, "run");
+  const run = s.document.querySelector(".run-dialog");
+  run.querySelector("#run-command").value = "Recycle Bin\\Old";
+  run.querySelector('[data-action="run"]').click();
+  await settle();
+  expect(s.document.querySelector(".run-dialog").textContent).toContain(
+    "Windows cannot find 'Recycle Bin\\Old'",
+  );
   // Opening it by its id does not browse into it either.
   fs.open(folder.id);
   await settle();

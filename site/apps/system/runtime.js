@@ -742,10 +742,10 @@ export const createSystemRuntime = (context) => {
           if (action === "search") openSearchDialog();
           if (action === "go") {
             const input = chrome.querySelector(".explorer-address input");
-            const destination = fs.resolvePath(input.value);
-            if (destination && fs.getNode(destination)?.type === "folder")
-              navigateExplorer(win, destination);
-            else input.value = fs.getPath(win.currentFolderId);
+            // Explorer opens only folders, never one in the Recycle Bin.
+            // Otherwise the address goes back to the open folder.
+            if (!navigateExplorer(win, fs.resolvePath(input.value)))
+              input.value = fs.getPath(win.currentFolderId);
           }
         } catch (error) {
           await XPDialogs.alert(
