@@ -200,6 +200,43 @@ describe("file operations", () => {
     expect(conflicts[0].existing.id).toBe(existingFile.id);
   });
 
+  test("moves dragged items without the clipboard, even when a move fails", async () => {
+    const { conflictSource, conflictFile, conflictTarget } =
+      createConflictFixture();
+    const other = fs.createFile(conflictSource.id, "other.txt");
+    operations.copy([other.id]);
+    const items = { mode: "cut", ids: [conflictFile.id] };
+    const cancelled = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      () => "cancel",
+      { items },
+    );
+    expect(cancelled.cancelled).toBe(true);
+    const move = fs.move;
+    fs.move = () => {
+      throw new Error("Storage is full.");
+    };
+    try {
+      await expect(
+        operations.pasteWithConflicts(conflictTarget.id, () => "rename", {
+          items,
+        }),
+      ).rejects.toThrow("Storage is full.");
+    } finally {
+      fs.move = move;
+    }
+    const moved = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      () => "rename",
+      { items },
+    );
+    expect(moved.results[0].parent).toBe(conflictTarget.id);
+    expect(operations.getClipboard()).toEqual({
+      mode: "copy",
+      ids: [other.id],
+    });
+  });
+
   test("cancels a conflicting paste atomically and keeps the cut clipboard", async () => {
     const { conflictSource, conflictFile, conflictTarget } =
       createConflictFixture();

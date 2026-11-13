@@ -146,10 +146,16 @@ test("Explorer drag and drop moves internal files and imports external file cont
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
   expect(target.classList.contains("drop-target")).toBeFalse();
+  // A drag moves the file and never touches the clipboard, like XP.
+  w.FileOperations.copy([h.child.id]);
   target.dispatchEvent(drag("drop"));
   await flushShell();
   await flushShell();
   expect(h.fs.getNode(h.file.id).parent).toBe(h.child.id);
+  expect(w.FileOperations.getClipboard()).toEqual({
+    mode: "copy",
+    ids: [h.child.id],
+  });
   const external = {
     types: ["Files"],
     files: [new w.File(["imported"], "external.txt", { type: "text/plain" })],

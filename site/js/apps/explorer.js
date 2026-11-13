@@ -625,13 +625,15 @@ const choosePasteConflict = ({ existing }) =>
   });
 // Every caller checks canPaste or fills the clipboard first. Pastes cannot
 // overlap: the conflict and progress dialogs are modal.
-const pasteIntoFolder = async (destinationId) => {
-  const clipboard = fileOps.getClipboard();
+// Pastes the clipboard, or moves or copies `items` ({ mode, ids }) without
+// the clipboard, as a drag does.
+const pasteIntoFolder = async (destinationId, items = null) => {
+  const source = items || fileOps.getClipboard();
   let cancelled = false;
   const progress =
-    clipboard.ids.length > 1
+    source.ids.length > 1
       ? XPDialogs.progress({
-          title: clipboard.mode === "cut" ? "Moving..." : "Copying...",
+          title: source.mode === "cut" ? "Moving..." : "Copying...",
           text: "Preparing file operation...",
           cancellable: true,
           onCancel: () => {
@@ -644,6 +646,7 @@ const pasteIntoFolder = async (destinationId) => {
       destinationId,
       choosePasteConflict,
       {
+        items,
         isCancelled: () => cancelled,
         onProgress: ({ completed, total, mode }) =>
           progress?.update(
@@ -803,10 +806,10 @@ const wireFolderDropTarget = (element, destinationId) => {
       );
       const ids = payload ? JSON.parse(payload) : [];
       if (!Array.isArray(ids)) throw new Error("Invalid dropped item list");
-      if (ids.length) {
-        fileOps.cut(ids);
-        await pasteIntoFolder(destinationId);
-      } else await importDroppedFiles(destinationId, event.dataTransfer);
+      // A drag moves the items without the clipboard, like XP.
+      if (ids.length)
+        await pasteIntoFolder(destinationId, { mode: "cut", ids });
+      else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {
       XPDialogs.alert(
         error.message || "The dropped files could not be imported.",
@@ -1045,11 +1048,13 @@ const renderExplorerTaskPane = (win) => {
       fs.DRIVE_F,
     ].includes(win.currentFolderId)
   ) {
-    addTask(
-      "Make a new folder",
-      "NewFolder.png",
-      async () => await fileOps.createFolder(win.currentFolderId, "New Folder"),
-    );
+    addTask("Make a new folder", "NewFolder.png", async () => {
+      try {
+        await fileOps.createFolder(win.currentFolderId, "New Folder");
+      } catch (error) {
+        await alertFileOperationError(error);
+      }
+    });
   }
   section.hidden = !body.children.length;
 };

@@ -140,9 +140,27 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   });
   await flushShell();
   const icon = (id) => s.document.querySelector(`[data-desktop-id="${id}"]`);
+  // A drag never touches the clipboard, like XP.
+  const ops = s.window.FileOperations;
+  ops.copy([recycle.id]);
   await drag(s, icon(move.id), icon(folder.id));
   expect(fs.getNode(move.id).parent).toBe(folder.id);
   expect(fs.getNode(move.id).content).toBe("keep me");
+  expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
+  // Cancel on a name clash leaves the file, its icon and the clipboard.
+  const clash = fs.createFile(fs.DESKTOP, "move.txt");
+  await flushShell();
+  const start = [icon(clash.id).style.left, icon(clash.id).style.top];
+  await drag(s, icon(clash.id), icon(folder.id));
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="cancel"]')
+    .click();
+  await flushShell();
+  await flushShell();
+  expect(fs.getNode(clash.id).parent).toBe(fs.DESKTOP);
+  expect([icon(clash.id).style.left, icon(clash.id).style.top]).toEqual(start);
+  expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
   await drag(s, icon(recycle.id), icon("__recycle-bin"));
   expect(fs.getNode(recycle.id).parent).toBe(fs.RECYCLE_BIN);
   expect(fs.getNode(recycle.id).content).toBe("recover me");
@@ -153,12 +171,17 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
     throw new Error("Storage is full.");
   };
   try {
+    const folderStart = [icon(folder.id).style.left, icon(folder.id).style.top];
     await drag(s, icon(folder.id), icon("__recycle-bin"));
     await flushShell();
     expect(
       [...s.document.querySelectorAll(".xp-dialog")].at(-1)?.textContent,
     ).toContain("Storage is full.");
     expect(fs.getNode(folder.id).parent).toBe(fs.DESKTOP);
+    // The icon goes back to its place.
+    expect([icon(folder.id).style.left, icon(folder.id).style.top]).toEqual(
+      folderStart,
+    );
   } finally {
     s.window.FileOperations.removeToBin = removeToBin;
   }

@@ -276,11 +276,13 @@ const wireDesktopIconDrag = (icon) => {
         eligibility.movable && upEvent.type === "pointerup"
           ? findDesktopDropTarget(upEvent.clientX, upEvent.clientY, draggedIds)
           : null;
-      if (upEvent.type === "pointercancel") {
+      const returnIcons = () =>
         selected.forEach(({ item, left, top }) => {
           item.style.left = `${left}px`;
           item.style.top = `${top}px`;
         });
+      if (upEvent.type === "pointercancel") {
+        returnIcons();
         return;
       }
       if (
@@ -297,14 +299,15 @@ const wireDesktopIconDrag = (icon) => {
             ]),
           ],
         });
-        selected.forEach(({ item, left, top }) => {
-          item.style.left = `${left}px`;
-          item.style.top = `${top}px`;
-        });
+        returnIcons();
         return;
       }
       if (desktopDragged) {
         if (dropTarget) {
+          // The icons go back to their places. Items that move away leave
+          // the Desktop when it redraws; after a failure or Cancel they stay
+          // where they were.
+          returnIcons();
           if (dropTarget.action === "recycle") {
             // A failed delete shows an alert, like the Delete key.
             try {
@@ -313,8 +316,11 @@ const wireDesktopIconDrag = (icon) => {
               await alertFileOperationError(error);
             }
           } else {
-            fileOps.cut(eligibility.filesystemIds);
-            await pasteIntoFolder(dropTarget.destinationId);
+            // A drag moves the items without the clipboard, like XP.
+            await pasteIntoFolder(dropTarget.destinationId, {
+              mode: "cut",
+              ids: eligibility.filesystemIds,
+            });
           }
         } else if (getDesktopLayoutSettings().autoArrange) {
           layoutDesktopIcons(true);
@@ -629,7 +635,14 @@ const beginDesktopRename = (id) => {
       try {
         await fileOps.rename(id, input.value);
       } catch (error) {
-        console.error(error);
+        // Like Explorer, a name Windows refuses shows an error.
+        refreshDesktop();
+        await XPDialogs.alert(
+          error.message || "The file operation failed.",
+          "Error Renaming File or Folder",
+          "error",
+        );
+        return;
       }
     }
     refreshDesktop();

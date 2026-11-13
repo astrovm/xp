@@ -200,15 +200,19 @@
   // Resolver receives { source, existing, mode } and returns "replace",
   // "rename", or "cancel" (sync or Promise). Replace is limited to files;
   // folders always use the filesystem's deterministic copy naming.
+  // options.items ({ mode, ids }) moves or copies those items instead of
+  // the clipboard, and leaves the clipboard as it is, like a drag.
   const pasteWithConflicts = async (
     destinationId,
     resolveConflict,
     options = {},
   ) => {
-    if (!clipboard) throw new Error("FileOperations: clipboard is empty");
+    const usesClipboard = !options.items;
+    const source = options.items || clipboard;
+    if (!source) throw new Error("FileOperations: clipboard is empty");
     assertWritableFolder(destinationId);
-    const ids = getTopLevelIds(clipboard.ids);
-    const mode = clipboard.mode;
+    const ids = getTopLevelIds(source.ids);
+    const mode = source.mode;
     if (mode === "cut") assertMovableTo(ids, destinationId);
     else assertCopyableTo(ids, destinationId);
     if (
@@ -229,7 +233,7 @@
     }
     // Items already moved leave a cut clipboard; the rest can be retried.
     const keepUnmovedOnClipboard = (index) => {
-      if (mode !== "cut") return;
+      if (mode !== "cut" || !usesClipboard) return;
       const remaining = ids
         .slice(index)
         .filter((remainingId) => !!fs.getNode(remainingId));
@@ -278,7 +282,7 @@
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    if (mode === "cut") {
+    if (mode === "cut" && usesClipboard) {
       clipboard = null;
       notify({ type: "clipboard", mode: null });
     }

@@ -206,6 +206,23 @@ test("Explorer toolbar, address bar, tree, and task panes navigate folders", asy
     .click();
   await settle();
   expect(fs.findChild(h.nested.id, "New Folder")).toBeTruthy();
+  // A folder Windows cannot create shows an error.
+  const createFolder = s.window.FileOperations.createFolder;
+  s.window.FileOperations.createFolder = () => {
+    throw new Error("Storage is full.");
+  };
+  try {
+    [...tasks.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Make a new folder"))
+      .click();
+    await settle();
+    const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+    expect(error.textContent).toContain("Storage is full.");
+    error.querySelector('[data-action="ok"]').click();
+    await settle();
+  } finally {
+    s.window.FileOperations.createFolder = createFolder;
+  }
   h.win
     .querySelector(".explorer-main")
     .dispatchEvent(new s.window.PointerEvent("pointerdown", { bubbles: true }));
