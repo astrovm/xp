@@ -129,9 +129,11 @@ const confirmPermanentDelete = (ids) =>
       : "Are you sure you want to permanently delete these items?",
     "Confirm File Delete",
     "warning",
-  ).then(
-    (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),
-  );
+  )
+    .then(
+      (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),
+    )
+    .catch(alertFileOperationError);
 
 document.addEventListener(
   "keydown",
@@ -509,9 +511,11 @@ document.addEventListener("keydown", async (e) => {
       }
       if (e.key === "Delete" && selected.length && !protectedSelection) {
         e.preventDefault();
-        if (e.shiftKey) confirmPermanentDelete(selected);
-        else if (explorerWin.currentFolderId === fs.RECYCLE_BIN)
+        // In the Recycle Bin, Delete and Shift+Delete both delete for good,
+        // and only what is still in the bin.
+        if (explorerWin.currentFolderId === fs.RECYCLE_BIN)
           confirmRecycleBinDelete(selected);
+        else if (e.shiftKey) confirmPermanentDelete(selected);
         else confirmRecycleDelete(selected);
         return;
       }

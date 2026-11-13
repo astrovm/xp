@@ -385,7 +385,48 @@ test("the Recycle Bin's File menu deletes for good and never renames", async () 
     .click();
   await settle();
   expect(fs.getNode(kept.id).parent).toBe(fs.DESKTOP);
-  expect(
-    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
-  ).toContain("File operation");
+  const lastDialog = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(lastDialog().textContent).toContain("File operation");
+  lastDialog().querySelector('[data-action="ok"]').click();
+  await settle();
+  // Shift+Delete in the Recycle Bin takes the same checked path.
+  fs.remove(kept.id);
+  await settle();
+  const item = bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`);
+  item.click();
+  item.focus();
+  item.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Delete",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+  fs.restore(kept.id);
+  lastDialog().querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(fs.getNode(kept.id).parent).toBe(fs.DESKTOP);
+  lastDialog().querySelector('[data-action="ok"]').click();
+  await settle();
+  // A failure without a message still gets one.
+  fs.remove(kept.id);
+  await settle();
+  bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`).click();
+  const permanentlyDelete = s.window.FileOperations.permanentlyDelete;
+  s.window.FileOperations.permanentlyDelete = () => {
+    throw new Error("");
+  };
+  try {
+    bin.querySelector('[data-explorer-menu="file"]').click();
+    command("delete").click();
+    await settle();
+    lastDialog().querySelector('[data-action="yes"]').click();
+    await settle();
+    expect(lastDialog().textContent).toContain("The file operation failed.");
+  } finally {
+    s.window.FileOperations.permanentlyDelete = permanentlyDelete;
+  }
 });

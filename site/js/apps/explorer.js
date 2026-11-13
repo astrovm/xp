@@ -528,6 +528,15 @@ const wireInternetGames = (win) => {
 };
 
 // XP's wording and titles, with the Recycle Bin icon.
+// Delete questions report a failed delete themselves, so no caller leaves
+// it unhandled.
+const alertFileOperationError = (error) =>
+  XPDialogs.alert(
+    error.message || "The file operation failed.",
+    "File operation",
+    "error",
+  );
+
 const confirmRecycleDelete = (ids) => {
   const node = fs.getNode(ids[0]);
   const [text, title] =
@@ -545,9 +554,9 @@ const confirmRecycleDelete = (ids) => {
             `Are you sure you want to send '${node.name}' to the Recycle Bin?`,
             "Confirm File Delete",
           ];
-  return XPDialogs.confirm(text, title, "recycle").then(
-    async (yes) => yes && (await fileOps.removeToBin(ids)),
-  );
+  return XPDialogs.confirm(text, title, "recycle")
+    .then(async (yes) => yes && (await fileOps.removeToBin(ids)))
+    .catch(alertFileOperationError);
 };
 
 // Deletes items from the Recycle Bin for good. An item restored meanwhile,
@@ -562,11 +571,7 @@ const confirmRecycleBinDelete = async (ids) => {
   try {
     await fileOps.permanentlyDelete(ids);
   } catch (error) {
-    await XPDialogs.alert(
-      error.message || "The file operation failed.",
-      "File operation",
-      "error",
-    );
+    await alertFileOperationError(error);
   }
 };
 
