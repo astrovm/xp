@@ -909,6 +909,19 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
     return win.querySelector(".explorer-context-menu");
   };
 
+  // Shift+F10 on a list with no selection opens the menu at the list.
+  h.items(win).focus();
+  key(h.items(win), "F10", { shiftKey: true });
+  expect(win.querySelector(".explorer-context-menu")).not.toBeNull();
+  key(s.document.activeElement, "Escape");
+  // Shift+F10 on a list with no selection opens a menu with no enabled
+  // command, and Escape still closes it.
+  h.items(win).focus();
+  key(h.items(win), "F10", { shiftKey: true });
+  expect(focused()).toBe("xp-context-menu explorer-context-menu");
+  key(s.document.activeElement, "Escape");
+  expect(win.querySelector(".explorer-context-menu")).toBeNull();
+  expect(focused()).toBe(label(h.items(win)));
   // A right-click on a selected item keeps the whole selection, like XP.
   item(a).click();
   item(b).dispatchEvent(

@@ -1504,7 +1504,10 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   const rect = win.el.getBoundingClientRect();
   menu.style.left = `${Math.max(0, Math.min(clientX - rect.left, rect.width - menu.offsetWidth - 2))}px`;
   menu.style.top = `${Math.max(25, Math.min(clientY - rect.top, rect.height - menu.offsetHeight - 2))}px`;
-  menu.querySelector("button:not(:disabled)")?.focus();
+  // With no enabled command, the menu itself takes the focus, so Escape
+  // still closes it.
+  menu.tabIndex = -1;
+  (menu.querySelector("button:not(:disabled)") || menu).focus();
   menu.addEventListener("click", async (event) => {
     try {
       const command = event.target.dataset.command;

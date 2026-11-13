@@ -342,6 +342,11 @@ html[data-xp-appearance="classic"] {
     sans-serif;
 }
 
+/* A menu with no enabled command takes the focus itself, with no ring. */
+.xp-context-menu:focus {
+  outline: none;
+}
+
 /* Flex rows keep every label at the same x, even when a long label makes
    the menu's width fractional on zoomed screens. */
 .xp-context-menu button {
