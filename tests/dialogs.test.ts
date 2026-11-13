@@ -91,7 +91,9 @@ describe("XP dialogs", () => {
 
   test("formats Details sizes in whole KB, rounded up, like XP", () => {
     const dialogs = loadDialogs();
-    expect(dialogs.formatKilobytes(0)).toBe("1 KB");
+    expect(dialogs.formatKilobytes(0)).toBe("0 KB");
+    expect(dialogs.formatKilobytes(-5)).toBe("0 KB");
+    expect(dialogs.formatKilobytes(1)).toBe("1 KB");
     expect(dialogs.formatKilobytes(1024)).toBe("1 KB");
     expect(dialogs.formatKilobytes(1025)).toBe("2 KB");
     expect(dialogs.formatKilobytes(28521)).toBe("28 KB");

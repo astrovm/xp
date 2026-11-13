@@ -69,9 +69,10 @@
     return `${value.toFixed(2)} ${units[unit - 1]} (${grouped} bytes)`;
   };
 
-  // XP's Details view rounds every file up to whole KB: "1 KB", "28 KB".
+  // XP's Details view rounds every file up to whole KB: "0 KB", "1 KB",
+  // "28 KB".
   const formatKilobytes = (bytes) =>
-    `${Math.max(1, Math.ceil(bytes / 1024)).toLocaleString("en-US")} KB`;
+    `${Math.ceil(Math.max(0, bytes) / 1024).toLocaleString("en-US")} KB`;
 
   const hasDOM = typeof document !== "undefined";
   const getFS = () => globalThis.VirtualFS;
@@ -605,9 +606,15 @@
         const preview = document.createElement("img");
         preview.alt = "";
         preview.decoding = "async";
-        preview.addEventListener("error", () => cell.remove(), {
-          once: true,
-        });
+        // A folder whose previews all fail shows its plain icon.
+        preview.addEventListener(
+          "error",
+          () => {
+            cell.remove();
+            if (!pictures.childElementCount) icon.replaceWith(createIcon(node));
+          },
+          { once: true },
+        );
         preview.src = url;
         cell.appendChild(preview);
         pictures.appendChild(cell);

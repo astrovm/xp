@@ -1524,7 +1524,7 @@ html:not(.keyboard-cues) .menu-accesskey {
   background: transparent;
   text-align: center;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item-icon {
+.explorer-items[data-view="thumbnails"] .explorer-item .explorer-item-icon {
   box-sizing: border-box;
   width: 100px;
   height: 100px;
@@ -1645,8 +1645,8 @@ html:not(.keyboard-cues) .menu-accesskey {
   background: var(--xp-beige);
   font-weight: bold;
 }
-.explorer-items[data-view="details"] .explorer-item-icon,
-.explorer-items[data-view="details"] .explorer-item-icon img {
+.explorer-items[data-view="details"] .explorer-item .explorer-item-icon,
+.explorer-items[data-view="details"] .explorer-item .explorer-item-icon img {
   width: 16px;
   height: 16px;
 }
@@ -1662,6 +1662,7 @@ html:not(.keyboard-cues) .menu-accesskey {
 }
 .explorer-items[data-view="details"] .explorer-item {
   width: 100%;
+  max-width: none;
   min-height: 20px;
   padding: 1px 6px;
   border-bottom: 1px solid #eee;

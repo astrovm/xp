@@ -410,6 +410,18 @@ export const createSystemRuntime = (context) => {
       const explorerMenuButtons = [
         ...chrome.querySelectorAll("[data-explorer-menu]"),
       ];
+      // The menu bar and the Views toolbar button open the same menu.
+      const viewsButton = chrome.querySelector('[data-explorer-action="view"]');
+      viewsButton.setAttribute("aria-haspopup", "menu");
+      viewsButton.setAttribute("aria-expanded", "false");
+      const explorerMenuOwners = [...explorerMenuButtons, viewsButton];
+      const hideExplorerMenus = () => {
+        explorerMenu.hidden = true;
+        explorerSubmenu.hidden = true;
+        explorerMenuOwners.forEach((button) =>
+          button.setAttribute("aria-expanded", "false"),
+        );
+      };
       const explorerSubmenus = {
         "folder-menu": [
           { label: "Search...", action: "search-current" },
@@ -623,7 +635,7 @@ export const createSystemRuntime = (context) => {
         renderExplorerMenuEntries(explorerMenu, actions, "explorerCommand");
         explorerSubmenu.hidden = true;
         explorerMenu.hidden = false;
-        explorerMenuButtons.forEach((entry) =>
+        explorerMenuOwners.forEach((entry) =>
           entry.setAttribute("aria-expanded", String(entry === button)),
         );
         explorerMenu.style.left = `${button.offsetLeft}px`;
@@ -668,7 +680,8 @@ export const createSystemRuntime = (context) => {
                 "info",
               );
             if (command === "rename") startExplorerRename(win, selected[0]);
-            if (EXPLORER_VIEWS.includes(command)) setExplorerView(win, command);
+            if (EXPLORER_VIEWS.includes(command))
+              setExplorerView(win.currentFolderId, command);
             if (command === "properties-current")
               openShellProperties(selected[0] || win.currentFolderId);
             if (command === "select-all")
@@ -682,11 +695,7 @@ export const createSystemRuntime = (context) => {
             if (command === "refresh") renderExplorerItems(win);
 
             if (command === "about-windows") openAboutWindows();
-            explorerMenu.hidden = true;
-            explorerSubmenu.hidden = true;
-            explorerMenuButtons.forEach((button) =>
-              button.setAttribute("aria-expanded", "false"),
-            );
+            hideExplorerMenus();
             return;
           }
           const subcommandButton = event.target.closest(
@@ -707,16 +716,17 @@ export const createSystemRuntime = (context) => {
             if (subcommand === "properties-current")
               openShellProperties(win.currentFolderId);
 
-            explorerMenu.hidden = true;
-            explorerSubmenu.hidden = true;
-            explorerMenuButtons.forEach((button) =>
-              button.setAttribute("aria-expanded", "false"),
-            );
+            hideExplorerMenus();
             return;
           }
           const actionButton = event.target.closest("[data-explorer-action]");
           const action = actionButton?.dataset.explorerAction;
           if (!action) return;
+          // A toolbar button closes the open menu. The Views button
+          // toggles its menu, like XP.
+          const viewsOpen =
+            viewsButton.getAttribute("aria-expanded") === "true";
+          hideExplorerMenus();
           if (action === "back") explorerBack(win);
           if (action === "forward") explorerForward(win);
           if (action === "up") navigateUp();
@@ -724,10 +734,8 @@ export const createSystemRuntime = (context) => {
             const foldersVisible = content.classList.toggle("folders-visible");
             actionButton.setAttribute("aria-pressed", String(foldersVisible));
           }
-          if (action === "view") {
+          if (action === "view" && !viewsOpen)
             showExplorerMenu("views", actionButton, false);
-            return;
-          }
           if (action === "search") openSearchDialog();
           if (action === "go") {
             const input = chrome.querySelector(".explorer-address input");
@@ -763,14 +771,10 @@ export const createSystemRuntime = (context) => {
       });
       chrome.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
-          const activeButton = explorerMenuButtons.find(
+          const activeButton = explorerMenuOwners.find(
             (button) => button.getAttribute("aria-expanded") === "true",
           );
-          explorerMenu.hidden = true;
-          explorerSubmenu.hidden = true;
-          explorerMenuButtons.forEach((button) =>
-            button.setAttribute("aria-expanded", "false"),
-          );
+          hideExplorerMenus();
           activeButton?.focus();
           return;
         }

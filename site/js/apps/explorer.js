@@ -861,7 +861,9 @@ const closeExplorerMenu = (root = document) => {
     menu.hidden = true;
   });
   root
-    .querySelectorAll('[data-explorer-menu][aria-expanded="true"]')
+    .querySelectorAll(
+      '[data-explorer-menu][aria-expanded="true"], [data-explorer-action="view"][aria-expanded="true"]',
+    )
     .forEach((button) => button.setAttribute("aria-expanded", "false"));
 };
 
@@ -904,13 +906,15 @@ const readExplorerViews = () =>
 const explorerViewFor = (folderId) =>
   readExplorerViews().find(([id]) => id === folderId)?.[1] ??
   (XPDialogs.isPictureFolder(folderId) ? "thumbnails" : "tiles");
-const setExplorerView = (win, view) => {
-  const views = readExplorerViews().filter(
-    ([id]) => id !== win.currentFolderId,
-  );
-  views.push([win.currentFolderId, view]);
+// Every Explorer window on the folder switches to the new view.
+const setExplorerView = (folderId, view) => {
+  const views = readExplorerViews().filter(([id]) => id !== folderId);
+  views.push([folderId, view]);
   writeJsonStorage(EXPLORER_VIEWS_KEY, views.slice(-MAX_EXPLORER_VIEWS));
-  renderExplorerItems(win);
+  openWindows.forEach((other) => {
+    if (other.type === "system" && other.currentFolderId === folderId)
+      renderExplorerItems(other);
+  });
 };
 
 const navigateExplorer = (win, folderId, { history = true } = {}) => {

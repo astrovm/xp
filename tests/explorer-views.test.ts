@@ -160,6 +160,65 @@ test("the Views toolbar button opens the views, like XP", async () => {
   expect(menu.hidden).toBeTrue();
 });
 
+test("the Views menu closes on other toolbar buttons, toggles, and gives focus back on Escape", async () => {
+  const h = await openShell();
+  const { fs } = h;
+  const child = fs.createFolder(fs.MY_DOCUMENTS, "Child");
+  await h.open(child.id);
+  const win = h.explorer();
+  const button = win.querySelector('[data-explorer-action="view"]');
+  const menu = win.querySelector(".explorer-menu");
+  expect(button.getAttribute("aria-haspopup")).toBe("menu");
+  button.click();
+  expect(button.getAttribute("aria-expanded")).toBe("true");
+  // Another toolbar button closes the menu before it acts.
+  win.querySelector('[data-explorer-action="up"]').click();
+  await flushShell();
+  expect(menu.hidden).toBeTrue();
+  expect(button.getAttribute("aria-expanded")).toBe("false");
+  // A second click on Views closes its menu.
+  button.click();
+  expect(menu.hidden).toBeFalse();
+  button.click();
+  expect(menu.hidden).toBeTrue();
+  // Escape closes the menu and focuses the Views button.
+  button.click();
+  menu.querySelector("[data-explorer-command]").focus();
+  menu.dispatchEvent(
+    new h.s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  expect(menu.hidden).toBeTrue();
+  expect(h.s.document.activeElement).toBe(button);
+  // A click outside the window closes it too.
+  button.click();
+  h.s.document.body.dispatchEvent(
+    new h.s.window.MouseEvent("pointerdown", { bubbles: true }),
+  );
+  expect(menu.hidden).toBeTrue();
+  expect(button.getAttribute("aria-expanded")).toBe("false");
+});
+
+test("a new view shows in every Explorer window on that folder", async () => {
+  const h = await openShell();
+  const { fs } = h;
+  await h.open(fs.MY_DOCUMENTS);
+  const documents = h.explorer();
+  h.s.document
+    .querySelector('[data-desktop-id="__my-computer"]')
+    .dispatchEvent(new h.s.window.MouseEvent("dblclick", { bubbles: true }));
+  await flushShell();
+  const computer = h.s.document.querySelector(
+    '.xp-window[data-game="__my-computer"]',
+  );
+  h.item(computer, fs.MY_DOCUMENTS).dispatchEvent(
+    new h.s.window.MouseEvent("dblclick"),
+  );
+  await flushShell();
+  expect(h.items(computer).dataset.view).toBe("tiles");
+  await h.viewMenu(documents, "details");
+  expect(h.items(computer).dataset.view).toBe("details");
+});
+
 test("Thumbnails view shows pictures, and folders show up to 4 of their pictures", async () => {
   const h = await openShell();
   const { fs } = h;
@@ -218,6 +277,17 @@ test("Thumbnails view shows pictures, and folders show up to 4 of their pictures
     ["b.png", "c.png", "d.png"].map((name) => `${ART}#${name}`),
   );
 
+  // A folder whose previews all fail shows its folder icon.
+  const lone = fs.createFolder(fs.MY_PICTURES, "Lone");
+  fs.createFile(lone.id, "only.png", { content: ART });
+  h.item(win, lone.id)
+    .querySelector(".folder-thumbnail-pictures img")
+    .dispatchEvent(new h.s.window.Event("error"));
+  expect(h.item(win, lone.id).querySelector(".folder-thumbnail")).toBeNull();
+  expect(
+    h.item(win, lone.id).querySelector(".explorer-item-icon img"),
+  ).not.toBeNull();
+
   // Other views show icons.
   await h.viewMenu(win, "tiles");
   expect(win.querySelector(".thumbnail-picture, .folder-thumbnail")).toBeNull();
@@ -248,6 +318,11 @@ test("Details view lists the name, type and size of each item in its own column"
     "big.txt",
   );
   expect(row.querySelector(".explorer-detail-size").textContent).toBe("28 KB");
+  // Folders leave the size empty.
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Box");
+  expect(
+    h.item(win, folder.id).querySelector(".explorer-detail-size").textContent,
+  ).toBe("");
 });
 
 test("drives, My Computer and the Recycle Bin keep their icons in Thumbnails", async () => {
