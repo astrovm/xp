@@ -93,6 +93,10 @@ describe("development build synchronization", () => {
     let builds = 0;
     const builder = async ({ outputDir }: { outputDir?: string }) => {
       builds += 1;
+      // The real build refuses to replace output with unknown files.
+      expect(
+        await Bun.file(join(outputDir as string, DEV_BUILD_STATE)).exists(),
+      ).toBe(false);
       await mkdir(join(outputDir as string, "js"), { recursive: true });
       await writeFile(join(outputDir as string, "index.html"), "built");
     };

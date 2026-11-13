@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -244,6 +244,9 @@ export async function ensureDevelopmentBuild({
       ? "Development build is stale; rebuilding..."
       : "Development build is missing; building...",
   );
+  // The build replaces only a valid previous build, and the state file is not
+  // part of one. Remove it first; a failed build then also stays stale.
+  await rm(join(resolvedOutput, DEV_BUILD_STATE), { force: true });
   const selectedBuilder = builder ?? (await import("./deploy")).build;
   await selectedBuilder({
     outputDir: resolvedOutput,
