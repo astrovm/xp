@@ -319,13 +319,15 @@ describe("file operations", () => {
     );
     operations.cut([a.id, b.id, c.id, d.id]);
     let checks = 0;
+    const completed = [];
     const result = await operations.pasteWithConflicts(
       conflictTarget.id,
       () => "rename",
       {
         // Cancel comes before d moves.
         isCancelled: () => ++checks === 4,
-        onProgress: () => {
+        onProgress: (progress) => {
+          completed.push(progress.completed);
           // After a moves, b goes to the bin and c is destroyed.
           if (fs.getNode(c.id)) {
             fs.remove(b.id);
@@ -340,6 +342,25 @@ describe("file operations", () => {
     expect(fs.getNode(c.id)).toBeNull();
     // Cancel keeps only d, the item still waiting.
     expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [d.id] });
+    // Skipped items count as done, so the progress bar moves on.
+    expect(completed).toEqual([1, 2, 3]);
+  });
+
+  test("skips an item deleted while the conflict question is open", async () => {
+    const { conflictSource, conflictFile, conflictTarget } =
+      createConflictFixture();
+    operations.cut([conflictFile.id]);
+    const result = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      () => {
+        fs.remove(conflictFile.id);
+        return "rename";
+      },
+    );
+    expect(result).toEqual({ cancelled: false, results: [] });
+    expect(fs.isInRecycleBin(conflictFile.id)).toBe(true);
+    expect(fs.getNode(conflictSource.id).parent).toBe(fs.MY_DOCUMENTS);
+    expect(operations.getClipboard()).toBeNull();
   });
 
   test("keeps a cut or copy made while a paste runs", async () => {

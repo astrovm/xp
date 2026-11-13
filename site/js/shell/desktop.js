@@ -11,8 +11,14 @@ const DESKTOP_ICON_METRICS = Object.freeze({
 let desktopDragged = false;
 let desktopSelectionAnchor = null;
 // Icons dropped on a folder or the Recycle Bin stay hidden until the move
-// ends, also when the Desktop redraws after each moved item.
+// ends, also when the Desktop redraws after each moved item. A moving icon
+// is never part of the selection, so no other drag or command takes it.
 const movingDesktopIds = new Set();
+const markDesktopIconMoving = (icon, moving) => {
+  icon.classList.toggle("desktop-moving", moving);
+  icon.style.visibility = moving ? "hidden" : "";
+};
+const SELECTED_DESKTOP_ICONS = ".desktop-icon.selected:not(.desktop-moving)";
 
 const getDesktopIconMetrics = (container) =>
   container.clientWidth <= 480
@@ -86,7 +92,7 @@ const clearDesktopSelection = () => {
 };
 
 const getSelectedDesktopIds = () =>
-  [...document.querySelectorAll(".desktop-icon.selected")].map(
+  [...document.querySelectorAll(SELECTED_DESKTOP_ICONS)].map(
     (icon) => icon.dataset.desktopId,
   );
 
@@ -217,13 +223,13 @@ const wireDesktopIconDrag = (icon) => {
 
     const startX = event.clientX;
     const startY = event.clientY;
-    const selected = [
-      ...document.querySelectorAll(".desktop-icon.selected"),
-    ].map((item) => ({
-      item,
-      left: item.offsetLeft,
-      top: item.offsetTop,
-    }));
+    const selected = [...document.querySelectorAll(SELECTED_DESKTOP_ICONS)].map(
+      (item) => ({
+        item,
+        left: item.offsetLeft,
+        top: item.offsetTop,
+      }),
+    );
     const container = document.getElementById("desktop-icons");
     const eligibility = getDesktopSelectionEligibility();
     const draggedIds = new Set(eligibility.filesystemIds);
@@ -312,7 +318,7 @@ const wireDesktopIconDrag = (icon) => {
           // icons come back at their places.
           selected.forEach(({ item }) => {
             movingDesktopIds.add(item.dataset.desktopId);
-            item.style.visibility = "hidden";
+            markDesktopIconMoving(item, true);
           });
           let failure = null;
           if (dropTarget.action === "recycle") {
@@ -336,7 +342,7 @@ const wireDesktopIconDrag = (icon) => {
           // Icons of another drop that still runs stay hidden.
           container.querySelectorAll(".desktop-icon").forEach((item) => {
             if (!movingDesktopIds.has(item.dataset.desktopId))
-              item.style.visibility = "";
+              markDesktopIconMoving(item, false);
           });
           // A failed delete shows an alert, like the Delete key.
           if (failure) await alertFileOperationError(failure);
@@ -385,7 +391,7 @@ const wireDesktopSelectionRectangle = () => {
     closeDesktopContextMenu();
     const additive = event.ctrlKey || event.metaKey;
     const initialSelection = new Set(
-      Array.from(document.querySelectorAll(".desktop-icon.selected")).map(
+      Array.from(document.querySelectorAll(SELECTED_DESKTOP_ICONS)).map(
         (icon) => icon.dataset.desktopId,
       ),
     );
@@ -532,7 +538,7 @@ const buildDesktopIcons = () => {
       });
     });
     icon.dataset.desktopId = id;
-    if (movingDesktopIds.has(id)) icon.style.visibility = "hidden";
+    if (movingDesktopIds.has(id)) markDesktopIconMoving(icon, true);
     if (system) icon.dataset.systemId = id;
     if (node?.type === "folder") icon.dataset.dropDestinationId = node.id;
     if (id === "__recycle-bin") icon.dataset.dropAction = "recycle";

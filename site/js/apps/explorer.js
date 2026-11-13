@@ -788,8 +788,8 @@ const importDroppedFiles = async (destinationId, dataTransfer) => {
   }
 };
 // The items an Explorer drag carries. A folder never shows as a drop target
-// for itself or for a folder inside it. The document hears dragend also
-// when a redraw removed the dragged item.
+// for itself or for a folder inside it. A drop, a dragend that reaches the
+// document, or the next dragstart ends the list.
 let explorerDragIds = [];
 document.addEventListener("dragend", () => {
   explorerDragIds = [];

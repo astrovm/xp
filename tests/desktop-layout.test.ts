@@ -181,22 +181,22 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   const pasteWithConflicts = ops.pasteWithConflicts;
   let waiting = null;
   let afterOtherDrop = null;
+  let otherIds = null;
   let finish;
   const finished = new Promise((resolve) => (finish = resolve));
   ops.pasteWithConflicts = async (destinationId, resolver, { items }) => {
     if (items.ids.includes(third.id)) {
+      otherIds = items.ids;
       await fs.move(third.id, destinationId);
       return { cancelled: false, results: [] };
     }
     await fs.move(first.id, destinationId);
     await flushShell();
     waiting = icon(second.id).style.visibility;
-    // Another drop that ends first leaves this drop's icons hidden.
-    s.document
-      .querySelectorAll(".desktop-icon")
-      .forEach((item) =>
-        item.classList.toggle("selected", item.dataset.desktopId === third.id),
-      );
+    // Another drop that ends first leaves this drop's icons hidden, and
+    // never takes them, even while they still look selected.
+    icon(second.id).classList.add("selected");
+    icon(third.id).classList.add("selected");
     await drag(s, icon(third.id), icon(folder.id));
     afterOtherDrop = icon(second.id).style.visibility;
     await fs.move(second.id, destinationId);
@@ -212,6 +212,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   }
   expect(waiting).toBe("hidden");
   expect(afterOtherDrop).toBe("hidden");
+  expect(otherIds).toEqual([third.id]);
   expect(fs.getNode(third.id).parent).toBe(folder.id);
   expect(fs.getNode(second.id).parent).toBe(folder.id);
   expect(

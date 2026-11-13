@@ -221,6 +221,10 @@
     if (!source) throw new Error("FileOperations: clipboard is empty");
     assertWritableFolder(destinationId);
     const ids = getTopLevelIds(source.ids);
+    // An item deleted while the paste runs, also while a conflict question
+    // is open, is skipped. A paste never takes an item out of the Recycle
+    // Bin that went there after the paste started.
+    const fromBin = ids.filter((id) => fs.isInRecycleBin(id));
     const mode = source.mode;
     if (mode === "cut") assertMovableTo(ids, destinationId);
     else assertCopyableTo(ids, destinationId);
@@ -240,9 +244,6 @@
       if (decision === "cancel") return { cancelled: true, results: [] };
       decisions.push({ conflict, decision });
     }
-    // An item deleted while the paste runs is skipped, so a paste never
-    // takes an item out of the Recycle Bin that went there after the start.
-    const fromBin = ids.filter((id) => fs.isInRecycleBin(id));
     // Items already moved leave a cut clipboard; the rest can be retried.
     // A new cut or copy made during the paste stays on the clipboard.
     const pastesClipboard = () =>
@@ -263,7 +264,17 @@
         keepUnmovedOnClipboard(index);
         return { cancelled: true, results };
       }
-      if (!isStillThere(id, fromBin)) continue;
+      const reportProgress = () =>
+        options.onProgress?.({
+          completed: index + 1,
+          total: ids.length,
+          mode,
+          id,
+        });
+      if (!isStillThere(id, fromBin)) {
+        reportProgress();
+        continue;
+      }
       const planned = decisions.find(
         ({ conflict }) => conflict.source.id === id,
       );
@@ -293,12 +304,7 @@
         throw error;
       }
       if (mode === "cut" && !usesClipboard) forgetCutItems([id]);
-      options.onProgress?.({
-        completed: index + 1,
-        total: ids.length,
-        mode,
-        id,
-      });
+      reportProgress();
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     if (pastesClipboard()) setClipboardIds([]);
