@@ -844,6 +844,7 @@
     onAccept,
     onDialog = null,
     completeName = (name) => name,
+    allFiles = true,
   }) =>
     new Promise((resolve) => {
       let currentFolderId = startFolder || fs().MY_DOCUMENTS;
@@ -1292,7 +1293,7 @@
       const typeSelect = document.createElement("select");
       typeSelect.className = "dlg-file-type";
       [filter, null]
-        .filter((entry, index) => index === 0 || filter?.length)
+        .filter((entry, index) => index === 0 || (filter?.length && allFiles))
         .forEach((entry) => {
           const option = document.createElement("option");
           option.textContent =
@@ -1544,11 +1545,13 @@
     defaultName = "",
     filter = null,
     defaultExtension = "",
+    allFiles = true,
   } = {}) =>
     browseFiles({
       title,
       startFolder,
       filter,
+      allFiles,
       initialName: defaultName,
       acceptLabel: "&Save",
       folderLabel: "Save &in:",

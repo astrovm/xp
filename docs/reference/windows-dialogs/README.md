@@ -116,6 +116,9 @@ Reference captures were recorded on the local XP VM with
 - Text rasterization differs from XP, so text is about 1px off in places.
 - Thumbnails view shows a folder's icon. XP draws a folder with previews of
   up to four pictures inside it.
+- Paint's Save as type lists one entry for all the types it saves, not one
+  entry per format. Paint cannot save GIF, because browsers have no GIF
+  encoder, so Save on a GIF picture asks for a new name and type.
 - Picture files show the generic file icon in Explorer, the Start menu, and
   the file dialogs' other views. XP shows Paint's icon for BMP files and the
   Picture and Fax Viewer's icons for other pictures.

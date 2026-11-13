@@ -52,7 +52,7 @@ async function setup() {
     setWallpaper: (value) => wallpapers.push(value),
     saveFile: async (options) => {
       saveOptions.push(options);
-      return { parentId: "pictures", name: "drawing" };
+      return { parentId: "pictures", name: "drawing.bmp" };
     },
     openFile: async () => ({
       id: "opened",
@@ -126,10 +126,13 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   await h.answer("yes");
   expect(await saved).toBeTrue();
   expect(h.writes[0].slice(0, 2)).toEqual(["pictures", "drawing.bmp"]);
-  // Save As keeps only picture extensions, and adds .bmp to other names.
+  // Save As lists the types Paint writes, with no All Files, and the
+  // dialog adds .bmp to other names.
   expect(h.saveOptions[0]).toMatchObject({
-    filter: [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"],
+    defaultName: "untitled",
+    filter: [".bmp", ".dib", ".jpg", ".jpeg", ".png"],
     defaultExtension: ".bmp",
+    allFiles: false,
   });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
@@ -215,6 +218,15 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
   expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
   await h.mounted.openFile({ id: "other", name: "other.bmp", content: "data" });
   expect(h.titles.at(-1)).toBe("other.bmp - Paint");
+  // Browsers cannot write GIF, so Save asks for a new name and type.
+  await h.mounted.openFile({ id: "anim", name: "anim.gif", content: "data" });
+  const saves = [];
+  h.context.saveFile = async (options) => {
+    saves.push(options);
+    return null;
+  };
+  await h.command("save");
+  expect(saves).toEqual([expect.objectContaining({ defaultName: "anim" })]);
 });
 test("Paint tools, palette, menu checks and keyboard controls stay synchronized", async () => {
   const h = await setup();

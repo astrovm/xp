@@ -7,7 +7,7 @@ import {
   showEditColorsDialog,
   showTransformDialog,
 } from "./dialogs.js";
-import { encodeCanvas } from "./file-formats.js";
+import { encodeCanvas, extensionFor } from "./file-formats.js";
 import { installPaintScrollbars } from "./scrollbars.js";
 
 export const PAINT_COLORS = [
@@ -218,8 +218,10 @@ const createMenuBar = (run, panelVisible) => {
 
 // The shell gives the picture's address: stored picture data, or an XP
 // sample picture. A file with neither is not a picture Paint can read.
-// The picture types Paint opens and saves.
+// The picture types Paint opens, and the ones it saves. Browsers cannot
+// encode GIF, so Paint saves a GIF picture as another type.
 const PICTURE_TYPES = [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"];
+const SAVE_TYPES = PICTURE_TYPES.filter((type) => type !== ".gif");
 
 const imageFromFile = async (url) => {
   if (!url) throw new Error("No picture data");
@@ -424,30 +426,37 @@ const mountPaint = (shell, instance) => {
     }
   };
   const save = async (saveAs) => {
+    // Save keeps the open file's type, unless Paint cannot write it.
+    const canSaveInPlace =
+      fileId && SAVE_TYPES.includes(`.${extensionFor(fileName)}`);
     let destination =
-      fileId && !saveAs ? { existingId: fileId, name: fileName } : null;
+      canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
     if (!destination) {
+      // Like XP's Paint: the box shows the name without a type, and the
+      // dialog adds .bmp unless a type Paint saves is typed.
       destination = await shell.saveFile({
         title: "Save As",
-        defaultName: /\.[^.]+$/.test(fileName) ? fileName : `${fileName}.bmp`,
+        defaultName: fileName.replace(/\.[^.]+$/, ""),
         startFolder: shell.myPictures,
-        filter: PICTURE_TYPES,
+        filter: SAVE_TYPES,
         defaultExtension: ".bmp",
+        allFiles: false,
       });
     }
     if (!destination) return false;
-    const normalizedName = /\.[^.]+$/.test(destination.name)
-      ? destination.name
-      : `${destination.name}.bmp`;
     try {
       const revisionToSave = editRevision;
-      const content = await encodeCanvas(canvas, normalizedName);
+      const content = await encodeCanvas(canvas, destination.name);
       const file = destination.existingId
         ? await shell.setFileContent(destination.existingId, content, {
             expectedContent:
               destination.existingId === fileId ? savedContent : undefined,
           })
-        : await shell.createFile(destination.parentId, normalizedName, content);
+        : await shell.createFile(
+            destination.parentId,
+            destination.name,
+            content,
+          );
       fileId = file.id;
       fileName = file.name;
       savedContent = content;

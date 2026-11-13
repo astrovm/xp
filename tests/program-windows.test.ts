@@ -319,6 +319,15 @@ test("Paint saves through the shell's Save As dialog into My Pictures", async ()
   expect(dialog.querySelector(".dlg-file-folder-value").textContent).toContain(
     "My Pictures",
   );
+  // XP's Paint lists only the types it saves, with no All Files.
+  expect(
+    [...dialog.querySelectorAll(".dlg-file-type option")].map(
+      (option) => option.textContent,
+    ),
+  ).toEqual([
+    "BMP, DIB, JPG, JPEG, PNG Files (*.bmp;*.dib;*.jpg;*.jpeg;*.png)",
+  ]);
+  expect(dialog.querySelector("#dlg-file-name").value).toBe("untitled");
   dialog.querySelector("#dlg-file-name").value = "sketch";
   dialog
     .querySelector("#dlg-file-name")

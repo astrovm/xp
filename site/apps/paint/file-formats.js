@@ -54,11 +54,7 @@ export const encodeCanvas = async (canvas, name) => {
       "image/bmp",
     );
   }
-  const type = ["jpg", "jpeg"].includes(extension)
-    ? "image/jpeg"
-    : extension === "gif"
-      ? "image/png"
-      : "image/png";
+  const type = ["jpg", "jpeg"].includes(extension) ? "image/jpeg" : "image/png";
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, type));
   return bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), type);
 };
