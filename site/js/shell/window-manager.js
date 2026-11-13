@@ -906,12 +906,13 @@ const loadIframe = (gameId, win) => {
   );
 };
 
-// A press is held between pointerdown and pointerup. The focus that a press
-// gives is the mouse's, not the keyboard's. A key also ends it, because a
-// pointerup in an iframe never reaches the page.
+// A press lasts from pointerdown to its click. The focus that a press gives
+// is the mouse's, not the keyboard's. A touch tap moves the focus after its
+// pointerup, so the press ends only at the click. A key also ends it,
+// because a press can end in an iframe or with a drag, with no click.
 let pointerHeld = false;
 document.addEventListener("pointerdown", () => (pointerHeld = true), true);
-["pointerup", "pointercancel", "keydown"].forEach((type) =>
+["click", "pointercancel", "keydown"].forEach((type) =>
   document.addEventListener(type, () => (pointerHeld = false), true),
 );
 // A click into a game's iframe fires no focusin in the page. So when the

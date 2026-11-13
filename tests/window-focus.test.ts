@@ -39,16 +39,24 @@ async function twoWindows() {
   };
   const press = (target, type) =>
     target.dispatchEvent(new s.window.PointerEvent(type, { bubbles: true }));
+  // A press ends with its click.
+  const release = (target) =>
+    target.dispatchEvent(new s.window.MouseEvent("click", { bubbles: true }));
   // A click on a window's title bar makes it the active window.
   const activate = (win) => {
     press(win.querySelector(".title-text"), "pointerdown");
-    press(win.querySelector(".title-text"), "pointerup");
+    release(win.querySelector(".title-text"));
   };
-  return { s, docs, pictures, focused, press, activate };
+  const key = (target, key) =>
+    target.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", { key, bubbles: true }),
+    );
+  return { s, docs, pictures, focused, press, release, activate, key };
 }
 
 test("a press on a part that XP never focuses keeps the keys on the window's control", async () => {
-  const { s, docs, focused, press, activate } = await twoWindows();
+  const { s, docs, focused, press, release, activate, key } =
+    await twoWindows();
   activate(docs);
   expect(focused()).toBe("explorer-items");
 
@@ -58,8 +66,10 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
     docs.querySelector('[data-explorer-action="search"]'),
   ]) {
     press(button, "pointerdown");
-    button.focus();
+    // A touch tap moves the focus after its pointerup.
     press(button, "pointerup");
+    button.focus();
+    release(docs);
     expect(focused()).toBe("explorer-items");
   }
   // A menu command gives the focus back to the list, not to the button.
@@ -70,6 +80,41 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   selectAll.click();
   await settle();
   expect(focused()).toBe("explorer-items");
+
+  // A press on Views leaves the keys on the list. Escape closes the menu,
+  // and an arrow key moves into it, like XP.
+  const views = docs.querySelector('[data-explorer-action="view"]');
+  const menu = docs.querySelector(".explorer-menu");
+  const list = docs.querySelector(".explorer-items");
+  const openViews = () => {
+    press(views, "pointerdown");
+    views.focus();
+    views.click();
+  };
+  openViews();
+  expect(focused()).toBe("explorer-items");
+  expect(menu.hidden).toBeFalse();
+  key(list, "Escape");
+  expect(menu.hidden).toBeTrue();
+  expect(focused()).toBe("explorer-items");
+  for (const [arrow, index] of [
+    ["ArrowDown", 0],
+    ["ArrowUp", -1],
+  ]) {
+    openViews();
+    key(list, arrow);
+    const commands = [...menu.querySelectorAll("button:not(:disabled)")];
+    expect(commands.indexOf(s.document.activeElement)).toBe(
+      (index + commands.length) % commands.length,
+    );
+    key(s.document.activeElement, "Escape");
+  }
+  list.focus();
+  // Other keys on the list leave the menu alone.
+  openViews();
+  key(list, "Home");
+  expect(menu.hidden).toBeFalse();
+  key(list, "Escape");
 
   // The keyboard can still focus a toolbar button.
   const folders = docs.querySelector('[data-explorer-action="folders"]');

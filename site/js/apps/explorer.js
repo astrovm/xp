@@ -1474,7 +1474,13 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   menu.setAttribute("role", "menu");
   // The list gets the focus back, unless a command moved it elsewhere,
   // such as a rename box or a dialog.
+  // A press outside the menu closes it. A press inside it, such as on a
+  // disabled command, keeps it open, and the next press is checked again.
+  const onOutsidePointerDown = (event) => {
+    if (!menu.contains(event.target)) close();
+  };
   const close = () => {
+    document.removeEventListener("pointerdown", onOutsidePointerDown);
     const hadFocus = menu.contains(document.activeElement);
     menu.remove();
     if (hadFocus) focusExplorerList(win, previousFocus);
@@ -1555,13 +1561,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       target?.focus();
     }
   });
-  document.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (!menu.contains(event.target)) close();
-    },
-    { once: true },
-  );
+  document.addEventListener("pointerdown", onOutsidePointerDown);
 };
 
 const createExplorerIcon = (node) => {

@@ -909,6 +909,24 @@ export const createSystemRuntime = (context) => {
       };
       // The access keys work from anywhere in the window, also the list.
       win.el.addEventListener("keydown", (event) => {
+        // A menu that the mouse opened, such as Views, leaves the keys on
+        // the list. Escape still closes it, and an arrow key moves into it,
+        // like XP.
+        if (!explorerMenu.hidden && !chrome.contains(event.target)) {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            hideExplorerMenus();
+            return;
+          }
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            const commands = [
+              ...explorerMenu.querySelectorAll("button:not(:disabled)"),
+            ];
+            (event.key === "ArrowDown" ? commands[0] : commands.at(-1)).focus();
+            return;
+          }
+        }
         // A context menu keeps its own keys.
         if (
           event.altKey &&

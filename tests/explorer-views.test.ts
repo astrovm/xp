@@ -922,6 +922,17 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   key(s.document.activeElement, "Escape");
   expect(win.querySelector(".explorer-context-menu")).toBeNull();
   expect(focused()).toBe(label(h.items(win)));
+  // A press inside the menu keeps it open, and a later press outside it
+  // still closes it.
+  key(h.items(win), "F10", { shiftKey: true });
+  const press = (target) =>
+    target.dispatchEvent(
+      new s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  press(win.querySelector(".explorer-context-menu"));
+  expect(win.querySelector(".explorer-context-menu")).not.toBeNull();
+  press(win.querySelector(".explorer-main"));
+  expect(win.querySelector(".explorer-context-menu")).toBeNull();
   // A right-click on a selected item keeps the whole selection, like XP.
   item(a).click();
   item(b).dispatchEvent(
