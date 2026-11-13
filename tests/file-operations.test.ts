@@ -163,6 +163,12 @@ describe("file operations", () => {
       /not deletable/,
     );
 
+    // Nothing new goes in a folder inside the Recycle Bin.
+    operations.removeToBin([destination.id]);
+    expect(() => operations.createFile(destination.id, "late.txt")).toThrow(
+      /cannot accept new items/,
+    );
+
     operations.removeToBin([source.id]);
     operations.emptyRecycleBin();
     expect(fs.getChildren(fs.RECYCLE_BIN).length).toBe(0);

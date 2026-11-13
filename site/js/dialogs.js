@@ -1549,7 +1549,10 @@
   } = {}) =>
     browseFiles({
       title,
-      startFolder,
+      // A deleted file's folder is in the Recycle Bin, and nothing can be
+      // saved there. The dialog then starts in My Documents.
+      startFolder:
+        startFolder && fs().isInRecycleBin(startFolder) ? null : startFolder,
       filter,
       allFiles,
       initialName: defaultName,

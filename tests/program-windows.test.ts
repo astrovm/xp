@@ -145,6 +145,14 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(fs.getContent(file.id)).toBe("new");
   expect(context.folderOf("sample-winter")).toBe(fs.SAMPLE_PICTURES);
   expect(context.folderOf("missing")).toBeNull();
+  // A deleted picture's folder is in the Recycle Bin. Paint never saves there.
+  const folder = fs.createFolder(fs.MY_PICTURES, "Trip");
+  const photo = context.createFile(folder.id, "beach.png", "");
+  fs.remove(folder.id);
+  expect(context.folderOf(photo.id)).toBeNull();
+  expect(() => context.createFile(folder.id, "late.png", "")).toThrow(
+    /cannot accept new items/,
+  );
   // Paint reads pictures through the shell, sample pictures included.
   expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(
     "/assets/xp/sample-pictures/winter.jpg",

@@ -322,6 +322,15 @@ test("file dialogs show XP's five places and the Look in tree with icons", async
   ).toBe("Recycle Bin");
   key(s, "Escape");
   expect(await bin).toBeNull();
+  // Save As never starts in the Recycle Bin, even for a deleted file.
+  const deleted = fs.createFolder(fs.DESKTOP, "Old");
+  fs.remove(deleted.id);
+  const save = d.saveFile({ startFolder: deleted.id });
+  expect(
+    current(s).querySelector(".dlg-file-folder-option.selected").textContent,
+  ).toBe("My Documents");
+  key(s, "Escape");
+  expect(await save).toBeNull();
   const computer = d.openFile({ startFolder: fs.MY_COMPUTER });
   expect(
     current(s).querySelector(".dlg-file-folder-option.selected").textContent,

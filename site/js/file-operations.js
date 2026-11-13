@@ -66,7 +66,8 @@
 
   const assertWritableFolder = (id) => {
     const folder = requireFolder(id);
-    if (id === fs.RECYCLE_BIN || id === fs.MY_COMPUTER) {
+    // Nothing new goes in the Recycle Bin, or in a folder inside it.
+    if (fs.isInRecycleBin(id) || id === fs.MY_COMPUTER) {
       throw new Error("FileOperations: this location cannot accept new items");
     }
     return folder;

@@ -57,10 +57,15 @@ const applicationContext = (win) => ({
   saveFile: (options) => XPDialogs.saveFile(options),
   myPictures: fs.MY_PICTURES,
   pictureUrl: (file) => fs.getPictureUrl(file.id),
-  folderOf: (id) => fs.getNode(id)?.parent || null,
+  // A deleted picture's folder is in the Recycle Bin: Paint then uses My
+  // Pictures.
+  folderOf: (id) => {
+    const parent = fs.getNode(id)?.parent;
+    return parent && !fs.isInRecycleBin(parent) ? parent : null;
+  },
   setFileContent: (id, content, options) => fs.setContent(id, content, options),
   createFile: (parentId, name, content) =>
-    fs.createFile(parentId, name, { content }),
+    fileOps.createFile(parentId, name, { content }),
   setWallpaper(dataUrl) {
     const desktop = document.getElementById("desktop");
     desktop.style.setProperty("--desktop-background", `url("${dataUrl}")`);
