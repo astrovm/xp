@@ -233,11 +233,21 @@
     seedFolders.forEach((seedNode) => {
       const existing = nodes[seedNode.id];
       if (existing) {
-        existing.type = "folder";
-        existing.name = seedNode.name;
-        existing.protected = true;
-        existing.hidden = seedNode.hidden;
-        existing.parent = seedNode.parent;
+        // Every field but the dates and the children comes from the seed.
+        // A stored app, for example, would give the folder another icon.
+        Object.assign(existing, {
+          type: "folder",
+          name: seedNode.name,
+          protected: true,
+          hidden: seedNode.hidden,
+          parent: seedNode.parent,
+          size: seedNode.size,
+          ext: seedNode.ext,
+          content: seedNode.content,
+          app: seedNode.app,
+          originalParent: seedNode.originalParent,
+          originalName: seedNode.originalName,
+        });
         existing.children = Array.isArray(existing.children)
           ? existing.children.filter((childId) => nodes[childId])
           : [];

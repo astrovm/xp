@@ -373,6 +373,47 @@ describe("filesystem persistence failures", () => {
     db.close();
   });
 
+  test("resets every stored field of a system folder but its dates", async () => {
+    const indexedDB = new IDBFactory();
+    const first = tab(indexedDB, storage());
+    await first.ready;
+    const created = first.getNode(first.MY_DOCUMENTS).created;
+    first.close();
+    const db = await request(indexedDB.open("astro-documents", 1));
+    const store = db.transaction("nodes", "readwrite").objectStore("nodes");
+    const documents = await request(store.get(first.MY_DOCUMENTS));
+    store.put({
+      ...documents,
+      type: "file",
+      name: "Fake",
+      protected: false,
+      size: 99,
+      ext: ".exe",
+      content: "data",
+      app: "__my-computer",
+      originalParent: first.DESKTOP,
+      originalName: "Old",
+    });
+    await new Promise((resolve) => (store.transaction.oncomplete = resolve));
+    db.close();
+
+    const fs = tab(indexedDB, storage());
+    await fs.ready;
+    expect(fs.getNode(fs.MY_DOCUMENTS)).toMatchObject({
+      type: "folder",
+      name: "My Documents",
+      protected: true,
+      size: 0,
+      ext: "",
+      content: "",
+      app: null,
+      originalParent: null,
+      originalName: null,
+      created,
+    });
+    fs.close();
+  });
+
   test("heals system folders in memory when storing them fails", async () => {
     const indexedDB = new IDBFactory();
     const db = await storeOldDocuments(indexedDB);
