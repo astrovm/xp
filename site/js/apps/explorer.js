@@ -992,16 +992,16 @@ const renderExplorerTaskPane = (win) => {
     // Nothing new goes in a folder inside the Recycle Bin.
     !fs.isInRecycleBin(win.currentFolderId) &&
     (!fs.getNode(win.currentFolderId).protected ||
-    [
-      fs.MY_DOCUMENTS,
-      fs.MY_PICTURES,
-      fs.MY_MUSIC,
-      fs.SHARED_DOCUMENTS,
-      fs.DESKTOP,
-      fs.DRIVE_C,
-      fs.DRIVE_D,
-      fs.DRIVE_F,
-    ].includes(win.currentFolderId))
+      [
+        fs.MY_DOCUMENTS,
+        fs.MY_PICTURES,
+        fs.MY_MUSIC,
+        fs.SHARED_DOCUMENTS,
+        fs.DESKTOP,
+        fs.DRIVE_C,
+        fs.DRIVE_D,
+        fs.DRIVE_F,
+      ].includes(win.currentFolderId))
   ) {
     addTask(
       "Make a new folder",

@@ -305,9 +305,7 @@ test("folders in the Recycle Bin take no new items", async () => {
   fs.remove(folder.id);
   // A deleted folder is not a drop target in the Recycle Bin window.
   const bin = await openFolder(s, fs.RECYCLE_BIN);
-  const item = bin.querySelector(
-    `.explorer-item[data-node-id="${folder.id}"]`,
-  );
+  const item = bin.querySelector(`.explorer-item[data-node-id="${folder.id}"]`);
   expect(item.dataset.dropDestinationId).toBeUndefined();
   // Inside a deleted folder, Explorer offers no Make a new folder task,
   // and its subfolders take no drops.
