@@ -6,6 +6,7 @@
     "tools/build-pinball-runtime.ts",
     "tools/compare-xp-ui.ts",
     "tools/coverage-report.ts",
+    "tools/coverage-run.ts",
     "tools/extract-pinball-assets.ts",
     "tools/extract-xp-assets.ts",
     "tools/find-flashpoint-icons.ts",
