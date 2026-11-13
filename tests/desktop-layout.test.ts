@@ -261,7 +261,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
     await flushShell();
     await flushShell();
   };
-  let lateIcon = icon(late.id);
+  const lateIcon = icon(late.id);
   startDrag(lateIcon);
   await fs.remove(late.id);
   await endDrag(lateIcon, icon("__recycle-bin"));
