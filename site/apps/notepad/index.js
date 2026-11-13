@@ -54,11 +54,10 @@ const mountNotepad = (context, instance) => {
       startFolder: current?.parent || fs.MY_DOCUMENTS,
       defaultName: current?.name || "Untitled.txt",
       filter: [".txt"],
+      defaultExtension: ".txt",
     });
     if (!result) return false;
-    const name = result.name.toLowerCase().endsWith(".txt")
-      ? result.name
-      : `${result.name}.txt`;
+    const { name } = result;
     const contentToSave = editor.value;
     try {
       let target = result.existingId && fs.getNode(result.existingId);

@@ -907,9 +907,16 @@
       batchDepth--;
       nodes = before;
     }
+    // A node healed in memory after a failed write was never stored, and
+    // has no revision. It goes with the next write, so a later change to
+    // its folder cannot leave it out of storage.
     const changed = [
       ...new Set([...Object.keys(before), ...Object.keys(candidate)]),
-    ].filter((id) => !sameNode(before[id], candidate[id]));
+    ].filter(
+      (id) =>
+        !sameNode(before[id], candidate[id]) ||
+        (candidate[id] && !candidate[id].revision),
+    );
     if (!changed.length) return result;
     const write = database.transaction("nodes", "readwrite");
     const done = transactionDone(write);

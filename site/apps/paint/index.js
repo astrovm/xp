@@ -428,6 +428,7 @@ const mountPaint = (shell, instance) => {
         title: "Save As",
         defaultName: /\.[^.]+$/.test(fileName) ? fileName : `${fileName}.bmp`,
         startFolder: shell.myPictures,
+        defaultExtension: ".bmp",
       });
     }
     if (!destination) return false;

@@ -769,6 +769,42 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
   expect(await open).toBeNull();
 });
 
+test("Save adds the default extension before it looks for a file to replace", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const readme = fs.createFile(fs.MY_DOCUMENTS, "readme.txt", {
+    content: "old",
+  });
+  const save = (name) => {
+    const result = d.saveFile({
+      startFolder: fs.MY_DOCUMENTS,
+      defaultExtension: ".txt",
+    });
+    const dialog = current(s);
+    dialog.querySelector("#dlg-file-name").value = name;
+    [...dialog.querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === "Save")
+      .click();
+    return result;
+  };
+  const replacing = save("readme");
+  await flushShell();
+  expect(current(s).textContent).toContain("readme.txt already exists.");
+  current(s).querySelector('[data-action="yes"]').click();
+  expect(await replacing).toEqual({
+    parentId: fs.MY_DOCUMENTS,
+    name: "readme.txt",
+    existingId: readme.id,
+  });
+  // A name with its own extension keeps it.
+  expect(await save("server.log")).toEqual({
+    parentId: fs.MY_DOCUMENTS,
+    name: "server.log",
+    existingId: null,
+  });
+});
+
 test("Open and Save open a folder whose name is typed, like XP", async () => {
   const s = await login(await loadShell());
   const d = s.window.XPDialogs;

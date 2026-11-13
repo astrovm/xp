@@ -253,10 +253,7 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
   dialog.body.querySelector("[data-advanced-color]").focus();
 };
 
-// XP's wallpaper Browse is the standard Open dialog in My Pictures. The
-// virtual disk keeps no picture data, so Open always hands off to the
-// browser's file picker, whatever the list or File name shows. The chosen
-// picture fills File name and closes the dialog.
+// XP's wallpaper Browse is the standard Open dialog in My Pictures.
 // XP's "Background Files" list, minus web pages.
 const WALLPAPER_TYPES = {
   ".bmp": "image/bmp",
@@ -275,10 +272,14 @@ const isWallpaperDataUrl = (value) => {
   return !!match && WALLPAPER_MIME_TYPES.includes(match[1].toLowerCase());
 };
 // Open uses a picture from the virtual disk when the name matches one.
-// Other names open the browser's file picker, for pictures on the computer.
+// Other names open the browser's file picker, for pictures on the computer;
+// the picked picture fills File name and closes the dialog.
 const openWallpaperBrowseDialog = (ownerWindow, fileInput, usePicture) => {
   let dialog = null;
   let nameInput = null;
+  // A sample picture downloads before it is used. Open does nothing more
+  // until then, and a dialog closed meanwhile drops the picture.
+  let reading = false;
   setDisplayDialogOwnerActive(ownerWindow, false);
   XPDialogs.browseFiles({
     title: "Browse",
@@ -303,7 +304,16 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput, usePicture) => {
         node && WALLPAPER_EXTENSIONS.includes(node.ext.toLowerCase())
           ? fs.getPictureUrl(node.id)
           : null;
-      if (url) return usePicture(node.name, url).then((used) => used && "open");
+      if (reading) return false;
+      if (url) {
+        reading = true;
+        return usePicture(node.name, url, () => dialog.el.isConnected).then(
+          (used) => {
+            reading = false;
+            return used && "open";
+          },
+        );
+      }
       // Clear the last pick so choosing the same picture again still
       // fires a change event. The picker opens in this click's event.
       fileInput.value = "";
@@ -630,7 +640,7 @@ const wireDisplayProperties = (win) => {
   };
   // Display settings keep picture data, so a sample picture's file is read
   // into a data URL. A failed read counts as a file that is not a picture.
-  const useVirtualPicture = async (fileName, url) => {
+  const useVirtualPicture = async (fileName, url, isWanted) => {
     let dataUrl = url;
     if (!url.startsWith("data:")) {
       try {
@@ -642,6 +652,7 @@ const wireDisplayProperties = (win) => {
       } catch {
         dataUrl = "";
       }
+      if (!isWanted()) return false;
     }
     return useWallpaperPicture(fileName, dataUrl);
   };

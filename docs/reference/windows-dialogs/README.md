@@ -116,5 +116,8 @@ Reference captures were recorded on the local XP VM with
 - Text rasterization differs from XP, so text is about 1px off in places.
 - Thumbnails view shows a folder's icon. XP draws a folder with previews of
   up to four pictures inside it.
+- Picture files show the generic file icon in Explorer, the Start menu, and
+  the file dialogs' other views. XP shows Paint's icon for BMP files and the
+  Picture and Fax Viewer's icons for other pictures.
 - The Date and Time clock, calendar border, and year spinner belong to the
   system utilities pass.

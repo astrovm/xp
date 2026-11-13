@@ -672,6 +672,44 @@ test("Browse explains a virtual picture it cannot use and stays open", async () 
   expect(q(".display-custom-wallpaper").hidden).toBeTrue();
 });
 
+test("Browse drops a sample picture that finishes after Cancel", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const fs = s.window.VirtualFS;
+  const responses = [];
+  s.window.fetch = () =>
+    new Promise((resolve) =>
+      responses.push(() =>
+        resolve(
+          new s.window.Response(
+            new s.window.Blob([new Uint8Array([255, 216, 255])], {
+              type: "image/jpeg",
+            }),
+          ),
+        ),
+      ),
+    );
+  fs.copy("sample-sunset", fs.MY_PICTURES);
+  let picked = 0;
+  q("#display-image").click = () => picked++;
+  q(".display-browse").click();
+  const browse = s.document.querySelector(".wallpaper-browse-dialog");
+  browse.querySelector("#dlg-file-name").value = "Sunset.jpg";
+  // A second Open while the picture downloads does nothing.
+  h.dialogButton(browse, "Open");
+  h.dialogButton(browse, "Open");
+  await flushShell();
+  expect(responses).toHaveLength(1);
+  expect(picked).toBe(0);
+  h.dialogButton(browse, "Cancel");
+  await flushShell();
+  responses[0]();
+  for (let i = 0; i < 10; i++) await flushShell();
+  expect(q(".display-custom-wallpaper").hidden).toBeTrue();
+  expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  expect(h.d.closest(".xp-window").classList.contains("active")).toBeTrue();
+});
+
 test("Browse opens the browser picker for names that are not pictures here", async () => {
   const h = await open();
   const { s, q } = h;

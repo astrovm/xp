@@ -1521,11 +1521,14 @@
 
   // XPDialogs.saveFile({ title, startFolder, defaultName, filter }) ->
   //   Promise resolving with { parentId, name, existingId }, or null.
+  // defaultExtension is added to a name without an extension before the
+  // dialog looks for a file to replace, like XP's default extension.
   const saveFile = ({
     title = "Save As",
     startFolder = null,
     defaultName = "",
     filter = null,
+    defaultExtension = "",
   } = {}) =>
     browseFiles({
       title,
@@ -1534,8 +1537,12 @@
       initialName: defaultName,
       acceptLabel: "&Save",
       folderLabel: "Save &in:",
-      onAccept: ({ folderId, name }) => {
-        if (!name) return false;
+      onAccept: ({ folderId, name: typedName }) => {
+        if (!typedName) return false;
+        const name =
+          defaultExtension && !/\.[^.]+$/.test(typedName)
+            ? `${typedName}${defaultExtension}`
+            : typedName;
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,

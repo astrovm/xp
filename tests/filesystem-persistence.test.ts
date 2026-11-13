@@ -390,6 +390,55 @@ describe("filesystem persistence failures", () => {
     db.close();
   });
 
+  test("stores healed sample pictures with the next write after a failed heal", async () => {
+    const indexedDB = new IDBFactory();
+    const first = tab(indexedDB, storage());
+    await first.ready;
+    first.close();
+    // Documents stored before Sample Pictures existed.
+    const db = await request(indexedDB.open("astro-documents", 1));
+    const store = db.transaction("nodes", "readwrite").objectStore("nodes");
+    const pictures = await request(store.get(first.MY_PICTURES));
+    store.put({ ...pictures, children: [] });
+    for (const id of [
+      first.SAMPLE_PICTURES,
+      "sample-blue-hills",
+      "sample-sunset",
+      "sample-water-lilies",
+      "sample-winter",
+    ])
+      store.delete(id);
+    await new Promise((resolve) => (store.transaction.oncomplete = resolve));
+    // The heal's write fails, so this tab heals only its own copy.
+    const prototype = Object.getPrototypeOf(
+      db.transaction("nodes").objectStore("nodes"),
+    );
+    const put = prototype.put;
+    prototype.put = function (value, ...args) {
+      const result = put.call(this, value, ...args);
+      this.transaction.abort();
+      return result;
+    };
+    const fs = tab(indexedDB, storage(), { console: { error: () => {} } });
+    try {
+      await fs.ready;
+    } finally {
+      prototype.put = put;
+    }
+    expect(await storedNode(db, "sample-sunset")).toBeUndefined();
+    // Deleting one sample also stores the folder's other samples.
+    await fs.destroy("sample-winter");
+    fs.close();
+    const reopened = tab(indexedDB, storage());
+    await reopened.ready;
+    expect(
+      reopened.getChildren(reopened.SAMPLE_PICTURES).map(({ name }) => name),
+    ).toEqual(["Blue hills.jpg", "Sunset.jpg", "Water lilies.jpg"]);
+    expect((await storedNode(db, "sample-sunset")).revision).toBe(1);
+    reopened.close();
+    db.close();
+  });
+
   test("explains a full browser storage quota", async () => {
     const indexedDB = new IDBFactory();
     const fs = tab(indexedDB, storage());
