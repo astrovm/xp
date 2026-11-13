@@ -1,6 +1,7 @@
 // @ts-nocheck -- Exercise Paint's real menus and dialogs with browser/storage boundaries.
 import { afterEach, expect, test } from "bun:test";
 import { cleanupShells, loadShell, flushShell } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 afterEach(cleanupShells);
 async function setup() {
   const s = await loadShell(),
@@ -42,7 +43,25 @@ async function setup() {
       });
     return element;
   };
+  // Paint's window, as the shell gives it.
+  const windowElement = s.document.createElement("div");
+  windowElement.className = "xp-window";
+  windowElement.tabIndex = -1;
+  s.document.body.append(windowElement);
   const context = {
+    windowElement,
+    // The shell's access key text: the letter after & is underlined.
+    setAccessKeyText: (element, label) => {
+      const marker = label.indexOf("&");
+      const key = s.document.createElement("span");
+      key.className = "menu-accesskey";
+      key.textContent = label[marker + 1];
+      element.replaceChildren(
+        label.slice(0, marker),
+        key,
+        label.slice(marker + 2),
+      );
+    },
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
     pictureUrl: (file) => file.content || null,
@@ -80,7 +99,7 @@ async function setup() {
     {},
   );
   const root = mounted.element;
-  s.document.body.append(root);
+  windowElement.append(root);
   const command = async (name) => {
     root.querySelector(`[data-paint-command="${name}"]`).click();
     await flushShell();
@@ -102,6 +121,7 @@ async function setup() {
   };
   return {
     s,
+    windowElement,
     root,
     mounted,
     context,
@@ -404,4 +424,20 @@ test("Paint accepts and cancels attributes, transformations and custom color dia
     await flushShell();
     expect(h.s.document.querySelectorAll(".xp-dialog").length).toBe(0);
   }
+});
+
+test("Paint's menus follow XP's menu bar rules", async () => {
+  const h = await setup();
+  await checkMenuBar({
+    s: h.s,
+    win: h.windowElement,
+    control: h.canvas,
+    accessKey: "f",
+    settle: flushShell,
+  });
+  // XP's gray items stay gray, so they never run another command.
+  for (const command of ["paste-from", "text-toolbar", "zoom"])
+    expect(
+      h.root.querySelector(`[data-paint-command="${command}"]`).disabled,
+    ).toBeTrue();
 });

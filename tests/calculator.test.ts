@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 
 afterEach(cleanupShells);
 
@@ -538,4 +539,15 @@ test("closing Calculator closes its Statistics Box", async () => {
   expect(
     Boolean(h.s.document.querySelector('.xp-window[data-game="__calculator"]')),
   ).toBeFalse();
+});
+
+test("Calculator's menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-calculator"),
+    accessKey: "e",
+    settle: flushShell,
+  });
 });

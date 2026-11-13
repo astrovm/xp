@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 
 afterEach(cleanupShells);
 
@@ -259,11 +260,20 @@ test("Task Manager menus check options, change the update speed and close on out
   menu(tm, "view");
   expect(item("kernel-times").className).toContain("checked");
 
-  // Clicks in the menu bar keep the menu; clicks elsewhere close it.
-  tm.querySelector(".tm-menu-bar").dispatchEvent(
+  // Presses on a title or in the menu keep it; presses elsewhere close it,
+  // also on the bar's empty part, like XP.
+  tm.querySelector('[data-tm-menu="view"]').dispatchEvent(
+    new s.window.Event("pointerdown", { bubbles: true }),
+  );
+  tm.querySelector(".tm-menu").dispatchEvent(
     new s.window.Event("pointerdown", { bubbles: true }),
   );
   expect(tm.querySelector(".tm-menu")).not.toBeNull();
+  tm.querySelector(".tm-menu-bar").dispatchEvent(
+    new s.window.Event("pointerdown", { bubbles: true }),
+  );
+  expect(tm.querySelector(".tm-menu")).toBeNull();
+  menu(tm, "view");
   s.document.body.dispatchEvent(
     new s.window.Event("pointerdown", { bubbles: true }),
   );
@@ -550,4 +560,94 @@ test("Ctrl+Shift+Esc opens Task Manager, which measures CPU from late frames and
   tm.querySelector(".close-btn").click();
   await settle();
   expect([canceled, disconnected]).toEqual([true, true]);
+});
+
+test("Task Manager's menus follow XP's menu bar rules", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  await checkMenuBar({
+    s,
+    win: tm,
+    control: tm.querySelector('[data-tm-tab][aria-selected="true"]'),
+    accessKey: "f",
+    settle,
+  });
+});
+
+test("Task Manager's Update Speed submenu works from the keys and the pointer", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  const active = () => s.document.activeElement;
+  const key = async (target, name, init = {}) => {
+    target.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        key: name,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+    await settle();
+  };
+  const control = tm.querySelector('[data-tm-tab][aria-selected="true"]');
+  control.focus();
+  await key(control, "v", { altKey: true });
+  const parent = tm.querySelector(".tm-submenu");
+  const submenu = parent.querySelector(".tm-menu");
+  // The keys rest on the submenu's parent, like on an item.
+  await key(active(), "ArrowDown");
+  expect(active() === parent).toBeTrue();
+  expect(parent.getAttribute("aria-haspopup")).toBe("menu");
+  // Right opens the submenu with the keys on its first item; Left closes it.
+  await key(parent, "ArrowRight");
+  expect(submenu.classList.contains("open")).toBeTrue();
+  expect(parent.getAttribute("aria-expanded")).toBe("true");
+  expect(active().dataset.tmCommand).toBe("speed-high");
+  await key(active(), "ArrowUp");
+  expect(active().dataset.tmCommand).toBe("speed-paused");
+  await key(active(), "ArrowLeft");
+  expect(active() === parent).toBeTrue();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  // Enter opens it too, and Escape closes only the submenu, like XP.
+  await key(parent, "Enter");
+  expect(active().dataset.tmCommand).toBe("speed-high");
+  await key(active(), "Escape");
+  expect(active() === parent).toBeTrue();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(tm.querySelector(".tm-menu") === null).toBeFalse();
+  // The pointer on another item closes a submenu that the keys opened.
+  await key(parent, " ");
+  expect(submenu.classList.contains("open")).toBeTrue();
+  const refresh = tm.querySelector('[data-tm-command="refresh"]');
+  refresh.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === refresh).toBeTrue();
+  // The pointer on the parent keeps its submenu, and an item in the
+  // submenu takes the keys.
+  await key(refresh, "ArrowDown");
+  await key(parent, "ArrowRight");
+  parent.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeTrue();
+  const low = submenu.querySelector('[data-tm-command="speed-low"]');
+  low.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(active() === low).toBeTrue();
+  // A click on the parent toggles the submenu.
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  // Choosing an item closes every menu and gives the keys back.
+  low.click();
+  await settle();
+  expect(tm.querySelector(".tm-menu")).toBeNull();
+  expect(active() === control).toBeTrue();
+  expect(JSON.parse(s.window.localStorage.getItem("taskManager")).speed).toBe(
+    "low",
+  );
 });

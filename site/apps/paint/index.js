@@ -1,6 +1,7 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
 import { showXPAboutDialog } from "../core/about-dialog.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import { createCanvasEngine } from "./canvas-engine.js";
 import {
   showAttributesDialog,
@@ -111,7 +112,12 @@ const TOOLS = [
 ];
 
 const separator = ["separator"];
-const disabled = (command, label, shortcut = "") => [command, label, shortcut];
+const disabled = (command, label, shortcut = "") => [
+  command,
+  label,
+  shortcut,
+  { disabled: true },
+];
 const check = (command, label, shortcut = "") => [
   command,
   label,
@@ -163,21 +169,28 @@ const MENU_ITEMS = {
   Help: [["help", "Help Topics", "F1"], separator, ["about", "About Paint"]],
 };
 
-const createMenuBar = (run, panelVisible) => {
+const createMenuBar = (shell, run, panelVisible) => {
   const bar = document.createElement("div");
   bar.className = "paint-menu-bar";
   bar.setAttribute("role", "menubar");
-  const closeMenus = () =>
-    bar.querySelectorAll(".paint-menu").forEach((menu) => {
-      menu.hidden = true;
-    });
+  const menus = wireMenuBar({
+    windowElement: shell.windowElement,
+    bar,
+    showMenu: (trigger) => {
+      const menu = trigger.nextElementSibling;
+      menu.hidden = false;
+      return menu;
+    },
+  });
   for (const [name, items] of Object.entries(MENU_ITEMS)) {
     const group = document.createElement("div");
     group.className = "paint-menu-group";
     const trigger = document.createElement("button");
     trigger.type = "button";
-    trigger.textContent = name;
+    shell.setAccessKeyText(trigger, `&${name}`);
+    trigger.setAttribute("role", "menuitem");
     trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
     const menu = document.createElement("div");
     menu.className = "paint-menu";
     menu.hidden = true;
@@ -190,6 +203,7 @@ const createMenuBar = (run, panelVisible) => {
       const item = document.createElement("button");
       item.type = "button";
       item.dataset.paintCommand = command;
+      item.setAttribute("role", "menuitem");
       item.disabled = options.disabled || false;
       item.innerHTML = `<span class="paint-menu-check"></span><span></span><span></span>`;
       item.children[1].textContent = label;
@@ -197,22 +211,14 @@ const createMenuBar = (run, panelVisible) => {
       if (options.check && panelVisible(command))
         item.children[0].textContent = "✓";
       item.addEventListener("click", () => {
-        closeMenus();
+        menus.close();
         run(command);
       });
       menu.appendChild(item);
     }
-    trigger.addEventListener("click", () => {
-      const opening = menu.hidden;
-      closeMenus();
-      menu.hidden = !opening;
-    });
     group.append(trigger, menu);
     bar.appendChild(group);
   }
-  document.addEventListener("pointerdown", (event) => {
-    if (!bar.contains(event.target)) closeMenus();
-  });
   return bar;
 };
 
@@ -575,7 +581,7 @@ const mountPaint = (shell, instance) => {
     }
   };
 
-  root.append(createMenuBar(run, (command) => panelState[command]));
+  root.append(createMenuBar(shell, run, (command) => panelState[command]));
   root.append(body, colors, status);
   updateFileCommandState();
   const removeScrollbars = installPaintScrollbars(

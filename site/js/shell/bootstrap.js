@@ -247,25 +247,27 @@ document.addEventListener(
   true,
 );
 
+// Every open menu of a window has its window's closeMenus. The shell closes
+// them through it, which also gives back the keys and resets the titles.
+const openWindowMenus = () =>
+  document.querySelectorAll('.xp-window [role="menu"]:not([hidden])');
+
 // A click into a program's frame sends no press to the page. The page then
 // loses the keys, and every window closes its menus, like XP.
 window.addEventListener("blur", () => {
-  document
-    .querySelectorAll(".game-menu:not([hidden])")
-    .forEach((menu) => menu.closeMenus?.());
+  openWindowMenus().forEach((menu) => menu.closeMenus?.());
 });
 
 // Close the start menu when clicking outside of it
 document.addEventListener("pointerdown", (e) => {
   if (suspended) return;
-  // Each window closes its own menus, which also gives back the keys and
-  // resets the menu buttons. A press on a menu, or on an enabled button
-  // that opens one, leaves that window's menus to the window.
+  // Each window closes its own menus. A press on a menu, or on an enabled
+  // button that opens one, leaves that window's menus to the window.
   const menuWindow =
     e.target
-      .closest('.game-menu, [aria-haspopup="menu"]:not(:disabled)')
+      .closest('[role="menu"], [aria-haspopup="menu"]:not(:disabled)')
       ?.closest(".xp-window") ?? null;
-  document.querySelectorAll(".game-menu:not([hidden])").forEach((menu) => {
+  openWindowMenus().forEach((menu) => {
     if (menu.closest(".xp-window") !== menuWindow) menu.closeMenus?.();
   });
   if (!e.target.closest("#desktop-context-menu")) {

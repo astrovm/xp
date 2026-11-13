@@ -6,7 +6,8 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
-import { recordCardCanvas } from "./helpers/card-canvas";
+import { checkMenuBar } from "./helpers/menu-bar";
+import { recordCardCanvas, siteFiles } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
 
@@ -56,6 +57,7 @@ const open = async ({
   wait = true,
 } = {}) => {
   let frames;
+  const files = siteFiles({ failFont });
   const sounds = [];
   const clock = { now: 0 };
   const s = await login(
@@ -64,15 +66,7 @@ const open = async ({
         spiderSettings: JSON.stringify(settings),
         ...storage,
       },
-      fetchObject: async (url) => {
-        if (failFont) return new Response(null, { status: 404 });
-        const path = String(url).replace(/^.*?assets\//, "assets/");
-        return new Response(
-          await Bun.file(
-            new URL(`../site/${path}`, import.meta.url),
-          ).arrayBuffer(),
-        );
-      },
+      fetchObject: files.fetchObject,
       beforeScripts: (window) => {
         frames = recordCardCanvas(window, {
           board: "spider-board",
@@ -112,6 +106,9 @@ const open = async ({
   const settle = async (times = 8) => {
     for (let index = 0; index < times; index += 1) await flushShell();
   };
+  await settle();
+  // The board draws once its font is read.
+  await files.read();
   await settle();
   const win = s.document.querySelector(
     '.xp-window[data-game="__spider-solitaire"]',
@@ -1193,4 +1190,62 @@ test("tiny windows leave the columns as they are", async () => {
   // Under 107 pixels, spider.exe doesn't squeeze at all.
   const tiny = await open({ settings, storage, start: null, height: 100 });
   expect(tiny.drawnAt(28, 80 + 28)).toBe(face("5S"));
+});
+
+test("Spider's menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-spider"),
+    accessKey: "g",
+    settle: flushShell,
+  });
+});
+
+test("Spider's Deal! title runs from Alt+D, and the arrows pass over it", async () => {
+  const h = await open();
+  const root = h.win.querySelector(".xp-spider");
+  const active = () => h.s.document.activeElement;
+  const keyOn = async (target, name, init = {}) => {
+    const event = new h.s.window.KeyboardEvent("keydown", {
+      key: name,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    await h.idle();
+    return event;
+  };
+  root.focus();
+  // Alt and D choose Deal! at once, like a menu item, and the keys stay.
+  expect((await keyOn(root, "d", { altKey: true })).defaultPrevented).toBe(
+    true,
+  );
+  expect(h.sounds.filter((name) => name === "Deal.wav")).toHaveLength(1);
+  expect(h.drawnAt(871, 586)).toBeUndefined();
+  expect(active() === root).toBeTrue();
+  // Right from the Game menu stops on Deal!, which has no menu.
+  await keyOn(root, "g", { altKey: true });
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("true");
+  await keyOn(active(), "ArrowRight");
+  expect(active() === h.menuButton("deal")).toBeTrue();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("false");
+  // With no menu open, the next arrow only moves the keys.
+  await keyOn(active(), "ArrowRight");
+  expect(active() === h.menuButton("help")).toBeTrue();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
+  await keyOn(active(), "Escape");
+  expect(active() === root).toBeTrue();
+  // From the last menu, Right wraps to the first one.
+  await keyOn(root, "h", { altKey: true });
+  await keyOn(active(), "ArrowRight");
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("true");
+  expect(active().dataset.command).toBe("new");
+  // A letter that no title has, or Ctrl, leaves the keys to the program.
+  expect((await keyOn(root, "q", { altKey: true })).defaultPrevented).toBe(
+    false,
+  );
 });

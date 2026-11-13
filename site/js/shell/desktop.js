@@ -627,7 +627,9 @@ const buildDesktopIcons = () => {
 };
 
 const closeDesktopContextMenu = () => {
-  document.getElementById("desktop-context-menu").hidden = true;
+  const menu = document.getElementById("desktop-context-menu");
+  giveKeysBackFrom(menu);
+  menu.hidden = true;
 };
 
 const getDesktopLayoutSettings = () =>

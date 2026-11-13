@@ -97,6 +97,7 @@ const addTrayIcon = (label, onOpen) => {
 const closeTrayVolumePopup = () => {
   const popup = document.getElementById("tray-volume-popup");
   const button = document.getElementById("tray-volume-button");
+  giveKeysBackFrom(popup);
   popup.hidden = true;
   button.classList.remove("pressed");
   button.setAttribute("aria-expanded", "false");
@@ -1681,6 +1682,15 @@ const setupSystemTray = () => {
     .getElementById("tray-mute-checkbox")
     .addEventListener("change", (event) => {
       setSystemVolume(getSystemVolume().volume, event.target.checked);
+    });
+  // Escape closes the popup from its slider and its box too, like XP. The
+  // shell's own Escape leaves keys in a form control alone.
+  document
+    .getElementById("tray-volume-popup")
+    .addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeTrayVolumePopup();
     });
 
   syncTrayVolumeUI();

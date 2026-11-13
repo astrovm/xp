@@ -104,3 +104,28 @@ const RANKS = "A23456789TJQK";
 // cards.dll numbers its faces by suit, then rank.
 export const face = (name, inverted = false) =>
   `assets/xp/cards/faces/${SUITS.indexOf(name[1]) * 13 + RANKS.indexOf(name[0]) + 1}.png${inverted ? " inverted" : ""}`;
+
+// The games read their font files from the disk. A read can take longer than
+// a few turns of the event loop when other tests run at the same time, so
+// `read()` waits until every read is done.
+export const siteFiles = ({ failFont = false } = {}) => {
+  let reading = 0;
+  const fetchObject = async (url) => {
+    if (failFont) return new Response(null, { status: 404 });
+    const path = String(url).replace(/^.*?assets\//, "assets/");
+    reading += 1;
+    try {
+      return new Response(
+        await Bun.file(
+          new URL(`../../site/${path}`, import.meta.url),
+        ).arrayBuffer(),
+      );
+    } finally {
+      reading -= 1;
+    }
+  };
+  const read = async () => {
+    while (reading) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  return { fetchObject, read };
+};

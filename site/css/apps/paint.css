@@ -31,7 +31,9 @@
   background: transparent;
   font: inherit;
 }
-.paint-menu-group > button:hover {
+.paint-menu-group > button:hover,
+.paint-menu-group > button:focus-visible,
+.paint-menu-group > button[aria-expanded="true"] {
   outline: 1px solid #316ac5;
   background: #c1d2ee;
 }
@@ -64,7 +66,8 @@
   color: #aca899;
   text-shadow: 1px 1px #fff;
 }
-.paint-menu button:disabled:hover {
+.paint-menu button:disabled:hover,
+.paint-menu button:disabled:focus-visible {
   background: #fff;
   color: #aca899;
 }
@@ -72,9 +75,11 @@
   color: inherit;
   font-weight: bold;
 }
-.paint-menu button:hover {
+.paint-menu button:hover,
+.paint-menu button:focus-visible {
   background: #316ac5;
   color: #fff;
+  outline: 0;
 }
 .paint-menu hr {
   margin: 2px 1px;

@@ -391,6 +391,12 @@ html[data-xp-appearance="classic"] {
   text-shadow: 1px 1px #fff;
 }
 
+/* Chrome sends no mousedown for a disabled button and moves the keys to the
+   page. The press goes to the menu instead, which keeps the keys, like XP. */
+[role="menu"] :disabled {
+  pointer-events: none;
+}
+
 .xp-context-menu button.context-default {
   font-weight: 700;
 }

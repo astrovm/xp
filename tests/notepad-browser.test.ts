@@ -6,6 +6,7 @@ import {
   login,
   flushShell,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 afterEach(cleanupShells);
 async function setup() {
   const s = await login(await loadShell()),
@@ -255,4 +256,16 @@ test("Notepad reports invalid and failed saves and ignores empty clipboard actio
   h.editor.dispatchEvent(
     new h.s.window.KeyboardEvent("keydown", { key: "a", bubbles: true }),
   );
+});
+
+test("Notepad's menus follow XP's menu bar rules", async () => {
+  const h = await setup();
+  h.editor.focus();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.editor,
+    accessKey: "f",
+    settle: flushShell,
+  });
 });

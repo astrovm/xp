@@ -860,6 +860,7 @@ let startFlyoutTimer = null;
 const closeAllPrograms = () => {
   clearTimeout(startFlyoutTimer);
   const host = document.getElementById("start-menu-flyouts");
+  giveKeysBackFrom(host);
   host.replaceChildren();
   host.hidden = true;
   document.getElementById("all-programs-button").classList.remove("active");
@@ -1205,7 +1206,9 @@ const openStartMenu = () => {
 
 const closeStartMenu = () => {
   closeAllPrograms();
-  document.getElementById("start-menu").hidden = true;
+  const startMenu = document.getElementById("start-menu");
+  giveKeysBackFrom(startMenu);
+  startMenu.hidden = true;
   document.getElementById("start-button").classList.remove("active");
 };
 

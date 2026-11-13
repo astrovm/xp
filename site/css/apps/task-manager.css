@@ -94,9 +94,11 @@ html[data-xp-appearance="silver"] {
 }
 
 .tm-menu-bar > button:hover,
+.tm-menu-bar > button:focus-visible,
 .tm-menu-bar > button[aria-expanded="true"] {
   background: var(--sys-highlight);
   color: var(--sys-highlight-text);
+  outline: 0;
 }
 
 .xp-window:not(.active) .tm-menu-bar > button {
@@ -136,7 +138,9 @@ html[data-xp-appearance="silver"] {
 
 .tm-menu > button:hover,
 .tm-menu > button:focus-visible,
-.tm-submenu:hover {
+.tm-submenu:hover,
+.tm-submenu:focus-visible,
+.tm-submenu[aria-expanded="true"] {
   background: var(--sys-highlight);
   color: var(--sys-highlight-text);
   outline: 0;

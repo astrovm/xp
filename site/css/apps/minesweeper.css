@@ -43,10 +43,12 @@
 }
 
 .minesweeper-menu-trigger:hover,
-.minesweeper-menu-trigger.open {
+.minesweeper-menu-trigger:focus-visible,
+.minesweeper-menu-trigger[aria-expanded="true"] {
   border-color: #316ac5;
   background: #316ac5;
   color: #fff;
+  outline: 0;
 }
 
 .minesweeper-popup {

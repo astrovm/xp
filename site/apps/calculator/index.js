@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import {
   dialogUnitsX,
   dialogUnitsY,
@@ -601,33 +602,18 @@ const mountCalculator = (context) => {
       ["&Help", [["&About Calculator", "about", ""]]],
     ];
   };
-  const menuButtons = [];
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuButtons.forEach((button) =>
-      button.setAttribute("aria-expanded", "false"),
-    );
-  };
-  menus().forEach(([label], index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("role", "menuitem");
-    button.setAttribute("aria-expanded", "false");
-    button.dataset.calculatorMenu = label.replace(/&/g, "").toLowerCase();
-    context.setAccessKeyText(button, label);
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
+  const menuControl = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = document.createElement("div");
+      menu.className = "tm-menu";
+      menu.setAttribute("role", "menu");
+      menu.style.left = `${button.offsetLeft}px`;
+      const index = [...menuBar.children].indexOf(button);
       menus()[index][1].forEach((item) => {
         if (item === "-") {
-          openMenu.insertAdjacentHTML(
+          menu.insertAdjacentHTML(
             "beforeend",
             '<div class="tm-menu-separator"></div>',
           );
@@ -645,22 +631,26 @@ const mountCalculator = (context) => {
         shortcutText.textContent = shortcut;
         entry.append(text, shortcutText);
         entry.addEventListener("click", () => {
-          closeMenu();
+          menuControl.close();
           run(command);
         });
-        openMenu.append(entry);
+        menu.append(entry);
       });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
-    });
-    menuButtons.push(button);
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
+  menus().forEach(([label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.dataset.calculatorMenu = label.replace(/&/g, "").toLowerCase();
+    context.setAccessKeyText(button, label);
     menuBar.append(button);
   });
-  const closeMenusOutside = (event) => {
-    if (openMenu && !menuBar.contains(event.target)) closeMenu();
-  };
-  document.addEventListener("pointerdown", closeMenusOutside);
-
   const setView = (scientific) => {
     if (scientific === settings.scientific) return;
     // Changing the view closes the Statistics Box.
@@ -703,7 +693,7 @@ const mountCalculator = (context) => {
     const command = commandForKey(event);
     if (!command) return;
     event.preventDefault();
-    closeMenu();
+    menuControl.close();
     flash(command);
     run(command);
   };
@@ -730,7 +720,6 @@ const mountCalculator = (context) => {
     element: root,
     unmount() {
       closeStatistics();
-      document.removeEventListener("pointerdown", closeMenusOutside);
       context.windowElement.removeEventListener("keydown", handleKeydown);
       context.windowElement.removeEventListener("paste", handlePaste);
     },

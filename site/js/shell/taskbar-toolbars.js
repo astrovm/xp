@@ -129,6 +129,7 @@ const toolbarMenu = (anchor, actions) => {
           submenu.style.top = `${Math.min(getViewportHeight() - submenu.offsetHeight - 2, rect.top)}px`;
         };
         const close = () => {
+          giveKeysBackFrom(submenu);
           submenu.hidden = true;
           item.setAttribute("aria-expanded", "false");
         };

@@ -464,8 +464,10 @@ const createWindowElement = (gameId) => {
       return;
     }
     // The window remembers its focused control, to give it back when the
-    // window becomes active again, like XP.
-    win.lastFocusedElement = target;
+    // window becomes active again, like XP. A menu is not a control: XP
+    // leaves the menus when the window loses the keys.
+    if (!target.closest('[role="menu"], [role="menubar"]'))
+      win.lastFocusedElement = target;
   });
 
   const titleBar = document.createElement("div");
@@ -1616,13 +1618,70 @@ const wireResize = (win) => {
 };
 
 // ============================================
+// Shell popups (menus, the Start menu, the volume popup)
+// ============================================
+
+// Like XP, the keys never go to the page. A popup that closes gives the keys
+// back to the control that had them before it got them. A press on a part
+// of a popup that is not a control keeps the keys where they are.
+const SHELL_POPUP =
+  '[role="menu"], #start-menu, #start-menu-flyouts, #tray-volume-popup';
+const POPUP_CONTROL =
+  "button:not(:disabled), input:not(:disabled), select, textarea, label, a[href], [tabindex]";
+const popupReturnFocus = new WeakMap();
+
+document.addEventListener(
+  "focusin",
+  (event) => {
+    const from = event.relatedTarget;
+    if (!from) return;
+    // The first control outside a popup that gives it the keys is the one
+    // that gets them back. Keys that come back from a flyout of the popup
+    // do not change it. A popup in a popup records its own return.
+    for (
+      let popup = event.target.closest(SHELL_POPUP);
+      popup && !popup.contains(from);
+      popup = popup.parentElement.closest(SHELL_POPUP)
+    )
+      if (!popupReturnFocus.has(popup)) popupReturnFocus.set(popup, from);
+  },
+  true,
+);
+
+document.addEventListener(
+  "mousedown",
+  (event) => {
+    const popup = event.target.closest(SHELL_POPUP);
+    if (!popup) return;
+    const control = event.target.closest(POPUP_CONTROL);
+    if (!control || !popup.contains(control)) event.preventDefault();
+  },
+  true,
+);
+
+// Call when the popup hides, before it hides. The keys go back to the
+// control that had them, or else to the active window or the desktop.
+const giveKeysBackFrom = (popup) => {
+  const target = popupReturnFocus.get(popup);
+  popupReturnFocus.delete(popup);
+  if (!popup.contains(document.activeElement)) return;
+  const fallback =
+    openWindows.get(focusedGameId)?.el ||
+    document.getElementById("desktop-icons");
+  const usable = target?.isConnected && !target.closest("[hidden]");
+  (usable ? target : fallback).focus({ preventScroll: true });
+};
+
+// ============================================
 // Window System Menu (Restore / Move / Size / ...)
 // ============================================
 
 let systemMenuWin = null;
 
 const closeWindowSystemMenu = () => {
-  document.getElementById("window-system-menu").hidden = true;
+  const menu = document.getElementById("window-system-menu");
+  giveKeysBackFrom(menu);
+  menu.hidden = true;
   systemMenuWin = null;
 };
 

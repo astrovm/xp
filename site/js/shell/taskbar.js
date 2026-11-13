@@ -5,10 +5,16 @@
 // ============================================
 
 const closeTaskbarMenus = () => {
-  document.getElementById("start-button-menu").hidden = true;
-  document.getElementById("taskbar-context-menu").hidden = true;
-  document.getElementById("taskbar-overflow-menu").hidden = true;
-  document.getElementById("tray-volume-menu").hidden = true;
+  [
+    "start-button-menu",
+    "taskbar-context-menu",
+    "taskbar-overflow-menu",
+    "tray-volume-menu",
+  ].forEach((id) => {
+    const menu = document.getElementById(id);
+    giveKeysBackFrom(menu);
+    menu.hidden = true;
+  });
 };
 
 // Public shell hook for windows that need to notify the user without stealing

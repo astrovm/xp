@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 
 const mountNotepad = (context, instance) => {
   const { file, window: win } = instance;
@@ -228,14 +229,15 @@ const mountNotepad = (context, instance) => {
     ["&Help", [["&About Notepad", "about", ""]]],
   ];
 
-  const closeMenus = () => {
-    menuBar.querySelectorAll(".notepad-menu").forEach((menu) => {
-      menu.hidden = true;
-    });
-    menuBar.querySelectorAll(".notepad-menu-button").forEach((button) => {
-      button.setAttribute("aria-expanded", "false");
-    });
-  };
+  const menus = wireMenuBar({
+    windowElement: el,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = button.nextElementSibling;
+      menu.hidden = false;
+      return menu;
+    },
+  });
 
   menuDefinitions.forEach(([label, items]) => {
     const group = document.createElement("div");
@@ -278,17 +280,10 @@ const mountNotepad = (context, instance) => {
       key.textContent = shortcut;
       item.append(check, text, key);
       item.addEventListener("click", () => {
-        closeMenus();
+        menus.close();
         commands[command]?.(item);
       });
       menu.appendChild(item);
-    });
-    button.addEventListener("click", () => {
-      const shouldOpen = menu.hidden;
-      closeMenus();
-      menu.hidden = !shouldOpen;
-      button.setAttribute("aria-expanded", String(shouldOpen));
-      if (shouldOpen) menu.querySelector("button")?.focus();
     });
     group.append(button, menu);
     menuBar.appendChild(group);
@@ -301,9 +296,6 @@ const mountNotepad = (context, instance) => {
   ["click", "keyup", "select"].forEach((eventName) =>
     editor.addEventListener(eventName, updateStatus),
   );
-  el.addEventListener("pointerdown", (event) => {
-    if (!event.target.closest(".notepad-menu-group")) closeMenus();
-  });
   el.addEventListener("keydown", (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === "s") {
       event.preventDefault();

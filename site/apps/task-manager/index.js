@@ -1,4 +1,5 @@
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import { applicationMetadata } from "./metadata.js";
 
 const USER = "astro";
@@ -800,14 +801,6 @@ const mountTaskManager = (context, { window: win }) => {
   };
 
   // Menus.
-  let openMenu = null;
-  const closeMenus = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuBar
-      .querySelectorAll("[aria-expanded]")
-      .forEach((button) => button.setAttribute("aria-expanded", "false"));
-  };
   const isChecked = {
     "always-on-top": () => settings.alwaysOnTop,
     "minimize-on-use": () => settings.minimizeOnUse,
@@ -852,10 +845,12 @@ const mountTaskManager = (context, { window: win }) => {
       entry.append(text);
       entry.insertAdjacentHTML("beforeend", `<kbd>${shortcut}</kbd>`);
       if (submenu) {
+        // The keys can rest on a submenu's parent, like on an item.
         entry.className = "tm-submenu";
-        const items = buildMenu(command);
-        entry.append(items);
-        entry.addEventListener("click", () => items.classList.toggle("open"));
+        entry.tabIndex = -1;
+        entry.setAttribute("aria-haspopup", "menu");
+        entry.setAttribute("aria-expanded", "false");
+        entry.append(buildMenu(command));
       } else {
         entry.type = "button";
         entry.dataset.tmCommand = command;
@@ -866,34 +861,35 @@ const mountTaskManager = (context, { window: win }) => {
     });
     return menu;
   };
+  // Each page builds its own titles, so the items go with the title.
+  const menuItems = new WeakMap();
+  const menus = wireMenuBar({
+    windowElement: win.el,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = buildMenu(menuItems.get(button));
+      menu.style.left = `${button.offsetLeft}px`;
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
   const renderMenuBar = () => {
-    closeMenus();
+    menus.close();
     menuBar.replaceChildren(
       ...MENUS[settings.tab].map(([label, items]) => {
         const button = document.createElement("button");
         button.type = "button";
         button.setAttribute("role", "menuitem");
+        button.setAttribute("aria-haspopup", "menu");
         button.setAttribute("aria-expanded", "false");
         button.dataset.tmMenu = label.replace(/[& ]/g, "").toLowerCase();
         context.setAccessKeyText(button, label);
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const wasOpen = button.getAttribute("aria-expanded") === "true";
-          closeMenus();
-          if (wasOpen) return;
-          openMenu = buildMenu(items);
-          openMenu.style.left = `${button.offsetLeft}px`;
-          menuBar.append(openMenu);
-          button.setAttribute("aria-expanded", "true");
-        });
+        menuItems.set(button, items);
         return button;
       }),
     );
   };
-  const onDocumentPointerDown = (event) => {
-    if (!menuBar.contains(event.target)) closeMenus();
-  };
-  document.addEventListener("pointerdown", onDocumentPointerDown);
 
   // Commands.
   const selectedTask = () => context.openWindows.get(selection.tasks);
@@ -1059,7 +1055,7 @@ const mountTaskManager = (context, { window: win }) => {
   root.addEventListener("click", (event) => {
     const command = event.target.closest("[data-tm-command]");
     if (command) {
-      closeMenus();
+      menus.close();
       commands[command.dataset.tmCommand]();
       return;
     }
@@ -1118,7 +1114,6 @@ const mountTaskManager = (context, { window: win }) => {
       window.cancelAnimationFrame(frame);
       network.disconnect();
       trayIcon.remove();
-      document.removeEventListener("pointerdown", onDocumentPointerDown);
     },
   };
 };
