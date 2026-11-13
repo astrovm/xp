@@ -635,6 +635,8 @@
   // Shared folder browser laid out like XP's Open and Save As dialogs: a
   // Places bar, a "Look in"/"Save in" folder list with Back, Up, and New
   // Folder, a column-flowing file list, and the file name and type fields.
+  // filterLabel names the filter in the type list, like XP's "Background
+  // Files". onDialog(dialog) receives the dialog before it renders.
   // onAccept({ folderId, name }) validates the current entry and returns
   // false (or Promise<false>) to keep the dialog open, or any other value
   // (or Promise of one) to close the dialog and resolve with that value.
@@ -648,10 +650,12 @@
     title,
     startFolder,
     filter,
+    filterLabel = null,
     initialName = "",
     acceptLabel,
     folderLabel,
     onAccept,
+    onDialog = null,
   }) =>
     new Promise((resolve) => {
       let currentFolderId = startFolder || fs().MY_DOCUMENTS;
@@ -666,6 +670,7 @@
       });
       dialog.el.classList.add("xp-file-dialog");
       dialog.onResult(resolve);
+      onDialog?.(dialog);
 
       const field = (className, labelText, control) => {
         const label = document.createElement("label");
@@ -777,7 +782,8 @@
         .filter((entry, index) => index === 0 || filter?.length)
         .forEach((entry) => {
           const option = document.createElement("option");
-          option.textContent = describeFilter(entry);
+          option.textContent =
+            entry && filterLabel ? filterLabel : describeFilter(entry);
           option.value = entry ? entry.join(",") : "";
           typeSelect.appendChild(option);
         });
@@ -992,6 +998,7 @@
     progress,
     properties,
     setNodeIconFactory,
+    browseFiles,
     openFile,
     saveFile,
   };

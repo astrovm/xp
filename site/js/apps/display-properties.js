@@ -252,39 +252,36 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
   dialog.body.querySelector("[data-advanced-color]").focus();
 };
 
+// XP's wallpaper Browse is the standard Open dialog in My Pictures. The
+// virtual disk keeps no picture data, so Open hands off to the browser's
+// file picker; the chosen picture fills File name and closes the dialog.
+const WALLPAPER_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
 const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
-  const dialog = XPDialogs.createDialog({
-    title: "Browse",
-    onCancel: () => dialog.close("cancel"),
-  });
-  dialog.el.classList.add("wallpaper-browse-dialog");
+  let dialog = null;
   setDisplayDialogOwnerActive(ownerWindow, false);
-  dialog.body.innerHTML = `
-    <div class="browse-location"><label>Look in:</label><span><img src="assets/xp/icons/MyPictures.png" alt="">My Pictures</span><button type="button" disabled>◀</button><button type="button" disabled>↥</button><button type="button" disabled>☆</button><button type="button" disabled>▦</button></div>
-    <div class="browse-body"><aside><button><img src="assets/xp/icons/RecentDocuments.png" alt="">My Recent<br>Documents</button><button><img src="assets/xp/icons/Programs.png" alt="">Desktop</button><button><img src="assets/xp/icons/MyDocuments.png" alt="">My Documents</button><button><img src="assets/xp/icons/MyComputer.png" alt="">My Computer</button><button><img src="assets/xp/icons/MyNetworkPlaces.png" alt="">My Network</button></aside><main><button type="button" class="sample-pictures-folder"><span><i></i><i></i><i></i><i></i></span>Sample Pictures</button></main></div>
-    <div class="browse-fields"><label>File name:<input class="xp-input browse-file-name" readonly></label><label>Files of type:<select class="xp-select" disabled><option>Background Files</option></select></label></div>
-  `;
-  const buttons = document.createElement("div");
-  buttons.className = "browse-buttons";
-  const open = XPDialogs.createDialogButton(
-    { id: "open", label: "Open", isDefault: true },
-    () => fileInput.click(),
-  );
-  const cancel = XPDialogs.createDialogButton(
-    { id: "cancel", label: "Cancel", isCancel: true },
-    () => dialog.close("cancel"),
-  );
-  buttons.append(open, cancel);
-  dialog.body.append(buttons);
-  dialog.defaultButton = open;
-  dialog.onResult(() => setDisplayDialogOwnerActive(ownerWindow, true));
-  dialog.setChosenFile = (name) => {
-    if (!dialog.el.isConnected) return;
-    dialog.body.querySelector(".browse-file-name").value = name;
-    dialog.close("open");
+  XPDialogs.browseFiles({
+    title: "Browse",
+    startFolder: window.VirtualFS.MY_PICTURES,
+    filter: WALLPAPER_EXTENSIONS,
+    filterLabel: `Background Files (${WALLPAPER_EXTENSIONS.map((ext) => `*${ext}`).join(";")})`,
+    acceptLabel: "&Open",
+    folderLabel: "Look &in:",
+    onDialog: (created) => {
+      dialog = created;
+      dialog.el.classList.add("wallpaper-browse-dialog");
+    },
+    onAccept: () => {
+      fileInput.click();
+      return false;
+    },
+  }).then(() => setDisplayDialogOwnerActive(ownerWindow, true));
+  return {
+    setChosenFile: (name) => {
+      if (!dialog.el.isConnected) return;
+      dialog.body.querySelector("#dlg-file-name").value = name;
+      dialog.close("open");
+    },
   };
-  dialog.body.querySelector(".sample-pictures-folder").focus();
-  return dialog;
 };
 
 const wireDisplayProperties = (win) => {

@@ -29,7 +29,7 @@ async function open() {
   const saved = () =>
     JSON.parse(s.window.localStorage.getItem("displaySettings"));
   const dialogButton = (dialog, label) =>
-    [...dialog.querySelectorAll(".dlg-buttons button,.browse-buttons button")]
+    [...dialog.querySelectorAll(".dlg-buttons button")]
       .find((b) => b.textContent === label)
       .click();
   return { s, d, q, change, key, saved, dialogButton };
@@ -218,6 +218,26 @@ test("secondary display dialogs cancel with Escape and ignore clicks between con
   escape(s.document.querySelector(".advanced-appearance-dialog"));
   q(".display-browse").click();
   const browse = s.document.querySelector(".wallpaper-browse-dialog");
+  // Browse is XP's standard Open dialog: Look in My Pictures, real toolbar
+  // icons, and an enabled Background Files type list.
+  expect(browse.classList.contains("xp-file-dialog")).toBeTrue();
+  const lookIn = browse.querySelector(".dlg-file-folder");
+  expect(lookIn.selectedOptions[0].textContent).toBe("My Pictures");
+  expect(
+    [...browse.querySelectorAll(".dlg-file-tool img")].map((img) =>
+      img.getAttribute("src"),
+    ),
+  ).toEqual([
+    "assets/xp/icons/Back.png",
+    "assets/xp/icons/Up.png",
+    "assets/xp/icons/NewFolder.png",
+  ]);
+  const type = browse.querySelector(".dlg-file-type");
+  expect(type.disabled).toBeFalse();
+  expect(type.selectedOptions[0].textContent).toBe(
+    "Background Files (*.png;*.jpg;*.jpeg;*.gif;*.webp)",
+  );
+  expect(browse.querySelector(".help-btn")).not.toBeNull();
   let picked = 0;
   q("#display-image").click = () => picked++;
   h.dialogButton(browse, "Open");
