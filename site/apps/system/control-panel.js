@@ -72,7 +72,7 @@ export const createControlPanel = (context) => {
           .join("")}</div>
         <div class="explorer-brand" aria-hidden="true"><img src="assets/xp/WindowsFlag.png" alt=""></div>
       </div>
-      <div class="explorer-toolbar">
+      <div class="explorer-toolbar" data-mouse-keeps-focus>
         <button type="button" data-control-panel-action="back"><img src="assets/xp/explorer/toolbar-back.png" alt=""> Back <span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
         <button type="button" data-control-panel-action="forward" aria-label="Forward"><img src="assets/xp/explorer/toolbar-forward.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
         <button type="button" data-control-panel-action="up" aria-label="Up"><img src="assets/xp/explorer/toolbar-up.png" alt=""></button>
@@ -276,11 +276,30 @@ export const createControlPanel = (context) => {
       };
     };
     let menuAnchor = null;
+    // The control that had the keys before the menu gets them back when the
+    // menu closes, like XP. The window sends a press on its toolbar back to
+    // its control before this listener runs.
+    let menuReturnFocus = null;
+    win.el.addEventListener("focusin", (event) => {
+      if (
+        event.target === document.activeElement &&
+        !menu.contains(event.target) &&
+        !event.target.closest("[data-control-panel-menu]")
+      )
+        menuReturnFocus = event.target;
+    });
     const closeMenu = () => {
+      const holdsKeys = menu.contains(document.activeElement);
       menu.hidden = true;
       menuAnchor?.setAttribute("aria-expanded", "false");
       menuAnchor = null;
+      if (holdsKeys)
+        (menuReturnFocus?.isConnected ? menuReturnFocus : win.el).focus({
+          preventScroll: true,
+        });
     };
+    // A press outside the window closes the menu through the shell.
+    menu.closeMenus = closeMenu;
     const showMenu = (name, anchor) => {
       menu.innerHTML = menus()
         [name].map((entry) =>

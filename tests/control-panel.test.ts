@@ -138,11 +138,40 @@ test("Classic View selects, opens and lists icons like Explorer", async () => {
 });
 
 test("Control Panel's menus close, show About and close the window", async () => {
-  const { s, $, menu, command } = await open();
+  const { s, win, $, menu, command } = await open();
   menu("edit");
   expect(command("select-all").disabled).toBeTrue();
   $(".control-panel-main").click();
   expect($(".explorer-menu").hidden).toBeTrue();
+
+  // A press outside the window closes the menu and resets its button, so
+  // the next click opens it again.
+  menu("edit");
+  s.document.body.dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { bubbles: true }),
+  );
+  expect($(".explorer-menu").hidden).toBeTrue();
+  expect(
+    $('[data-control-panel-menu="edit"]').getAttribute("aria-expanded"),
+  ).toBe("false");
+  menu("edit");
+  expect($(".explorer-menu").hidden).toBeFalse();
+  menu("edit");
+
+  // A menu command gives the keys back to the control that had them.
+  const address = $(".explorer-address input");
+  address.focus();
+  menu("view");
+  const refresh = command("refresh");
+  refresh.focus();
+  refresh.click();
+  expect(s.document.activeElement === address).toBeTrue();
+  // Without that control, the window keeps the keys.
+  menu("view");
+  command("refresh").focus();
+  address.remove();
+  command("refresh").click();
+  expect(s.document.activeElement === win).toBeTrue();
   menu("help");
   command("about").click();
   expect(
