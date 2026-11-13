@@ -912,7 +912,7 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   item(b).dispatchEvent(
     new s.window.MouseEvent("click", { ctrlKey: true, bubbles: true }),
   );
-  let menu = contextMenu(b);
+  contextMenu(b);
   expect(selected()).toEqual([a.id, b.id]);
   expect(focused()).toBe("cut");
   // Escape gives the focus back to the selection.
@@ -920,7 +920,7 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   expect(win.querySelector(".explorer-context-menu")).toBeNull();
   expect(focused()).toBe(label(item(a)));
   // A right-click on another item selects only it.
-  menu = contextMenu(c);
+  const menu = contextMenu(c);
   expect(selected()).toEqual([c.id]);
   menu.querySelector('[data-command="copy"]').click();
   await flushShell();
