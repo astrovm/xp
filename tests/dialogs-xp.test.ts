@@ -799,13 +799,18 @@ test("Save adds the default extension before it looks for a file to replace", as
   });
   // A name keeps an extension of the listed types. Any other dot is part
   // of the name, so Notepad can still open the file.
-  const typed = async (name, filter) => {
+  const typed = async (name, filter, allFiles = false) => {
     const result = d.saveFile({
       startFolder: fs.MY_DOCUMENTS,
       defaultExtension: ".txt",
       filter,
     });
     const dialog = current(s);
+    if (allFiles) {
+      const type = dialog.querySelector(".dlg-file-type");
+      type.value = "";
+      type.dispatchEvent(new s.window.Event("change"));
+    }
     dialog.querySelector("#dlg-file-name").value = name;
     [...dialog.querySelectorAll(".dlg-buttons button")]
       .find((button) => button.textContent === "Save")
@@ -816,6 +821,11 @@ test("Save adds the default extension before it looks for a file to replace", as
   expect(await typed("NOTES.TXT", [".txt"])).toBe("NOTES.TXT");
   expect(await typed("v1.2 draft", [".txt"])).toBe("v1.2 draft.txt");
   expect(await typed("server.log", [".txt"])).toBe("server.log.txt");
+  // All Files keeps any extension the name has.
+  expect(await typed("server.log", [".txt"], true)).toBe("server.log");
+  expect(await typed("todo", [".txt"], true)).toBe("todo.txt");
+  // A leading dot starts the name, not an extension, as on the disk.
+  expect(await typed(".txt", [".txt"])).toBe(".txt.txt");
 });
 
 test("Open and Save open a folder whose name is typed, like XP", async () => {

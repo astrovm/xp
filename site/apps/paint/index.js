@@ -218,6 +218,9 @@ const createMenuBar = (run, panelVisible) => {
 
 // The shell gives the picture's address: stored picture data, or an XP
 // sample picture. A file with neither is not a picture Paint can read.
+// The picture types Paint opens and saves.
+const PICTURE_TYPES = [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"];
+
 const imageFromFile = async (url) => {
   if (!url) throw new Error("No picture data");
   const image = document.createElement("img");
@@ -428,6 +431,7 @@ const mountPaint = (shell, instance) => {
         title: "Save As",
         defaultName: /\.[^.]+$/.test(fileName) ? fileName : `${fileName}.bmp`,
         startFolder: shell.myPictures,
+        filter: PICTURE_TYPES,
         defaultExtension: ".bmp",
       });
     }
@@ -486,7 +490,7 @@ const mountPaint = (shell, instance) => {
       const file = await shell.openFile({
         title: "Open",
         startFolder: shell.myPictures,
-        filter: [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"],
+        filter: PICTURE_TYPES,
       });
       if (file) await loadFile(file);
     } else if (command === "save") await save(false);

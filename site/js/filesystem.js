@@ -998,6 +998,7 @@
     isProtected,
     getSize,
     validateName,
+    extractExtension,
     createFolder: mutate(createFolder),
     createFile: mutate(createFile),
     rename: mutate(rename),

@@ -7,7 +7,8 @@ async function setup() {
     titles = [],
     messages = [],
     writes = [],
-    wallpapers = [];
+    wallpapers = [],
+    saveOptions = [];
   const getContext = s.window.HTMLCanvasElement.prototype.getContext;
   s.window.HTMLCanvasElement.prototype.getContext = function (...args) {
     const context = getContext.apply(this, args);
@@ -49,7 +50,10 @@ async function setup() {
     showMessage: (...args) => messages.push(args),
     close: () => messages.push(["close"]),
     setWallpaper: (value) => wallpapers.push(value),
-    saveFile: async () => ({ parentId: "pictures", name: "drawing" }),
+    saveFile: async (options) => {
+      saveOptions.push(options);
+      return { parentId: "pictures", name: "drawing" };
+    },
     openFile: async () => ({
       id: "opened",
       name: "image.png",
@@ -98,6 +102,7 @@ async function setup() {
     messages,
     writes,
     wallpapers,
+    saveOptions,
     command,
     answer,
     key,
@@ -121,6 +126,11 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   await h.answer("yes");
   expect(await saved).toBeTrue();
   expect(h.writes[0].slice(0, 2)).toEqual(["pictures", "drawing.bmp"]);
+  // Save As keeps only picture extensions, and adds .bmp to other names.
+  expect(h.saveOptions[0]).toMatchObject({
+    filter: [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"],
+    defaultExtension: ".bmp",
+  });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
   await h.command("save");
