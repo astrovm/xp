@@ -383,6 +383,34 @@ test("clicking elsewhere closes open application menus but not the menu being us
   });
   s.document.body.dispatchEvent(outsideTab);
   expect(outsideTab.defaultPrevented).toBeFalse();
+  // Alt+Tab still switches windows from an open menu.
+  const menuItem = s.document.activeElement;
+  expect(fileOf(truck).contains(menuItem)).toBeTrue();
+  menuItem.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Tab",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(
+    s.document.getElementById("window-switcher")?.hidden === false,
+  ).toBeTrue();
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keyup", { key: "Alt", bubbles: true }),
+  );
+  truck.dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { bubbles: true }),
+  );
+  truck.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  expect(fileOf(truck).contains(s.document.activeElement)).toBeTrue();
   s.document.activeElement.dispatchEvent(
     new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
   );

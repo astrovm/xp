@@ -520,6 +520,12 @@ test("Views switches between XP's five list views", async () => {
   key(s, "o");
   expect(menu.hidden).toBeFalse();
   expect(current(s)).toBe(dialog);
+  // Tab does nothing in the menu, like XP.
+  const menuKey = s.document.activeElement;
+  key(s, "Tab");
+  keyOn(s, menuKey, "Tab", { shiftKey: true });
+  expect(menu.hidden).toBeFalse();
+  expect(s.document.activeElement === menuKey).toBeTrue();
   key(s, "S");
   expect(list.dataset.view).toBe("tiles");
   expect(menu.hidden).toBeTrue();

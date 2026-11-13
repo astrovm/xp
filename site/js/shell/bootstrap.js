@@ -231,10 +231,17 @@ window.addEventListener("hashchange", () => {
 });
 
 // Tab does nothing in an open menu, like XP, so the keys stay in it.
+// Alt+Tab still switches windows.
 document.addEventListener(
   "keydown",
   (event) => {
-    if (event.key === "Tab" && event.target.closest?.('[role="menu"]'))
+    if (
+      event.key === "Tab" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      event.target.closest?.('[role="menu"]')
+    )
       event.preventDefault();
   },
   true,

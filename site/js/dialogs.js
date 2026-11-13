@@ -837,8 +837,9 @@
   // A drop-down list or menu that belongs to a dialog. Only one is open at
   // a time. While it is open it gets the dialog's keys first, and a click
   // outside it and its owner closes it. The owner's own click toggles it.
-  // Tab and Alt+key close it and then work as usual. Other typed keys stay
-  // with it, so they never press a dialog button behind it.
+  // Tab and Alt+key close a list and then work as usual. Tab does nothing in
+  // a menu, like XP. Other typed keys stay with it, so they never press a
+  // dialog button behind it.
   const attachPopup = (dialog, popup, owner, { onKeydown, onClose }) => {
     dialog.closePopup?.();
     popup.hidden = false;
@@ -861,6 +862,10 @@
         return true;
       }
       if (onKeydown(event, close)) return true;
+      if (event.key === "Tab" && popup.getAttribute("role") === "menu") {
+        event.preventDefault();
+        return true;
+      }
       // AltGr sends Ctrl+Alt, and its characters type as usual.
       if (event.key === "Tab" || (event.altKey && !event.ctrlKey)) {
         close();
