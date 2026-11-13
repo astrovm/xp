@@ -304,24 +304,29 @@ const wireDesktopIconDrag = (icon) => {
       }
       if (desktopDragged) {
         if (dropTarget) {
-          // The icons go back to their places. Items that move away leave
-          // the Desktop when it redraws; after a failure or Cancel they stay
-          // where they were.
-          returnIcons();
+          // The icons hide while the items move. Items that move away leave
+          // the Desktop when it redraws. After a failure or Cancel, the
+          // icons come back at their places.
+          selected.forEach(({ item }) => (item.style.visibility = "hidden"));
+          let failure = null;
           if (dropTarget.action === "recycle") {
-            // A failed delete shows an alert, like the Delete key.
             try {
               await fileOps.removeToBin(eligibility.filesystemIds);
             } catch (error) {
-              await alertFileOperationError(error);
+              failure = error;
             }
           } else {
-            // A drag moves the items without the clipboard, like XP.
+            // A drag moves the items without the clipboard, like XP. A
+            // failure shows its own alert.
             await pasteIntoFolder(dropTarget.destinationId, {
               mode: "cut",
               ids: eligibility.filesystemIds,
             });
           }
+          returnIcons();
+          selected.forEach(({ item }) => (item.style.visibility = ""));
+          // A failed delete shows an alert, like the Delete key.
+          if (failure) await alertFileOperationError(failure);
         } else if (getDesktopLayoutSettings().autoArrange) {
           layoutDesktopIcons(true);
         } else {
@@ -637,11 +642,7 @@ const beginDesktopRename = (id) => {
       } catch (error) {
         // Like Explorer, a name Windows refuses shows an error.
         refreshDesktop();
-        await XPDialogs.alert(
-          error.message || "The file operation failed.",
-          "Error Renaming File or Folder",
-          "error",
-        );
+        await alertRenameError(error);
         return;
       }
     }

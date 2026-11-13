@@ -274,6 +274,7 @@
         keepUnmovedOnClipboard(index);
         throw error;
       }
+      if (mode === "cut" && !usesClipboard) forgetCutItems([id]);
       options.onProgress?.({
         completed: index + 1,
         total: ids.length,
@@ -305,6 +306,16 @@
   };
   const rename = (id, name) => fs.rename(id, name);
 
+  // Items deleted or dragged away leave a cut clipboard, so a later Paste
+  // never moves them again.
+  const forgetCutItems = (ids) => {
+    if (clipboard?.mode !== "cut") return;
+    const remaining = clipboard.ids.filter((id) => !ids.includes(id));
+    if (remaining.length === clipboard.ids.length) return;
+    clipboard = remaining.length ? { mode: "cut", ids: remaining } : null;
+    notify({ type: "clipboard", mode: clipboard?.mode || null });
+  };
+
   const removeToBin = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
@@ -316,6 +327,7 @@
       }
     });
     topLevelIds.forEach((id) => fs.remove(id));
+    forgetCutItems(topLevelIds);
     return topLevelIds;
   };
 

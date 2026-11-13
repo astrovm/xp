@@ -237,6 +237,30 @@ describe("file operations", () => {
     });
   });
 
+  test("forgets cut items that are deleted or dragged away", async () => {
+    const { conflictSource, conflictTarget } = createConflictFixture();
+    const [a, b, c] = ["a.txt", "b.txt", "c.txt"].map((name) =>
+      fs.createFile(conflictSource.id, name),
+    );
+    operations.cut([a.id, b.id]);
+    // Deleting something else leaves the clipboard as it is.
+    operations.removeToBin([c.id]);
+    expect(operations.getClipboard()).toEqual({
+      mode: "cut",
+      ids: [a.id, b.id],
+    });
+    operations.removeToBin([a.id]);
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [b.id] });
+    // A drag of the last cut item empties the clipboard, so Paste cannot
+    // move it again.
+    await operations.pasteWithConflicts(conflictTarget.id, () => "rename", {
+      items: { mode: "cut", ids: [b.id] },
+    });
+    expect(fs.getNode(b.id).parent).toBe(conflictTarget.id);
+    expect(operations.getClipboard()).toBeNull();
+    expect(operations.canPaste(conflictSource.id)).toBe(false);
+  });
+
   test("cancels a conflicting paste atomically and keeps the cut clipboard", async () => {
     const { conflictSource, conflictFile, conflictTarget } =
       createConflictFixture();

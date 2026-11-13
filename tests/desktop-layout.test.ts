@@ -152,6 +152,8 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   await flushShell();
   const start = [icon(clash.id).style.left, icon(clash.id).style.top];
   await drag(s, icon(clash.id), icon(folder.id));
+  // The icon hides while the question is open.
+  expect(icon(clash.id).style.visibility).toBe("hidden");
   [...s.document.querySelectorAll(".xp-dialog")]
     .at(-1)
     .querySelector('[data-action="cancel"]')
@@ -160,6 +162,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   await flushShell();
   expect(fs.getNode(clash.id).parent).toBe(fs.DESKTOP);
   expect([icon(clash.id).style.left, icon(clash.id).style.top]).toEqual(start);
+  expect(icon(clash.id).style.visibility).toBe("");
   expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
   await drag(s, icon(recycle.id), icon("__recycle-bin"));
   expect(fs.getNode(recycle.id).parent).toBe(fs.RECYCLE_BIN);
@@ -182,6 +185,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
     expect([icon(folder.id).style.left, icon(folder.id).style.top]).toEqual(
       folderStart,
     );
+    expect(icon(folder.id).style.visibility).toBe("");
   } finally {
     s.window.FileOperations.removeToBin = removeToBin;
   }

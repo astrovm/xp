@@ -537,6 +537,14 @@ const alertFileOperationError = (error) =>
     "error",
   );
 
+// Explorer and the Desktop report a refused name the same way.
+const alertRenameError = (error) =>
+  XPDialogs.alert(
+    error.message || "The file operation failed.",
+    "Error Renaming File or Folder",
+    "error",
+  );
+
 const confirmRecycleDelete = (ids) => {
   const node = fs.getNode(ids[0]);
   const [text, title] =
@@ -806,7 +814,9 @@ const wireFolderDropTarget = (element, destinationId) => {
       );
       const ids = payload ? JSON.parse(payload) : [];
       if (!Array.isArray(ids)) throw new Error("Invalid dropped item list");
-      // A drag moves the items without the clipboard, like XP.
+      // A drag moves the items without the clipboard, like XP. A folder
+      // dropped on itself stays where it is.
+      if (ids.includes(destinationId)) return;
       if (ids.length)
         await pasteIntoFolder(destinationId, { mode: "cut", ids });
       else await importDroppedFiles(destinationId, event.dataTransfer);
@@ -924,11 +934,7 @@ const startExplorerRename = (win, nodeId) => {
     try {
       await fileOps.rename(nodeId, input.value);
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "Error Renaming File or Folder",
-        "error",
-      );
+      await alertRenameError(error);
     }
   };
   input.addEventListener("keydown", (event) => {

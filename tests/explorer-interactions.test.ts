@@ -146,6 +146,12 @@ test("Explorer drag and drop moves internal files and imports external file cont
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
   expect(target.classList.contains("drop-target")).toBeFalse();
+  // A folder dropped on itself stays where it is, with no message.
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));
+  target.dispatchEvent(drag("drop"));
+  await flushShell();
+  expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(0);
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.file.id]));
   // A drag moves the file and never touches the clipboard, like XP.
   w.FileOperations.copy([h.child.id]);
   target.dispatchEvent(drag("drop"));
