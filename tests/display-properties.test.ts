@@ -522,3 +522,33 @@ test("Color quality names the screen's real color depth", async () => {
     cleanupShells();
   }
 });
+
+test("Browse offers the browser picker the same picture types it lists", async () => {
+  const h = await open();
+  expect(h.q("#display-image").accept).toBe(
+    "image/png,image/jpeg,image/gif,image/webp",
+  );
+});
+
+test("another app's open dialog does not keep Display Properties inactive", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const owner = h.d.closest(".xp-window");
+  q(".display-effects").click();
+  const effects = s.document.querySelector(".display-effects-dialog");
+  expect(owner.classList.contains("active")).toBeFalse();
+  // A dialog from elsewhere in the shell opens over the Effects dialog.
+  s.window.XPDialogs.alert("Elsewhere", "Other app");
+  h.dialogButton(effects, "Cancel");
+  expect(owner.classList.contains("active")).toBeTrue();
+});
+
+test("Desktop Items keeps the owner inactive until it closes", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const owner = h.d.closest(".xp-window");
+  q(".display-customize").click();
+  expect(owner.classList.contains("active")).toBeFalse();
+  h.dialogButton(s.document.querySelector(".desktop-items-dialog"), "Cancel");
+  expect(owner.classList.contains("active")).toBeTrue();
+});

@@ -7,8 +7,8 @@ const openDesktopItemsDialog = (ownerWindow) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("desktop-items-dialog");
-  ownerWindow.el.classList.remove("active");
+  dialog.el.classList.add("desktop-items-dialog", "display-owned-dialog");
+  setDisplayDialogOwnerActive(ownerWindow, false);
 
   const tabs = document.createElement("div");
   tabs.className = "desktop-items-tabs";
@@ -96,21 +96,15 @@ const openDesktopItemsDialog = (ownerWindow) => {
   buttons.append(ok, cancel);
   dialog.body.append(tabs, panels, buttons);
   dialog.defaultButton = ok;
-  dialog.onResult(() => {
-    ownerWindow.el.classList.add("active");
-    focusWindow(ownerWindow.gameId);
-  });
+  dialog.onResult(() => setDisplayDialogOwnerActive(ownerWindow, true));
   panels.querySelector("[data-system-icon]").focus();
 };
 
-// A modal dialog that is still open (an error over Browse, for example)
-// keeps the owner inactive. The last one to close activates it.
+// A Display Properties dialog that is still open (Browse under an error
+// box, for example) keeps the owner inactive. The last one to close
+// activates it. Other apps' dialogs do not count.
 const setDisplayDialogOwnerActive = (ownerWindow, active) => {
-  if (
-    active &&
-    document.querySelector(".xp-dialog-overlay:not(.xp-dialog-modeless)")
-  )
-    return;
+  if (active && document.querySelector(".display-owned-dialog")) return;
   ownerWindow.el.classList.toggle("active", active);
   if (active) focusWindow(ownerWindow.gameId);
 };
@@ -129,7 +123,7 @@ const openDisplayEffectsDialog = (ownerWindow, settings, onCommit) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("display-effects-dialog");
+  dialog.el.classList.add("display-effects-dialog", "display-owned-dialog");
   setDisplayDialogOwnerActive(ownerWindow, false);
   dialog.body.innerHTML = `
     <div class="effects-option"><label><input type="checkbox" data-effect-enabled="transition"> Use the following transition effect for menus and tooltips:</label><select class="xp-select" data-effect="transitionEffect"><option value="fade">Fade effect</option><option value="scroll">Scroll effect</option></select></div>
@@ -210,7 +204,7 @@ const openAdvancedAppearanceDialog = (ownerWindow, settings, onCommit) => {
     onCancel: () => dialog.close("cancel"),
     help: true,
   });
-  dialog.el.classList.add("advanced-appearance-dialog");
+  dialog.el.classList.add("advanced-appearance-dialog", "display-owned-dialog");
   setDisplayDialogOwnerActive(ownerWindow, false);
   dialog.body.innerHTML = `
     <div class="advanced-appearance-preview">
@@ -287,7 +281,10 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
       dialog = created;
       nameInput = controls.nameInput;
       // Test and style hook for this use of the shared dialog.
-      dialog.el.classList.add("wallpaper-browse-dialog");
+      dialog.el.classList.add(
+        "wallpaper-browse-dialog",
+        "display-owned-dialog",
+      );
     },
     onAccept: () => {
       // Clear the last pick so choosing the same picture again still
@@ -344,6 +341,8 @@ const wireDisplayProperties = (win) => {
   };
   // The browser reports its real color depth; XP names 24-bit "High" and
   // 32-bit "Highest".
+  // The browser picker offers the same picture types that Browse lists.
+  controls.image.accept = WALLPAPER_MIME_TYPES.join(",");
   controls.colorQuality.innerHTML = `<option>${screen.colorDepth > 24 ? "Highest (32 bit)" : "High (24 bit)"}</option>`;
   const syncScreenSaverPreview = () =>
     renderScreenSaver(

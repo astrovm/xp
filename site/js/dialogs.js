@@ -637,7 +637,7 @@
   // Folder, a column-flowing file list, and the file name and type fields.
   // filterLabel names the filter in the type list, like XP's "Background
   // Files". onDialog(dialog, { nameInput }) receives the dialog and its
-  // File name box before they render. It must not call dialog.onResult,
+  // File name box before the file list renders. It must not call dialog.onResult,
   // which would replace the callback that settles this promise.
   // onAccept({ folderId, name }) validates the current entry and returns
   // false (or Promise<false>) to keep the dialog open, or any other value
