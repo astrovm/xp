@@ -514,7 +514,10 @@ export const createSystemRuntime = (context) => {
       viewsButton.setAttribute("aria-haspopup", "menu");
       viewsButton.setAttribute("aria-expanded", "false");
       const explorerMenuOwners = [...explorerMenuButtons, viewsButton];
+      // True while the keys are in a menu that they entered from the list.
+      let menuEnteredFromList = false;
       const hideExplorerMenus = () => {
+        menuEnteredFromList = false;
         explorerMenu.hidden = true;
         explorerSubmenu.hidden = true;
         explorerMenuOwners.forEach((button) =>
@@ -909,41 +912,53 @@ export const createSystemRuntime = (context) => {
       };
       // The access keys work from anywhere in the window, also the list.
       win.el.addEventListener("keydown", (event) => {
+        // The menu bar and a context menu keep their own keys.
+        if (
+          chrome.contains(event.target) ||
+          event.target.closest(".explorer-context-menu")
+        )
+          return;
+        if (event.altKey) {
+          openExplorerMenuByAccessKey(event);
+          return;
+        }
         // A menu that the mouse opened, such as Views, leaves the keys on
         // the list. Escape still closes it, and an arrow key moves into it,
-        // like XP.
-        if (!explorerMenu.hidden && !chrome.contains(event.target)) {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            hideExplorerMenus();
-            return;
-          }
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            const commands = [
-              ...explorerMenu.querySelectorAll("button:not(:disabled)"),
-            ];
-            (event.key === "ArrowDown" ? commands[0] : commands.at(-1)).focus();
-            return;
-          }
-        }
-        // A context menu keeps its own keys.
+        // like XP. Keys with Ctrl, Shift or the Windows key stay with the
+        // shell, such as Ctrl+Shift+Esc.
         if (
-          event.altKey &&
-          !chrome.contains(event.target) &&
-          !event.target.closest(".explorer-context-menu")
+          explorerMenu.hidden ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.metaKey
         )
-          openExplorerMenuByAccessKey(event);
+          return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          hideExplorerMenus();
+          return;
+        }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const commands = [
+            ...explorerMenu.querySelectorAll("button:not(:disabled)"),
+          ];
+          (event.key === "ArrowDown" ? commands[0] : commands.at(-1)).focus();
+          menuEnteredFromList = true;
+        }
       });
       chrome.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           const activeButton = explorerMenuOwners.find(
             (button) => button.getAttribute("aria-expanded") === "true",
           );
+          const fromList = menuEnteredFromList;
           hideExplorerMenus();
           // A first Escape closes the menu and keeps its heading active. A
-          // second one leaves the menu bar, like XP.
-          if (activeButton) activeButton.focus();
+          // second one leaves the menu bar, like XP. A menu that the keys
+          // entered from the list gives them back to the list at once.
+          if (fromList) leaveExplorerMenus();
+          else if (activeButton) activeButton.focus();
           else if (explorerMenuOwners.includes(document.activeElement))
             leaveExplorerMenus();
           return;

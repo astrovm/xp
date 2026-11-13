@@ -912,8 +912,9 @@ const loadIframe = (gameId, win) => {
 // because a press can end in an iframe or with a drag, with no click.
 let pointerHeld = false;
 document.addEventListener("pointerdown", () => (pointerHeld = true), true);
-["click", "pointercancel", "keydown"].forEach((type) =>
-  document.addEventListener(type, () => (pointerHeld = false), true),
+// A right-click or a middle-click ends with its own event.
+["click", "contextmenu", "auxclick", "pointercancel", "keydown"].forEach(
+  (type) => document.addEventListener(type, () => (pointerHeld = false), true),
 );
 // A click into a game's iframe fires no focusin in the page. So when the
 // page loses the focus to an iframe, its window records it.

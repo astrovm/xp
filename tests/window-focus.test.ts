@@ -107,14 +107,36 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
     expect(commands.indexOf(s.document.activeElement)).toBe(
       (index + commands.length) % commands.length,
     );
+    // Escape gives the keys back to the list, not to the Views button.
     key(s.document.activeElement, "Escape");
+    expect(menu.hidden).toBeTrue();
+    expect(focused()).toBe("explorer-items");
   }
-  list.focus();
-  // Other keys on the list leave the menu alone.
+  // Other keys on the list leave the menu alone, also Escape with Ctrl,
+  // Shift, Alt or the Windows key, which go to the shell.
   openViews();
   key(list, "Home");
+  for (const modifier of ["ctrlKey", "shiftKey", "altKey", "metaKey"]) {
+    const event = new s.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+      [modifier]: true,
+    });
+    list.dispatchEvent(event);
+    expect(`${modifier} ${menu.hidden}`).toBe(`${modifier} false`);
+  }
   expect(menu.hidden).toBeFalse();
+  // A context menu keeps its arrow keys while Views is open.
+  const item = docs.querySelector(".explorer-item");
+  item.focus();
+  item.dispatchEvent(new s.window.MouseEvent("contextmenu", { bubbles: true }));
+  const context = docs.querySelector(".explorer-context-menu");
+  key(s.document.activeElement, "ArrowDown");
+  expect(context.contains(s.document.activeElement)).toBeTrue();
+  key(s.document.activeElement, "Escape");
   key(list, "Escape");
+  expect(menu.hidden).toBeTrue();
 
   // The keyboard can still focus a toolbar button.
   const folders = docs.querySelector('[data-explorer-action="folders"]');
