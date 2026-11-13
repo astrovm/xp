@@ -1777,7 +1777,8 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 .dlg-file-list[data-view="thumbnails"] .dlg-file-item {
   gap: 5px;
   width: 112px;
-  margin: 8px 4px 2px;
+  /* A 125px pitch, the same as Explorer's: XP uses one list view for both. */
+  margin: 8px 6.5px 2px;
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-node-icon {

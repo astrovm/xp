@@ -414,8 +414,12 @@ export const createSystemRuntime = (context) => {
         if (action === "previous") stepExplorerFilmstrip(win, -1);
         if (action === "next") stepExplorerFilmstrip(win, 1);
         if (!action.startsWith("rotate")) return;
+        // The rotation acts on the picture shown when the user asked for it,
+        // even if the user moves on before an earlier rotation ends.
+        const nodeId = explorerFilmstripNode(win)?.id;
+        if (!nodeId) return;
         rotation = rotation.then(async () => {
-          const node = explorerFilmstripNode(win);
+          const node = fs.getNode(nodeId);
           if (!node || !canRotatePicture(node)) return;
           try {
             await rotatePicture(node, action === "rotate-clockwise");
@@ -768,14 +772,16 @@ export const createSystemRuntime = (context) => {
               setExplorerView(win.currentFolderId, command);
             if (command === "properties-current")
               openShellProperties(selected[0] || win.currentFolderId);
-            if (command === "select-all")
+            if (command === "select-all" || command === "invert-selection") {
               win.el
                 .querySelectorAll(".explorer-item")
-                .forEach((item) => item.classList.add("selected"));
-            if (command === "invert-selection")
-              win.el
-                .querySelectorAll(".explorer-item")
-                .forEach((item) => item.classList.toggle("selected"));
+                .forEach((item) =>
+                  command === "select-all"
+                    ? item.classList.add("selected")
+                    : item.classList.toggle("selected"),
+                );
+              renderExplorerSelection(win);
+            }
             if (command === "refresh") renderExplorerItems(win);
 
             if (command === "about-windows") openAboutWindows();

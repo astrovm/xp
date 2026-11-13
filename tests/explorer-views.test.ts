@@ -666,6 +666,79 @@ test("Filmstrip rotations of one window run one after another", async () => {
   expect(h.fs.getContent(png.id)).toBe("data:image/png;base64,2");
 });
 
+test("a queued rotation acts on the picture shown when the user asked for it", async () => {
+  const h = await openShell();
+  recordCanvas(h);
+  const f = await openFilmstrip(h, [
+    ["a.png", ART],
+    ["b.png", ART],
+    ["c.png", ART],
+  ]);
+  const [a, b, c] = f.nodes;
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) await flushShell();
+  };
+  // The user rotates a, moves to b and rotates it before a is saved.
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  h.item(f.win, b.id).click();
+  h.item(f.win, b.id).focus();
+  f.button("rotate-clockwise").click();
+  await flushShell();
+  stubNextPicture(h);
+  await settle();
+  expect(h.fs.getContent(a.id)).toBe("data:image/png;base64,");
+  expect(h.fs.getContent(b.id)).toBe("data:image/png;base64,");
+  expect(h.fs.getContent(c.id)).toBe(ART);
+  // The save draws the items again, and b keeps the selection and the focus.
+  expect(f.selected()).toEqual([b.id]);
+  expect(h.s.document.activeElement).toBe(h.item(f.win, b.id));
+  // A picture deleted before its turn is not rotated, and shows no error.
+  h.item(f.win, c.id).click();
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  f.button("rotate-clockwise").click();
+  await flushShell();
+  h.fs.delete(c.id);
+  h.fs.delete(c.id);
+  await settle();
+  expect(h.fs.getNode(c.id)).toBeFalsy();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
+});
+
+test("Filmstrip shows the picture of every new selection", async () => {
+  const h = await openShell();
+  const art = (name) => `${ART}#${name}`;
+  const f = await openFilmstrip(h, [
+    ["a.png", art("a")],
+    ["b.png", art("b")],
+    ["c.png", art("c")],
+  ]);
+  const [a, b, c] = f.nodes;
+  const editMenu = async (command) => {
+    f.win.querySelector('[data-explorer-menu="edit"]').click();
+    await h.pick(f.win, command);
+  };
+  // Typing a name picks the item.
+  h.item(f.win, a.id).focus();
+  f.key("c", {}, h.item(f.win, a.id));
+  expect(f.selected()).toEqual([c.id]);
+  expect(f.preview()).toBe(art("c"));
+  // Ctrl+A shows the first item.
+  f.key("a", { ctrlKey: true }, h.item(f.win, c.id));
+  expect(f.selected()).toEqual([a.id, b.id, c.id]);
+  expect(f.preview()).toBe(art("a"));
+  h.item(f.win, b.id).click();
+  await editMenu("select-all");
+  expect(f.selected()).toEqual([a.id, b.id, c.id]);
+  expect(f.preview()).toBe(art("a"));
+  h.item(f.win, b.id).click();
+  expect(f.preview()).toBe(art("b"));
+  await editMenu("invert-selection");
+  expect(f.selected()).toEqual([a.id, c.id]);
+  expect(f.preview()).toBe(art("a"));
+});
+
 test("an empty Filmstrip and a broken picture leave the preview empty", async () => {
   const h = await openShell();
   const f = await openFilmstrip(h, []);
@@ -678,6 +751,10 @@ test("an empty Filmstrip and a broken picture leave the preview empty", async ()
     expect(f.button(action).disabled).toBeTrue();
   expect(f.preview()).toBeUndefined();
   f.key("ArrowRight");
+  // Ctrl+K has no picture to rotate.
+  f.key("k", { ctrlKey: true });
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
   // Disabled buttons do nothing.
   f.button("next").dispatchEvent(
     new h.s.window.MouseEvent("click", { bubbles: true }),
@@ -697,6 +774,16 @@ test("an empty Filmstrip and a broken picture leave the preview empty", async ()
     "No preview available.",
   );
   expect(h.item(f.win, broken.id)).not.toBeNull();
+  // A late error of a picture that is no longer shown changes nothing.
+  const good = h.fs.createFile(f.folder.id, "good.png", { content: ART });
+  await flushShell();
+  h.item(f.win, broken.id).click();
+  h.item(f.win, good.id).click();
+  const stale = f.win.querySelector(".explorer-filmstrip-preview img");
+  h.item(f.win, broken.id).click();
+  h.item(f.win, good.id).click();
+  stale.dispatchEvent(new h.s.window.Event("error"));
+  expect(f.preview()).toBe(ART);
   // A folder shows no preview.
   const inner = h.fs.createFolder(f.folder.id, "Inner");
   await flushShell();

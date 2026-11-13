@@ -468,6 +468,7 @@ document.addEventListener("keydown", async (e) => {
         explorerItems.forEach((item) => item.classList.remove("selected"));
         typeaheadTarget.classList.add("selected");
         typeaheadTarget.focus();
+        renderExplorerSelection(explorerWin);
         return;
       }
       const selected = selectedExplorerNodes(explorerWin);
@@ -477,6 +478,7 @@ document.addEventListener("keydown", async (e) => {
         explorerWin.el
           .querySelectorAll(".explorer-item")
           .forEach((item) => item.classList.add("selected"));
+        renderExplorerSelection(explorerWin);
         return;
       }
       if (

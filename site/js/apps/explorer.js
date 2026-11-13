@@ -969,7 +969,14 @@ const renderExplorerFilmstrip = (win) => {
   else if (shown?.getAttribute("src") !== url) {
     const image = document.createElement("img");
     image.alt = node.name;
-    image.addEventListener("error", showNoPreview, { once: true });
+    // A late error of a picture that is no longer shown changes nothing.
+    image.addEventListener(
+      "error",
+      () => {
+        if (preview.contains(image)) showNoPreview();
+      },
+      { once: true },
+    );
     image.src = url;
     preview.replaceChildren(image);
   }
@@ -1647,6 +1654,12 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   const kept = new Set(
     win.renderedFolderId === folder.id ? selectedExplorerNodes(win) : [],
   );
+  // The focused item keeps the focus too, so the keys still act on it.
+  const focusedItem = document.activeElement?.closest?.(".explorer-item");
+  const focusedId =
+    win.renderedFolderId === folder.id && items.contains(focusedItem)
+      ? focusedItem.dataset.nodeId
+      : null;
   win.renderedFolderId = folder.id;
   items.dataset.view = view;
   items.innerHTML = "";
@@ -1812,6 +1825,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     if (node.type === "folder" && !fs.isInRecycleBin(node.id))
       wireFolderDropTarget(item, node.id);
     items.appendChild(item);
+    if (node.id === focusedId) item.focus({ preventScroll: true });
   });
   explorerContent.querySelector(".explorer-status").textContent =
     `${children.length} ${children.length === 1 ? "object" : "objects"}`;

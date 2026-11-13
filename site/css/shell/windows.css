@@ -1751,6 +1751,8 @@ html:not(.keyboard-cues) .menu-accesskey {
 .explorer-items[data-view="details"] .explorer-details-row {
   display: grid;
   grid-template-columns: 22px 156px 96px 120px 120px;
+  /* No gap, so the row cells sit under the header cells. */
+  gap: 0;
   align-items: center;
   min-width: max-content;
 }
