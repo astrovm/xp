@@ -334,6 +334,18 @@ test("drives, My Computer and the Recycle Bin keep their icons in Thumbnails", a
   const win = h.explorer();
   await h.viewMenu(win, "thumbnails");
   expect(win.querySelector(".folder-thumbnail")).toBeNull();
+  // My Documents keeps My Computer's plain folder icon when its preview fails.
+  fs.createFile(fs.MY_DOCUMENTS, "photo.png", { content: ART });
+  await flushShell();
+  h.item(win, fs.MY_DOCUMENTS)
+    .querySelector(".folder-thumbnail-pictures img")
+    .dispatchEvent(new h.s.window.Event("error"));
+  expect(
+    h
+      .item(win, fs.MY_DOCUMENTS)
+      .querySelector(".explorer-item-icon img")
+      .getAttribute("src"),
+  ).toContain("NewFolder.png");
   expect(
     h.item(win, fs.DRIVE_C).querySelector(".explorer-item-icon img"),
   ).not.toBeNull();
