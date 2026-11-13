@@ -41,9 +41,10 @@ async function openShell(options) {
   return { s, fs, explorer, open, items, item, pick, viewMenu };
 }
 
-test("picture folders open in Thumbnails, and other folders in Tiles", async () => {
+test("Sample Pictures opens in Filmstrip, other picture folders in Thumbnails, and other folders in Tiles", async () => {
   const h = await openShell();
   const { fs } = h;
+  const album = fs.createFolder(fs.MY_PICTURES, "Album");
   await h.open(fs.MY_PICTURES);
   const pictures = h.explorer();
   expect(h.items(pictures).dataset.view).toBe("thumbnails");
@@ -51,7 +52,9 @@ test("picture folders open in Thumbnails, and other folders in Tiles", async () 
     new h.s.window.MouseEvent("dblclick"),
   );
   await flushShell();
-  expect(h.items(pictures).dataset.view).toBe("thumbnails");
+  expect(h.items(pictures).dataset.view).toBe("filmstrip");
+  await h.open(album.id);
+  expect(h.items(h.explorer()).dataset.view).toBe("thumbnails");
   await h.open(fs.MY_DOCUMENTS);
   expect(h.items(h.explorer()).dataset.view).toBe("tiles");
 });
@@ -302,27 +305,41 @@ test("Details view lists the name, type and size of each item in its own column"
   await h.open(fs.MY_DOCUMENTS);
   const win = h.explorer();
   await h.viewMenu(win, "details");
-  expect(
-    [...win.querySelector(".explorer-details-header").children].map(
+  const header = (target) =>
+    [...target.querySelector(".explorer-details-header").children].map(
       (cell) => cell.textContent,
-    ),
-  ).toEqual(["Name", "Type", "Size"]);
+    );
+  expect(header(win)).toEqual(["Name", "Size", "Type", "Date Modified"]);
   const row = h.item(win, file.id);
   expect([...row.children].map((cell) => cell.className)).toEqual([
     "explorer-item-icon",
     "explorer-item-label",
-    "explorer-detail-type",
     "explorer-detail-size",
+    "explorer-detail-type",
+    "explorer-detail-modified",
   ]);
   expect(row.querySelector(".explorer-item-label b").textContent).toBe(
     "big.txt",
   );
   expect(row.querySelector(".explorer-detail-size").textContent).toBe("28 KB");
+  expect(row.querySelector(".explorer-detail-type").textContent).toBe(
+    "Text Document",
+  );
+  expect(row.querySelector(".explorer-detail-modified").textContent).toBe(
+    h.s.window.XPDialogs.formatDetailsDate(fs.getNode(file.id).modified),
+  );
   // Folders leave the size empty.
   const folder = fs.createFolder(fs.MY_DOCUMENTS, "Box");
   expect(
     h.item(win, folder.id).querySelector(".explorer-detail-size").textContent,
   ).toBe("");
+  // My Computer has no drive sizes, so it shows only the name and type.
+  await h.open(fs.MY_COMPUTER);
+  await h.viewMenu(win, "details");
+  expect(header(win)).toEqual(["Name", "Type"]);
+  expect(
+    [...h.item(win, fs.DRIVE_C).children].map((cell) => cell.textContent),
+  ).toEqual(["", "Local Disk (C:)", "Local Disk"]);
 });
 
 test("drives, My Computer and the Recycle Bin keep their icons in Thumbnails", async () => {
@@ -357,4 +374,347 @@ test("drives, My Computer and the Recycle Bin keep their icons in Thumbnails", a
     h.s.window.XPDialogs.fillThumbnail(icon, fs.getNode(id), () => null);
     expect(icon.textContent).toBe("icon");
   }
+});
+
+// The harness draws nothing, so a picture loads with the given size, or
+// fails. Only the next image the page creates is affected.
+function stubNextPicture(h, { width = 8, height = 6, fail = false } = {}) {
+  const document = h.s.document;
+  const createElement = document.createElement;
+  document.createElement = function (name, ...args) {
+    const element = createElement.call(this, name, ...args);
+    if (name !== "img") return element;
+    document.createElement = createElement;
+    Object.defineProperty(element, "src", {
+      set() {
+        Object.defineProperties(element, {
+          naturalWidth: { value: width },
+          naturalHeight: { value: height },
+        });
+        queueMicrotask(() =>
+          element.dispatchEvent(new h.s.window.Event(fail ? "error" : "load")),
+        );
+      },
+    });
+    return element;
+  };
+}
+
+function recordCanvas(h) {
+  const drawn = [];
+  const proto = h.s.window.HTMLCanvasElement.prototype;
+  const getContext = proto.getContext;
+  proto.getContext = function (...args) {
+    const context = getContext.apply(this, args);
+    context.setTransform = (...matrix) =>
+      drawn.push({ width: this.width, height: this.height, matrix });
+    return context;
+  };
+  return drawn;
+}
+
+async function openFilmstrip(h, files) {
+  const { fs } = h;
+  const folder = fs.createFolder(fs.MY_PICTURES, "Strip");
+  const nodes = files.map(([name, content]) =>
+    fs.createFile(folder.id, name, { content }),
+  );
+  await h.open(folder.id);
+  const win = h.explorer();
+  await h.viewMenu(win, "filmstrip");
+  const preview = () =>
+    win.querySelector(".explorer-filmstrip-preview img")?.getAttribute("src");
+  const button = (action) =>
+    win.querySelector(`[data-filmstrip-action="${action}"]`);
+  const selected = () =>
+    [...win.querySelectorAll(".explorer-item.selected")].map(
+      (item) => item.dataset.nodeId,
+    );
+  const key = (key, options = {}, target = h.items(win)) =>
+    target.dispatchEvent(
+      new h.s.window.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        ...options,
+      }),
+    );
+  return { folder, nodes, win, preview, button, selected, key };
+}
+
+test("the Views menu offers Filmstrip only in picture folders", async () => {
+  const h = await openShell();
+  const { fs } = h;
+  await h.open(fs.MY_PICTURES);
+  const win = h.explorer();
+  const entries = () =>
+    [...win.querySelectorAll(".explorer-menu [data-explorer-command]")].map(
+      (entry) => entry.textContent.replace("•", ""),
+    );
+  win.querySelector('[data-explorer-action="view"]').click();
+  expect(entries()).toEqual([
+    "Filmstrip",
+    "Thumbnails",
+    "Tiles",
+    "Icons",
+    "List",
+    "Details",
+  ]);
+  // A second click closes the menu.
+  win.querySelector('[data-explorer-action="view"]').click();
+  await h.open(fs.MY_DOCUMENTS);
+  win.querySelector('[data-explorer-action="view"]').click();
+  expect(entries()).not.toContain("Filmstrip");
+  // A saved Filmstrip view applies only where XP offers it.
+  const other = await openShell({
+    initialStorage: {
+      explorerFolderViews: JSON.stringify([
+        [fs.MY_DOCUMENTS, "filmstrip"],
+        [fs.MY_PICTURES, "filmstrip"],
+      ]),
+    },
+  });
+  await other.open(other.fs.MY_DOCUMENTS);
+  expect(other.items(other.explorer()).dataset.view).toBe("tiles");
+  await other.open(other.fs.MY_PICTURES);
+  expect(other.items(other.explorer()).dataset.view).toBe("filmstrip");
+});
+
+test("Filmstrip shows the first picture, and Previous and Next wrap like XP", async () => {
+  const h = await openShell();
+  const art = (name) => `${ART}#${name}`;
+  const f = await openFilmstrip(h, [
+    ["a.png", art("a")],
+    ["b.png", art("b")],
+    ["c.png", art("c")],
+  ]);
+  const [a, b, c] = f.nodes;
+  expect(f.win.querySelector(".explorer-main").dataset.view).toBe("filmstrip");
+  expect(f.button("previous").title).toBe("Previous Image (Left Arrow)");
+  // XP's own button pictures.
+  expect(
+    ["previous", "next", "rotate-clockwise", "rotate-counterclockwise"].map(
+      (action) => f.button(action).querySelector("img").getAttribute("src"),
+    ),
+  ).toEqual([
+    "assets/xp/explorer/filmstrip-previous.png",
+    "assets/xp/explorer/filmstrip-next.png",
+    "assets/xp/explorer/filmstrip-rotate-clockwise.png",
+    "assets/xp/explorer/filmstrip-rotate-counterclockwise.png",
+  ]);
+  expect(f.preview()).toBe(art("a"));
+  expect(f.selected()).toEqual([]);
+  // Thumbnails fill the strip.
+  expect(
+    h.item(f.win, b.id).querySelector("img.thumbnail-picture").src,
+  ).toContain("#b");
+  f.button("previous").click();
+  expect(f.selected()).toEqual([c.id]);
+  expect(f.preview()).toBe(art("c"));
+  f.button("next").click();
+  expect(f.selected()).toEqual([a.id]);
+  // The arrow keys step too; other keys and Alt or Ctrl arrows do not.
+  f.key("ArrowRight");
+  expect(f.selected()).toEqual([b.id]);
+  f.key("ArrowLeft");
+  f.key("ArrowLeft");
+  expect(f.selected()).toEqual([c.id]);
+  for (const [key, options] of [
+    ["ArrowLeft", { altKey: true }],
+    ["ArrowLeft", { ctrlKey: true }],
+    ["k", {}],
+    ["Home", {}],
+  ])
+    f.key(key, options);
+  expect(f.selected()).toEqual([c.id]);
+  // A click picks the picture.
+  h.item(f.win, b.id).click();
+  expect(f.preview()).toBe(art("b"));
+  // A click on the preview area keeps the selection.
+  f.win
+    .querySelector(".explorer-filmstrip-preview")
+    .dispatchEvent(
+      new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  expect(f.selected()).toEqual([b.id]);
+  // A new render, such as a new file, keeps the selection and the preview.
+  h.fs.createFile(f.folder.id, "d.png", { content: art("d") });
+  await flushShell();
+  expect(f.selected()).toEqual([b.id]);
+  expect(f.preview()).toBe(art("b"));
+  // Typing in the address bar does not step.
+  f.key("ArrowRight", {}, f.win.querySelector(".explorer-address input"));
+  expect(f.selected()).toEqual([b.id]);
+  // Another view drops the Filmstrip, and the arrows stop stepping there.
+  await h.viewMenu(f.win, "thumbnails");
+  expect(f.win.querySelector(".explorer-filmstrip")).toBeNull();
+  expect(f.win.querySelector(".explorer-main").dataset.view).toBe("thumbnails");
+  f.key("ArrowRight");
+  expect(f.selected()).toEqual([b.id]);
+  // A new folder clears the selection.
+  await h.open(h.fs.MY_PICTURES);
+  expect(f.selected()).toEqual([]);
+});
+
+test("Filmstrip rotates pictures and saves them in their own type", async () => {
+  const h = await openShell();
+  const drawn = recordCanvas(h);
+  const f = await openFilmstrip(h, [
+    ["a.png", ART],
+    ["b.jpg", "data:image/jpeg;base64,AAAA"],
+    ["c.bmp", "data:image/bmp;base64,AAAA"],
+    ["d.gif", "data:image/gif;base64,AAAA"],
+    ["e.txt", "text"],
+  ]);
+  const [png, jpg, bmp, gif, text] = f.nodes;
+  const settle = async () => {
+    for (let i = 0; i < 5; i += 1) await flushShell();
+  };
+  expect(f.button("rotate-clockwise").title).toBe("Rotate Clockwise");
+  stubNextPicture(h, { width: 8, height: 6 });
+  f.button("rotate-clockwise").click();
+  await settle();
+  expect(drawn.at(-1)).toEqual({
+    width: 6,
+    height: 8,
+    matrix: [0, 1, -1, 0, 6, 0],
+  });
+  expect(h.fs.getContent(png.id)).toBe("data:image/png;base64,");
+
+  h.item(f.win, jpg.id).click();
+  stubNextPicture(h, { width: 8, height: 6 });
+  f.key("l", { ctrlKey: true });
+  await settle();
+  expect(drawn.at(-1)).toEqual({
+    width: 6,
+    height: 8,
+    matrix: [0, -1, 1, 0, 0, 8],
+  });
+  expect(h.fs.getContent(jpg.id)).toBe("data:image/jpeg;base64,");
+
+  h.item(f.win, bmp.id).click();
+  stubNextPicture(h, { width: 2, height: 1 });
+  f.key("K", { ctrlKey: true });
+  await settle();
+  expect(h.fs.getContent(bmp.id)).toStartWith("data:image/bmp;base64,");
+
+  // XP cannot rotate a GIF without losing it, and other files have no
+  // picture.
+  for (const node of [gif, text]) {
+    h.item(f.win, node.id).click();
+    expect(f.button("rotate-clockwise").disabled).toBeTrue();
+    expect(f.button("rotate-counterclockwise").disabled).toBeTrue();
+    f.key("k", { ctrlKey: true });
+    await settle();
+  }
+  expect(h.fs.getContent(gif.id)).toBe("data:image/gif;base64,AAAA");
+  expect(f.preview()).toBeUndefined();
+  expect(f.win.querySelector(".explorer-filmstrip-preview").textContent).toBe(
+    "No preview available.",
+  );
+
+  // A picture the browser cannot read shows an error, and a later rotation
+  // still runs.
+  h.item(f.win, png.id).click();
+  stubNextPicture(h, { fail: true });
+  f.button("rotate-counterclockwise").click();
+  await settle();
+  const dialog = h.s.document.querySelector(".xp-dialog");
+  expect(dialog.textContent).toContain("Windows cannot read this picture.");
+  dialog.querySelector(".dlg-buttons button").click();
+  await settle();
+  const before = drawn.length;
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  await settle();
+  expect(drawn).toHaveLength(before + 1);
+});
+
+test("Filmstrip rotations of one window run one after another", async () => {
+  const h = await openShell();
+  recordCanvas(h);
+  const f = await openFilmstrip(h, [["a.png", ART]]);
+  const [png] = f.nodes;
+  const writes = [];
+  const setContent = h.fs.setContent;
+  h.fs.setContent = (id, content, options) => {
+    writes.push(options.expectedContent);
+    return setContent(id, `${content}${writes.length}`, options);
+  };
+  stubNextPicture(h);
+  f.button("rotate-clockwise").click();
+  f.button("rotate-clockwise").click();
+  // The second rotation loads the picture only after the first one saved.
+  await flushShell();
+  stubNextPicture(h);
+  for (let i = 0; i < 6; i += 1) await flushShell();
+  expect(writes).toEqual([ART, "data:image/png;base64,1"]);
+  expect(h.fs.getContent(png.id)).toBe("data:image/png;base64,2");
+});
+
+test("an empty Filmstrip and a broken picture leave the preview empty", async () => {
+  const h = await openShell();
+  const f = await openFilmstrip(h, []);
+  for (const action of [
+    "previous",
+    "next",
+    "rotate-clockwise",
+    "rotate-counterclockwise",
+  ])
+    expect(f.button(action).disabled).toBeTrue();
+  expect(f.preview()).toBeUndefined();
+  f.key("ArrowRight");
+  // Disabled buttons do nothing.
+  f.button("next").dispatchEvent(
+    new h.s.window.MouseEvent("click", { bubbles: true }),
+  );
+  expect(f.selected()).toEqual([]);
+
+  const broken = h.fs.createFile(f.folder.id, "broken.png", {
+    content: "data:image/png;base64,AAAA",
+  });
+  await flushShell();
+  expect(f.button("next").disabled).toBeFalse();
+  f.win
+    .querySelector(".explorer-filmstrip-preview img")
+    .dispatchEvent(new h.s.window.Event("error"));
+  expect(f.preview()).toBeUndefined();
+  expect(f.win.querySelector(".explorer-filmstrip-preview").textContent).toBe(
+    "No preview available.",
+  );
+  expect(h.item(f.win, broken.id)).not.toBeNull();
+  // A folder shows no preview.
+  const inner = h.fs.createFolder(f.folder.id, "Inner");
+  await flushShell();
+  h.item(f.win, inner.id).click();
+  expect(f.win.querySelector(".explorer-filmstrip-preview").textContent).toBe(
+    "",
+  );
+});
+
+test("files show XP's icon for their type", async () => {
+  const h = await openShell();
+  const { fs } = h;
+  const names = {
+    "a.bmp": "BitmapImage.png",
+    "b.gif": "ImageDocument.png",
+    "c.png": "ImageDocument.png",
+    "d.JPG": "JpegImage.png",
+    "e.jpeg": "JpegImage.png",
+    "f.txt": "TextDocument.png",
+    "g.zip": "GenericFile.png",
+    README: "GenericFile.png",
+  };
+  const ids = Object.keys(names).map(
+    (name) => fs.createFile(fs.MY_DOCUMENTS, name, { content: "" }).id,
+  );
+  await h.open(fs.MY_DOCUMENTS);
+  const win = h.explorer();
+  expect(
+    ids.map((id) =>
+      h
+        .item(win, id)
+        .querySelector(".explorer-item-icon img")
+        .getAttribute("src"),
+    ),
+  ).toEqual(Object.values(names).map((icon) => `assets/xp/icons/${icon}`));
 });

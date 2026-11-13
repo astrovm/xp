@@ -100,6 +100,27 @@ describe("XP dialogs", () => {
     expect(dialogs.formatKilobytes(2048 * 1024)).toBe("2,048 KB");
   });
 
+  test("names file types and Details dates like XP", () => {
+    const dialogs = loadDialogs();
+    expect(dialogs.describeFileType(".JPG")).toBe("JPEG Image");
+    expect(dialogs.describeFileType(".txt")).toBe("Text Document");
+    expect(dialogs.describeFileType(".zip")).toBe("ZIP File");
+    expect(dialogs.describeFileType("")).toBe("File");
+    expect(dialogs.describeFileType(undefined)).toBe("File");
+    expect(
+      dialogs.formatDetailsDate(new Date(2008, 3, 14, 9, 5).getTime()),
+    ).toBe("4/14/2008 9:05 AM");
+    expect(
+      dialogs.formatDetailsDate(new Date(2008, 11, 1, 0, 0).getTime()),
+    ).toBe("12/1/2008 12:00 AM");
+    expect(
+      dialogs.formatDetailsDate(new Date(2008, 0, 2, 12, 30).getTime()),
+    ).toBe("1/2/2008 12:30 PM");
+    expect(
+      dialogs.formatDetailsDate(new Date(2008, 0, 2, 23, 59).getTime()),
+    ).toBe("1/2/2008 11:59 PM");
+  });
+
   test("formats negative and non-numeric sizes as zero bytes", () => {
     const dialogs = loadDialogs();
     expect(dialogs.formatBytes(-1)).toBe("0 bytes");

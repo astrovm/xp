@@ -1775,6 +1775,7 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-file-item {
+  gap: 5px;
   width: 112px;
   margin: 8px 4px 2px;
 }
@@ -1784,14 +1785,15 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 100px;
-  height: 100px;
-  border: 1px solid #d0d0bf;
+  width: 96px;
+  height: 96px;
+  border: 1px solid #ece9d8;
   background: #fff;
 }
 
+/* XP rings a selected frame in blue. */
 .dlg-file-list[data-view="thumbnails"] .dlg-file-item.selected .dlg-node-icon {
-  border: 2px solid var(--sys-highlight, #316ac5);
+  outline: 3px solid var(--sys-highlight, #316ac5);
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-node-icon img {
@@ -1803,8 +1805,8 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 .dlg-file-list[data-view="thumbnails"] .dlg-node-icon img.thumbnail-picture {
   width: auto;
   height: auto;
-  max-width: 96px;
-  max-height: 96px;
+  max-width: 94px;
+  max-height: 94px;
 }
 
 /* Tiles: a large icon beside the name, type and size. */

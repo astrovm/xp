@@ -74,12 +74,48 @@
   const formatKilobytes = (bytes) =>
     `${Math.ceil(Math.max(0, bytes) / 1024).toLocaleString("en-US")} KB`;
 
+  // XP's names for the file types the simulation stores. Other types show
+  // their extension, like "ZIP File", and a file without one shows "File".
+  const XP_FILE_TYPES = {
+    ".bmp": "Bitmap Image",
+    ".game": "Game",
+    ".gif": "GIF Image",
+    ".jpeg": "JPEG Image",
+    ".jpg": "JPEG Image",
+    ".png": "PNG Image",
+    ".txt": "Text Document",
+  };
+  const describeFileType = (ext) => {
+    const extension = String(ext || "").toLowerCase();
+    if (!extension) return "File";
+    return (
+      XP_FILE_TYPES[extension] ||
+      `${extension.replace(".", "").toUpperCase()} File`
+    );
+  };
+
+  // XP's short date in Details: "4/14/2008 9:00 AM".
+  const formatDetailsDate = (timestamp) => {
+    const date = new Date(timestamp);
+    const hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
+  };
+
   const hasDOM = typeof document !== "undefined";
   const getFS = () => globalThis.VirtualFS;
 
   if (!hasDOM) {
     // Node: expose only the pure definitions for tests.
-    return { ICONS, BUTTON_SETS, parseAccessKey, formatBytes, formatKilobytes };
+    return {
+      ICONS,
+      BUTTON_SETS,
+      parseAccessKey,
+      describeFileType,
+      formatBytes,
+      formatDetailsDate,
+      formatKilobytes,
+    };
   }
 
   // ---- Dialog stack and shared keyboard handling ----
@@ -645,9 +681,8 @@
     if (node.id === fs().DRIVE_C) return "Local Disk";
     if (node.id === fs().DRIVE_D) return "Local Disk";
     if (node.id === fs().DRIVE_F) return "Removable Disk";
-    if (node.type === "folder") return "File folder";
-    if (!node.ext) return "File";
-    return `${node.ext.replace(".", "").toUpperCase()} File`;
+    if (node.type === "folder") return "File Folder";
+    return describeFileType(node.ext);
   };
 
   // ---- Properties dialog ----
@@ -1457,10 +1492,7 @@
       const itemDetails = (node) => {
         const type = describeNodeType(node);
         const size = node.type === "folder" ? "" : formatKilobytes(node.size);
-        const date = new Date(node.modified).toLocaleString("en-US", {
-          dateStyle: "short",
-          timeStyle: "short",
-        });
+        const date = formatDetailsDate(node.modified);
         return { type, size, date };
       };
 
@@ -1641,7 +1673,10 @@
     BUTTON_SETS,
     parseAccessKey,
     fillThumbnail,
+    describeFileType,
+    describeNodeType,
     formatBytes,
+    formatDetailsDate,
     formatKilobytes,
     isPictureFolder,
     createDialog,

@@ -263,7 +263,7 @@ const wireSearchCompanion = (win) => {
         ? "Application"
         : result.gameId
           ? "Game"
-          : `${result.kind === "folder" ? "File folder" : explorerItemDescription(result.node)} — ${fs.getPath(result.node.id)}`;
+          : `${explorerItemDescription(result.node)} — ${fs.getPath(result.node.id)}`;
       label.append(name, description);
       item.append(
         result.gameId
@@ -885,9 +885,17 @@ const explorerDisplayName = (node) =>
 const isDeletedNode = (id) => id !== fs.RECYCLE_BIN && fs.isInRecycleBin(id);
 
 // XP remembers the view of each folder. A folder that has none opens in
-// Thumbnails inside My Pictures and in Tiles elsewhere. The newest views
-// come last, and the oldest go first when the list is full.
-const EXPLORER_VIEWS = ["thumbnails", "tiles", "icons", "list", "details"];
+// Filmstrip for Sample Pictures, in Thumbnails elsewhere in My Pictures,
+// and in Tiles everywhere else. Only picture folders offer Filmstrip. The
+// newest views come last, and the oldest go first when the list is full.
+const EXPLORER_VIEWS = [
+  "filmstrip",
+  "thumbnails",
+  "tiles",
+  "icons",
+  "list",
+  "details",
+];
 const EXPLORER_VIEWS_KEY = "explorerFolderViews";
 const MAX_EXPLORER_VIEWS = 400;
 const readExplorerViews = () =>
@@ -903,9 +911,16 @@ const readExplorerViews = () =>
           EXPLORER_VIEWS.includes(entry[1]),
       ),
   );
-const explorerViewFor = (folderId) =>
-  readExplorerViews().find(([id]) => id === folderId)?.[1] ??
-  (XPDialogs.isPictureFolder(folderId) ? "thumbnails" : "tiles");
+const explorerViewsFor = (folderId) =>
+  XPDialogs.isPictureFolder(folderId)
+    ? EXPLORER_VIEWS
+    : EXPLORER_VIEWS.filter((view) => view !== "filmstrip");
+const explorerViewFor = (folderId) => {
+  const saved = readExplorerViews().find(([id]) => id === folderId)?.[1];
+  if (explorerViewsFor(folderId).includes(saved)) return saved;
+  if (folderId === fs.SAMPLE_PICTURES) return "filmstrip";
+  return XPDialogs.isPictureFolder(folderId) ? "thumbnails" : "tiles";
+};
 // Every Explorer window on the folder switches to the new view.
 const setExplorerView = (folderId, view) => {
   const views = readExplorerViews().filter(([id]) => id !== folderId);
@@ -915,6 +930,123 @@ const setExplorerView = (folderId, view) => {
     if (other.type === "system" && other.currentFolderId === folderId)
       renderExplorerItems(other);
   });
+};
+
+// Filmstrip shows one picture large over a strip of thumbnails, like XP.
+// It shows the selected item, or the first item when none is selected.
+// Rotation keeps the picture's type, so only types the browser can write
+// back rotate.
+const ROTATABLE_PICTURE_TYPES = [".bmp", ".dib", ".jpg", ".jpeg", ".png"];
+const explorerFilmstripItems = (win) => [
+  ...win.el.querySelectorAll(".explorer-items .explorer-item"),
+];
+const explorerFilmstripNode = (win) => {
+  const items = explorerFilmstripItems(win);
+  const item =
+    items.find((entry) => entry.classList.contains("selected")) || items[0];
+  return item ? fs.getNode(item.dataset.nodeId) : null;
+};
+const canRotatePicture = (node) =>
+  !!fs.getPictureUrl(node.id) &&
+  ROTATABLE_PICTURE_TYPES.includes(node.ext.toLowerCase());
+
+const renderExplorerFilmstrip = (win) => {
+  const strip = win.el.querySelector(".explorer-filmstrip");
+  if (!strip) return;
+  const node = explorerFilmstripNode(win);
+  const url = node && fs.getPictureUrl(node.id);
+  const preview = strip.querySelector(".explorer-filmstrip-preview");
+  const shown = preview.querySelector("img");
+  // XP says so for a file without a picture, or one it cannot draw.
+  const showNoPreview = () => {
+    const text = document.createElement("span");
+    text.className = "explorer-filmstrip-empty";
+    text.textContent = "No preview available.";
+    preview.replaceChildren(text);
+  };
+  if (!node || node.type === "folder") preview.replaceChildren();
+  else if (!url) showNoPreview();
+  else if (shown?.getAttribute("src") !== url) {
+    const image = document.createElement("img");
+    image.alt = node.name;
+    image.addEventListener("error", showNoPreview, { once: true });
+    image.src = url;
+    preview.replaceChildren(image);
+  }
+  const hasItems = !!node;
+  strip
+    .querySelectorAll(
+      '[data-filmstrip-action="previous"], [data-filmstrip-action="next"]',
+    )
+    .forEach((button) => (button.disabled = !hasItems));
+  strip
+    .querySelectorAll('[data-filmstrip-action^="rotate"]')
+    .forEach((button) => (button.disabled = !node || !canRotatePicture(node)));
+};
+
+const createExplorerFilmstrip = () => {
+  const strip = document.createElement("div");
+  strip.className = "explorer-filmstrip";
+  const preview = document.createElement("div");
+  preview.className = "explorer-filmstrip-preview";
+  const controls = document.createElement("div");
+  controls.className = "explorer-filmstrip-controls";
+  const button = (action, title, icon) => {
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.dataset.filmstripAction = action;
+    entry.title = title;
+    entry.setAttribute("aria-label", title);
+    const image = document.createElement("img");
+    image.src = icon;
+    image.alt = "";
+    entry.appendChild(image);
+    return entry;
+  };
+  const separator = document.createElement("span");
+  separator.className = "explorer-filmstrip-separator";
+  // Full asset paths, so the build can rename them.
+  controls.append(
+    button(
+      "previous",
+      "Previous Image (Left Arrow)",
+      "assets/xp/explorer/filmstrip-previous.png",
+    ),
+    button(
+      "next",
+      "Next Image (Right Arrow)",
+      "assets/xp/explorer/filmstrip-next.png",
+    ),
+    separator,
+    button(
+      "rotate-clockwise",
+      "Rotate Clockwise",
+      "assets/xp/explorer/filmstrip-rotate-clockwise.png",
+    ),
+    button(
+      "rotate-counterclockwise",
+      "Rotate Counterclockwise",
+      "assets/xp/explorer/filmstrip-rotate-counterclockwise.png",
+    ),
+  );
+  strip.append(preview, controls);
+  return strip;
+};
+
+// Previous and Next wrap around, like XP. With no selection, the first
+// item is the current one.
+const stepExplorerFilmstrip = (win, step) => {
+  const items = explorerFilmstripItems(win);
+  if (!items.length) return;
+  const current = Math.max(
+    0,
+    items.findIndex((item) => item.classList.contains("selected")),
+  );
+  const next = items[(current + step + items.length) % items.length];
+  items.forEach((item) => item.classList.toggle("selected", item === next));
+  next.focus({ preventScroll: true });
+  next.scrollIntoView({ block: "nearest", inline: "nearest" });
+  renderExplorerSelection(win);
 };
 
 const navigateExplorer = (win, folderId, { history = true } = {}) => {
@@ -973,6 +1105,9 @@ const startExplorerRename = (win, nodeId) => {
   const item = win.el.querySelector(
     `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
   );
+  // F2 reaches both the item and the shell. A second start keeps the open
+  // edit box.
+  if (item.querySelector(".explorer-rename")) return;
   const label = item.querySelector("b");
   const node = fs.getNode(nodeId);
   const input = document.createElement("input");
@@ -1246,6 +1381,7 @@ const renderExplorerSelection = (win) => {
   renderExplorerTaskPane(win);
   renderExplorerOtherPlaces(win);
   renderExplorerDetails(win);
+  renderExplorerFilmstrip(win);
 };
 
 const renderExplorerTree = (win) => {
@@ -1422,22 +1558,13 @@ const createExplorerIcon = (node) => {
     return icon;
   }
 
-  return addImage(
-    /\.(txt|log|csv|md)$/i.test(node.name)
-      ? "TextDocument.png"
-      : "GenericFile.png",
-  );
+  return addImage(fileIconName(node.name));
 };
 
 XPDialogs.setNodeIconFactory(createExplorerIcon);
 
-const explorerItemDescription = (node) => {
-  if (node.id === fs.DRIVE_C || node.id === fs.DRIVE_D) return "Local Disk";
-  if (node.id === fs.DRIVE_F) return "Removable Disk";
-  if (node.type === "folder") return "File folder";
-  if (node.app && gamesList[node.app]) return "Game";
-  return `${(node.ext || "").replace(".", "").toUpperCase() || "File"} file`;
-};
+const explorerItemDescription = (node) =>
+  node.app && gamesList[node.app] ? "Game" : XPDialogs.describeNodeType(node);
 
 const openExplorerNode = (win, node) => {
   // XP opens Properties for an item in the Recycle Bin.
@@ -1516,8 +1643,17 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
 
   const items = main.querySelector(".explorer-items");
   const view = explorerViewFor(folder.id);
+  // A new render of the same folder keeps the selection, like XP.
+  const kept = new Set(
+    win.renderedFolderId === folder.id ? selectedExplorerNodes(win) : [],
+  );
+  win.renderedFolderId = folder.id;
   items.dataset.view = view;
   items.innerHTML = "";
+  main.dataset.view = view;
+  const strip = main.querySelector(".explorer-filmstrip");
+  if (view !== "filmstrip") strip?.remove();
+  else if (!strip) main.insertBefore(createExplorerFilmstrip(), items);
 
   const myComputerGroup = (node) =>
     [fs.SHARED_DOCUMENTS, fs.MY_DOCUMENTS].includes(node.id)
@@ -1553,17 +1689,26 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
           a.name.localeCompare(b.name),
     );
 
-  renderExplorerSelection(win);
   if (!children.length) {
     // XP leaves an empty folder's view blank.
     explorerContent.querySelector(".explorer-status").textContent = "0 objects";
+    renderExplorerSelection(win);
     return;
   }
 
   if (view === "details") {
     const header = document.createElement("div");
     header.className = "explorer-details-header";
-    header.innerHTML = "<span>Name</span><span>Type</span><span>Size</span>";
+    // XP's columns. My Computer shows no sizes or dates, because the
+    // simulation has no drive capacity.
+    (folder.id === fs.MY_COMPUTER
+      ? ["Name", "Type"]
+      : ["Name", "Size", "Type", "Date Modified"]
+    ).forEach((title) => {
+      const cell = document.createElement("span");
+      cell.textContent = title;
+      header.appendChild(cell);
+    });
     items.appendChild(header);
   }
 
@@ -1601,8 +1746,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       label.appendChild(description);
 
     const itemIcon = createExplorerIcon(node);
-    if (view === "thumbnails")
+    if (view === "thumbnails" || view === "filmstrip")
       XPDialogs.fillThumbnail(itemIcon, node, createExplorerIcon);
+    if (kept.has(node.id)) item.classList.add("selected");
     item.append(itemIcon, label);
     if (folder.id === fs.MY_COMPUTER) item.classList.add("my-computer-item");
     if (view === "details") {
@@ -1610,13 +1756,19 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       const type = document.createElement("span");
       type.className = "explorer-detail-type";
       type.textContent = explorerItemDescription(node);
-      const size = document.createElement("span");
-      size.className = "explorer-detail-size";
-      size.textContent =
-        node.type === "folder"
-          ? ""
-          : XPDialogs.formatKilobytes(fs.getSize(node.id));
-      item.append(type, size);
+      if (folder.id === fs.MY_COMPUTER) item.append(type);
+      else {
+        const size = document.createElement("span");
+        size.className = "explorer-detail-size";
+        size.textContent =
+          node.type === "folder"
+            ? ""
+            : XPDialogs.formatKilobytes(fs.getSize(node.id));
+        const modified = document.createElement("span");
+        modified.className = "explorer-detail-modified";
+        modified.textContent = XPDialogs.formatDetailsDate(node.modified);
+        item.append(size, type, modified);
+      }
     }
     item.addEventListener("click", (event) => {
       if (!event.ctrlKey && !event.metaKey) {
@@ -1663,6 +1815,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   });
   explorerContent.querySelector(".explorer-status").textContent =
     `${children.length} ${children.length === 1 ? "object" : "objects"}`;
+  renderExplorerSelection(win);
 };
 
 // Games participate in the filesystem as ".game" files on the Desktop,

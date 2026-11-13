@@ -484,7 +484,11 @@ test("Views switches between XP's five list views", async () => {
     [...note.querySelectorAll(".dlg-file-item-detail")].map(
       (cell) => cell.textContent,
     ),
-  ).toEqual(["1 KB", "TXT File", expect.stringMatching(/\d/)]);
+  ).toEqual([
+    "1 KB",
+    "Text Document",
+    expect.stringMatching(/^\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{2} [AP]M$/),
+  ]);
   const music = [...list.querySelectorAll(".dlg-file-item")].find((item) =>
     item.textContent.startsWith("My Music"),
   );

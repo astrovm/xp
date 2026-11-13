@@ -287,11 +287,7 @@ const getFolderMenu = (folderId) => {
           ? { icon: "LocalDisk.png" }
           : node.type === "folder"
             ? { icon: "NewFolder.png" }
-            : {
-                iconSrc: /\.(txt|log|csv|md)$/i.test(node.name)
-                  ? "assets/xp/icons/TextDocument.png"
-                  : "assets/xp/icons/GenericFile.png",
-              }),
+            : { iconSrc: XP_ICON_PATHS[fileIconName(node.name)] }),
       ...(node.type === "folder"
         ? { children: () => getFolderMenu(node.id) }
         : { action: () => openDesktopItem(node.id) }),

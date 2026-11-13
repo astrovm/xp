@@ -396,7 +396,7 @@ test("Explorer shows game icons, descriptions, and survives failing file handler
     h.item(iconless.id).querySelector(".explorer-item-emoji"),
   ).toBeTruthy();
   expect(h.item(withIcon.id).textContent).toContain("Game");
-  expect(h.item(plain.id).textContent).toContain("File file");
+  expect(h.item(plain.id).querySelector("small").textContent).toBe("File");
   const errors = [];
   const originalError = s.window.console.error;
   s.window.console.error = (error) => errors.push(error);

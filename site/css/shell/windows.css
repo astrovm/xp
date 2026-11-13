@@ -1510,62 +1510,171 @@ html:not(.keyboard-cues) .menu-accesskey {
 .explorer-items[data-view="icons"] {
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
 }
-.explorer-items[data-view="thumbnails"] {
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+/* Thumbnails, like XP: 96px frames 125px apart, the first one 15px from
+   the left and 5px from the top, with the name 5px under the frame. */
+.explorer-items[data-view="thumbnails"],
+.explorer-items[data-view="filmstrip"] {
+  grid-template-columns: repeat(auto-fill, 110px);
+  gap: 10px 15px;
+  padding-top: 3px;
 }
-/* Thumbnails: a 100px frame with the name under it, like XP. */
-.explorer-items[data-view="thumbnails"] .explorer-item {
+.explorer-items[data-view="thumbnails"] .explorer-item,
+.explorer-items[data-view="filmstrip"] .explorer-item {
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-height: 0;
-  padding: 2px;
+  padding: 0 7px;
   border: 0;
   background: transparent;
   text-align: center;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item .explorer-item-icon {
+.explorer-items[data-view="thumbnails"] .explorer-item .explorer-item-icon,
+.explorer-items[data-view="filmstrip"] .explorer-item .explorer-item-icon {
   box-sizing: border-box;
-  width: 100px;
-  height: 100px;
-  border: 1px solid #d0d0bf;
+  width: 96px;
+  height: 96px;
+  border: 1px solid #ece9d8;
   background: #fff;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item.selected {
+.explorer-items[data-view="thumbnails"] .explorer-item.selected,
+.explorer-items[data-view="filmstrip"] .explorer-item.selected {
   background: transparent;
   color: inherit;
 }
+/* XP rings a selected frame in blue and keeps the picture. */
 .explorer-items[data-view="thumbnails"]
   .explorer-item.selected
+  .explorer-item-icon,
+.explorer-items[data-view="filmstrip"]
+  .explorer-item.selected
   .explorer-item-icon {
-  border: 2px solid var(--sys-highlight, #316ac5);
+  outline: 3px solid var(--sys-highlight, #316ac5);
 }
-/* XP marks a selected thumbnail with its frame, and keeps the picture. */
 .explorer-items[data-view="thumbnails"]
+  .explorer-item.selected
+  .explorer-item-icon
+  :is(.thumbnail-picture, .folder-thumbnail img),
+.explorer-items[data-view="filmstrip"]
   .explorer-item.selected
   .explorer-item-icon
   :is(.thumbnail-picture, .folder-thumbnail img) {
   filter: none;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item.selected b {
+.explorer-items[data-view="thumbnails"] .explorer-item.selected b,
+.explorer-items[data-view="filmstrip"] .explorer-item.selected b {
   background: var(--sys-highlight, #316ac5);
   color: #fff;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item small {
+.explorer-items[data-view="thumbnails"] .explorer-item small,
+.explorer-items[data-view="filmstrip"] .explorer-item small {
   display: none;
 }
-.explorer-items[data-view="thumbnails"] .explorer-item b {
+/* A name may use the whole column, wider than its frame. */
+.explorer-items[data-view="thumbnails"] .explorer-item-label,
+.explorer-items[data-view="filmstrip"] .explorer-item-label {
+  max-width: 110px;
+  margin: 0 -7px;
+}
+.explorer-items[data-view="thumbnails"] .explorer-item b,
+.explorer-items[data-view="filmstrip"] .explorer-item b {
   padding: 0 2px;
   font-weight: normal;
   overflow-wrap: anywhere;
 }
 .explorer-items[data-view="thumbnails"]
   .explorer-item-icon
+  img.thumbnail-picture,
+.explorer-items[data-view="filmstrip"]
+  .explorer-item-icon
   img.thumbnail-picture {
   width: auto;
   height: auto;
-  max-width: 96px;
-  max-height: 96px;
+  max-width: 94px;
+  max-height: 94px;
+}
+
+/* Filmstrip, like XP: the current picture large on a pale blue area, the
+   buttons under it, and one row of thumbnails at the bottom. */
+.explorer-main[data-view="filmstrip"] {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.explorer-filmstrip {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: #eef2fb;
+}
+.explorer-filmstrip-preview {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  margin: 5px 5px 0;
+}
+.explorer-filmstrip-preview img {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  border: 1px solid #000;
+}
+.explorer-filmstrip-empty {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  transform: translateY(-50%);
+  text-align: center;
+}
+.explorer-filmstrip-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0 17px;
+}
+.explorer-filmstrip-controls button {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  cursor: var(--xp-cursor);
+}
+.explorer-filmstrip-controls button:hover:not(:disabled) {
+  border-color: #cec9b8;
+  background: #fff;
+}
+.explorer-filmstrip-controls button:disabled img {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
+.explorer-filmstrip-controls img {
+  width: 16px;
+  height: 16px;
+}
+.explorer-filmstrip-separator {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: #cac6af;
+}
+.explorer-items[data-view="filmstrip"] {
+  display: grid;
+  height: 160px;
+  flex: none;
+  grid-auto-columns: 110px;
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  overflow: auto hidden;
+  padding: 5px 0 0 8px;
+  background: #fff;
 }
 
 /* A folder with pictures in Thumbnails view: a large folder that holds up
@@ -1573,35 +1682,40 @@ html:not(.keyboard-cues) .menu-accesskey {
 .folder-thumbnail {
   position: relative;
   display: block;
-  width: 88px;
-  height: 74px;
+  width: 92px;
+  height: 91px;
 }
+/* The back of the folder and its flat tab. */
 .folder-thumbnail::before {
   content: "";
   position: absolute;
-  inset: 0;
-  border: 1px solid #c39b32;
-  border-radius: 2px;
-  background: linear-gradient(#fbe7a1, #eac15c);
-  clip-path: polygon(0 0, 38% 0, 46% 10%, 100% 10%, 100% 100%, 0 100%);
+  top: 0;
+  left: 2px;
+  width: 36px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1px solid #aa8f36;
+  border-radius: 3px 3px 0 0;
+  background: #fde89a;
 }
+/* The front of the folder. */
 .folder-thumbnail::after {
   content: "";
   position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 14px;
-  border-top: 1px solid #c39b32;
-  background: linear-gradient(#f6d77e, #e3b44a);
+  inset: 3px 0 0;
+  box-sizing: border-box;
+  border: 1px solid #aa8f36;
+  border-radius: 3px;
+  background: linear-gradient(#fff6b1, #feeb8c 45%, #fbca51);
 }
 .folder-thumbnail-pictures {
   position: absolute;
-  inset: 12px 6px 6px;
+  z-index: 1;
+  inset: 8px 6px 3px 4px;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(2, 1fr);
-  gap: 3px;
+  gap: 2px 3px;
 }
 .folder-thumbnail-pictures > span {
   display: flex;
@@ -1616,8 +1730,6 @@ html:not(.keyboard-cues) .menu-accesskey {
   height: auto;
   max-width: 100%;
   max-height: 100%;
-  border: 1px solid #fff;
-  box-shadow: 0 0 0 1px #9a8a5a;
 }
 .explorer-items[data-view="list"] {
   display: block;
@@ -1628,44 +1740,115 @@ html:not(.keyboard-cues) .menu-accesskey {
 .explorer-items[data-view="details"] {
   display: block;
 }
-/* Details: a small icon and the name, then the type and the size, like XP. */
+/* The shade of the sorted Name column runs to the bottom, like XP. */
+.explorer-main[data-view="details"] {
+  padding: 0;
+  background: linear-gradient(90deg, #f7f7f7 178px, #fff 178px) local;
+}
+/* Details, like XP: a 20px header, then Name, Size, Type and Date Modified
+   in 17px rows. The sorted Name column is shaded. */
 .explorer-details-header,
 .explorer-items[data-view="details"] .explorer-details-row {
   display: grid;
-  grid-template-columns: 16px minmax(160px, 1fr) 150px 80px;
-  column-gap: 4px;
+  grid-template-columns: 22px 156px 96px 120px 120px;
   align-items: center;
+  min-width: max-content;
+}
+/* My Computer shows only Name and Type, in groups, and sorts by none. */
+.explorer-main[data-view="details"]:has(.my-computer-item) {
+  background: #fff;
+}
+.explorer-main[data-view="details"]:has(.my-computer-item)
+  :is(.explorer-details-header, .explorer-details-row) {
+  grid-template-columns: 21px 99px 150px;
+}
+.explorer-items[data-view="details"] .explorer-group-heading {
+  margin: 10px 0 12px 13px;
+}
+.explorer-items[data-view="details"]
+  .explorer-details-row
+  + .explorer-group-heading {
+  margin-top: 14px;
 }
 .explorer-details-header > span:first-child {
   grid-column: span 2;
 }
 .explorer-details-header {
-  padding: 3px 6px;
-  border-bottom: 1px solid #aaa;
-  background: var(--xp-beige);
-  font-weight: bold;
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 20px;
+  box-sizing: border-box;
+  box-shadow:
+    inset 0 -1px #cbc7b8,
+    inset 0 -2px #d6d2c2,
+    inset 0 -3px #e2decd;
+  background: #ebeadb;
+}
+.explorer-details-header > span {
+  overflow: hidden;
+  padding: 0 6px;
+  border-right: 1px solid #d6d2c2;
+  white-space: nowrap;
+}
+.explorer-items[data-view="details"] .explorer-details-row {
+  width: 100%;
+  max-width: none;
+  height: 17px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+}
+.explorer-items[data-view="details"] .explorer-details-row > span {
+  overflow: hidden;
+  padding: 0 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-items[data-view="details"]
+  .explorer-details-row
+  > .explorer-item-icon {
+  justify-self: end;
+  padding: 0;
+}
+/* XP highlights only the name of a selected row. */
+.explorer-items[data-view="details"] .explorer-details-row.selected {
+  background: transparent;
+  color: inherit;
+}
+.explorer-items[data-view="details"] .explorer-details-row.selected b {
+  background: var(--sys-highlight, #316ac5);
+  color: #fff;
+}
+.explorer-items[data-view="details"]
+  .explorer-details-row
+  > .explorer-item-label {
+  min-width: 0;
+  padding-left: 3px;
 }
 .explorer-items[data-view="details"] .explorer-item .explorer-item-icon,
 .explorer-items[data-view="details"] .explorer-item .explorer-item-icon img {
   width: 16px;
   height: 16px;
 }
-.explorer-items[data-view="details"] .explorer-item-label {
-  min-width: 0;
-}
 .explorer-items[data-view="details"] .explorer-item-label small {
   display: none;
 }
-.explorer-details-header > span:last-child,
+.explorer-items[data-view="details"] .explorer-item-label b {
+  display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
+  vertical-align: top;
+  overflow: hidden;
+  padding: 0 2px;
+  font-weight: normal;
+  text-overflow: ellipsis;
+}
 .explorer-detail-size {
   text-align: right;
 }
-.explorer-items[data-view="details"] .explorer-item {
-  width: 100%;
-  max-width: none;
-  min-height: 20px;
-  padding: 1px 6px;
-  border-bottom: 1px solid #eee;
+.explorer-details-header > span:nth-child(2):not(:last-child) {
+  text-align: right;
 }
 
 .explorer-item-icon {

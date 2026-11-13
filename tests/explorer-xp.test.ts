@@ -144,7 +144,7 @@ test("tasks and Details follow the selection", async () => {
   const item = (id) =>
     win.querySelector(`.explorer-item[data-node-id="${id}"]`);
   expect(tasks(win)).toEqual(["Make a new folder"]);
-  expect(details(win)).toEqual(["Work", "File folder"]);
+  expect(details(win)).toEqual(["Work", "File Folder"]);
   expect(places(win)).toEqual([
     "My Documents",
     "Shared Documents",
@@ -154,7 +154,7 @@ test("tasks and Details follow the selection", async () => {
   item(note.id).click();
   expect(tasks(win)).toEqual(["Rename this file", "Delete this file"]);
   expect(details(win)[0]).toBe("note.txt");
-  expect(details(win)[1]).toBe("TXT file");
+  expect(details(win)[1]).toBe("Text Document");
   expect(details(win)[2]).toContain("Date Modified:");
   expect(details(win)[3]).toBe("Size: 5 bytes");
 

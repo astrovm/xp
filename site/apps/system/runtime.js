@@ -1,15 +1,19 @@
+import { encodeCanvas } from "../paint/file-formats.js";
 import { createControlPanel } from "./control-panel.js";
 
 export const createSystemRuntime = (context) => {
   const {
     EXPLORER_VIEWS,
     XPDialogs,
+    canRotatePicture,
     closeGameWindow,
     confirmRecycleDelete,
     confirmRecycleBinDelete,
     explorerBack,
     explorerForward,
+    explorerFilmstripNode,
     explorerViewFor,
+    explorerViewsFor,
     fileOps,
     fs,
     navigateExplorer,
@@ -25,8 +29,47 @@ export const createSystemRuntime = (context) => {
     setAccessKeyText,
     setExplorerView,
     startExplorerRename,
+    stepExplorerFilmstrip,
     wireProjectSettings,
   } = context;
+
+  const EXPLORER_VIEW_LABELS = {
+    filmstrip: "Filmstrip",
+    thumbnails: "Thumbnails",
+    tiles: "Tiles",
+    icons: "Icons",
+    list: "List",
+    details: "Details",
+  };
+
+  const loadPicture = (url) =>
+    new Promise((resolve, reject) => {
+      const image = document.createElement("img");
+      image.addEventListener("load", () => resolve(image), { once: true });
+      image.addEventListener(
+        "error",
+        () => reject(new Error("Windows cannot read this picture.")),
+        { once: true },
+      );
+      image.src = url;
+    });
+
+  // Turns the picture a quarter turn and saves it in its own type, like
+  // XP's Filmstrip.
+  const rotatePicture = async (node, clockwise) => {
+    const content = fs.getContent(node.id);
+    const image = await loadPicture(fs.getPictureUrl(node.id));
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalHeight;
+    canvas.height = image.naturalWidth;
+    const context2d = canvas.getContext("2d");
+    if (clockwise) context2d.setTransform(0, 1, -1, 0, canvas.width, 0);
+    else context2d.setTransform(0, -1, 1, 0, 0, canvas.height);
+    context2d.drawImage(image, 0, 0);
+    await fs.setContent(node.id, await encodeCanvas(canvas, node.name), {
+      expectedContent: content,
+    });
+  };
 
   const controlPanel = createControlPanel(context);
 
@@ -352,15 +395,60 @@ export const createSystemRuntime = (context) => {
       items.className = "explorer-items";
       items.tabIndex = 0;
       main.appendChild(items);
-      // Clicking empty space clears the selection, like XP.
+      // Clicking empty space clears the selection, like XP. The Filmstrip
+      // preview and its buttons keep it.
       main.addEventListener("pointerdown", (event) => {
-        if (!event.target.closest(".explorer-item")) {
+        if (!event.target.closest(".explorer-item, .explorer-filmstrip")) {
           items.focus({ preventScroll: true });
           items
             .querySelectorAll(".explorer-item.selected")
             .forEach((item) => item.classList.remove("selected"));
           renderExplorerSelection(win);
         }
+      });
+
+      // Rotations of one window run one after another, so each one starts
+      // from the picture the last one saved.
+      let rotation = Promise.resolve();
+      const runFilmstripAction = (action) => {
+        if (action === "previous") stepExplorerFilmstrip(win, -1);
+        if (action === "next") stepExplorerFilmstrip(win, 1);
+        if (!action.startsWith("rotate")) return;
+        rotation = rotation.then(async () => {
+          const node = explorerFilmstripNode(win);
+          if (!node || !canRotatePicture(node)) return;
+          try {
+            await rotatePicture(node, action === "rotate-clockwise");
+          } catch (error) {
+            await XPDialogs.alert(
+              error.message || "Windows cannot rotate this picture.",
+              "Windows Picture and Fax Viewer",
+              "error",
+            );
+          }
+        });
+      };
+      main.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-filmstrip-action]");
+        if (button && !button.disabled)
+          runFilmstripAction(button.dataset.filmstripAction);
+      });
+      const filmstripKeys = {
+        ArrowLeft: "previous",
+        ArrowRight: "next",
+        k: "rotate-clockwise",
+        l: "rotate-counterclockwise",
+      };
+      main.addEventListener("keydown", (event) => {
+        if (main.dataset.view !== "filmstrip") return;
+        if (event.target.closest("input, textarea")) return;
+        const key =
+          event.key.length === 1 ? event.key.toLowerCase() : event.key;
+        const action = filmstripKeys[key];
+        const wantsCtrl = action?.startsWith("rotate");
+        if (!action || event.altKey || event.ctrlKey !== !!wantsCtrl) return;
+        event.preventDefault();
+        runFilmstripAction(action);
       });
 
       const chrome = document.createElement("div");
@@ -543,18 +631,14 @@ export const createSystemRuntime = (context) => {
         );
         const currentFolderName = fs.getNode(win.currentFolderId).name;
         const currentView = explorerViewFor(win.currentFolderId);
-        const viewEntries = [
-          ["Thumbnails", "thumbnails"],
-          ["Tiles", "tiles"],
-          ["Icons", "icons"],
-          ["List", "list"],
-          ["Details", "details"],
-        ].map(([label, action]) => ({
-          label,
-          action,
-          radio: true,
-          checked: currentView === action,
-        }));
+        const viewEntries = explorerViewsFor(win.currentFolderId).map(
+          (action) => ({
+            label: EXPLORER_VIEW_LABELS[action],
+            action,
+            radio: true,
+            checked: currentView === action,
+          }),
+        );
         const actions = {
           file: [
             {
