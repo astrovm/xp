@@ -41,6 +41,8 @@ export default defineConfig(
       "reports/",
       "build/",
       "dist/",
+      // A build stages its output here before it replaces dist/.
+      ".dist-build-*/",
       "site/iframe/inside-the-firewall/",
       "site/vendor/",
     ],

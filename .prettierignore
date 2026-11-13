@@ -1,5 +1,6 @@
 coverage/
 dist/
+.dist-build-*/
 node_modules/
 source-media/
 site/iframe/inside-the-firewall/
