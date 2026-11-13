@@ -564,6 +564,8 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   fs.destroy(h.nested.id);
   await settle();
   expect(forward.disabled).toBeTrue();
+  // A click that still gets through does nothing.
+  forward.disabled = false;
   await h.action("forward");
   expect(h.address().value).toBe(fs.getPath(h.folder.id));
 

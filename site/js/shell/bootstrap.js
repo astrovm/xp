@@ -511,13 +511,7 @@ document.addEventListener("keydown", async (e) => {
         e.preventDefault();
         if (e.shiftKey) confirmPermanentDelete(selected);
         else if (explorerWin.currentFolderId === fs.RECYCLE_BIN)
-          XPDialogs.confirm(
-            "Are you sure you want to permanently delete the selected items?",
-            "Confirm File Delete",
-            "warning",
-          ).then(
-            async (yes) => yes && (await fileOps.permanentlyDelete(selected)),
-          );
+          confirmRecycleBinDelete(selected);
         else confirmRecycleDelete(selected);
         return;
       }

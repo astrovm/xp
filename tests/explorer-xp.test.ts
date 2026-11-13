@@ -365,8 +365,27 @@ test("the Recycle Bin's File menu deletes for good and never renames", async () 
   command("delete").click();
   await settle();
   const dialog = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
-  expect(dialog.textContent).toContain("permanently delete this item");
+  expect(dialog.textContent).toContain("permanently delete the selected items");
   dialog.querySelector('[data-action="yes"]').click();
   await settle();
   expect(!!fs.getNode(file.id)).toBeFalse();
+  // An item restored while the question is open, for example in another
+  // tab, is not deleted.
+  const kept = fs.createFile(fs.DESKTOP, "kept.txt");
+  fs.remove(kept.id);
+  await settle();
+  bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`).click();
+  bin.querySelector('[data-explorer-menu="file"]').click();
+  command("delete").click();
+  await settle();
+  fs.restore(kept.id);
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="yes"]')
+    .click();
+  await settle();
+  expect(fs.getNode(kept.id).parent).toBe(fs.DESKTOP);
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("File operation");
 });

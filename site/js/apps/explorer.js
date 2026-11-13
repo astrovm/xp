@@ -550,6 +550,26 @@ const confirmRecycleDelete = (ids) => {
   );
 };
 
+// Deletes items from the Recycle Bin for good. An item restored meanwhile,
+// for example in another tab, is not deleted: the operation fails instead.
+const confirmRecycleBinDelete = async (ids) => {
+  const yes = await XPDialogs.confirm(
+    "Are you sure you want to permanently delete the selected items?",
+    "Confirm File Delete",
+    "warning",
+  );
+  if (!yes) return;
+  try {
+    await fileOps.permanentlyDelete(ids);
+  } catch (error) {
+    await XPDialogs.alert(
+      error.message || "The file operation failed.",
+      "File operation",
+      "error",
+    );
+  }
+};
+
 // Empty Recycle Bin is only enabled while the bin has items.
 const confirmEmptyRecycleBin = () => {
   const count = fs.getChildren(fs.RECYCLE_BIN).length;
@@ -1246,14 +1266,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       if (command === "properties") XPDialogs.properties(selected[0]);
       if (command === "rename") startExplorerRename(win, selected[0]);
       if (command === "delete") await confirmRecycleDelete(selected);
-      if (command === "permanent") {
-        const yes = await XPDialogs.confirm(
-          "Are you sure you want to permanently delete the selected items?",
-          "Confirm File Delete",
-          "warning",
-        );
-        if (yes) await fileOps.permanentlyDelete(selected);
-      }
+      if (command === "permanent") await confirmRecycleBinDelete(selected);
       close();
     } catch (error) {
       await XPDialogs.alert(

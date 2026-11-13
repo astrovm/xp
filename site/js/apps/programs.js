@@ -219,7 +219,7 @@ const systemApplicationContext = () => ({
   turnOff,
   confirmEmptyRecycleBin,
   confirmRecycleDelete,
-  confirmPermanentDelete,
+  confirmRecycleBinDelete,
   explorerBack,
   explorerForward,
   fileOps,

@@ -5,7 +5,7 @@ export const createSystemRuntime = (context) => {
     XPDialogs,
     closeGameWindow,
     confirmRecycleDelete,
-    confirmPermanentDelete,
+    confirmRecycleBinDelete,
     explorerBack,
     explorerForward,
     fileOps,
@@ -670,7 +670,7 @@ export const createSystemRuntime = (context) => {
             // Delete key.
             if (command === "delete")
               await (win.currentFolderId === fs.RECYCLE_BIN
-                ? confirmPermanentDelete(selected)
+                ? confirmRecycleBinDelete(selected)
                 : confirmRecycleDelete(selected));
             if (command === "delete-current" || command === "rename-current")
               XPDialogs.alert(
