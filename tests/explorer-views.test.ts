@@ -988,6 +988,10 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   expect(focused()).toBe(label(edit));
   key(edit, "Escape");
   expect(focused()).toBe(label(item(a)));
+  // Escape in the address bar leaves the focus there.
+  address.focus();
+  key(address, "Escape");
+  expect(focused()).toBe(label(address));
 
   // The empty space of an empty folder keeps the focus after a delete.
   const empty = fs.createFolder(fs.MY_DOCUMENTS, "Empty");

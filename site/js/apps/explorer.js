@@ -1138,12 +1138,10 @@ const startExplorerRename = (win, nodeId) => {
       ? node.name.lastIndexOf(".")
       : node.name.length,
   );
-  let finished = false;
   // Enter and Escape give the focus back to the item. A click elsewhere
-  // keeps the focus where the user put it.
+  // keeps the focus where the user put it. Each ends the rename once: the
+  // box leaves the page, so its blur does nothing more.
   const finish = async (commit, refocus) => {
-    if (finished) return;
-    finished = true;
     input.replaceWith(label);
     if (refocus) item.focus();
     if (!commit || input.value === node.name) return;
