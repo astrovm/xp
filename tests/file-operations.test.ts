@@ -90,7 +90,7 @@ describe("file operations", () => {
     return { atomicSource, atomicA, atomicB, atomicTarget, oldA, oldB };
   };
 
-  test("tracks clipboard state and names same-folder copies deterministically", () => {
+  test("tracks clipboard state and names same-folder copies deterministically", async () => {
     const { source, nested, note, destination } = createClipboardFixture();
 
     expect(operations.canPaste(destination.id)).toBe(false);
@@ -100,34 +100,42 @@ describe("file operations", () => {
       ids: [source.id],
     });
     expect(operations.canPaste(destination.id)).toBe(true);
-    const [copied] = operations.paste(destination.id);
+    const {
+      results: [copied],
+    } = await operations.pasteWithConflicts(destination.id);
     expect(copied.name).toBe("Source");
     expect(fs.getChildren(copied.id).length).toBe(2);
     operations.copy([note.id]);
-    const [sameFolderCopy] = operations.paste(source.id);
+    const {
+      results: [sameFolderCopy],
+    } = await operations.pasteWithConflicts(source.id);
     expect(sameFolderCopy.name).toBe("Copy of note.txt");
   });
 
-  test("moves cut items on paste and clears the clipboard only after success", () => {
+  test("moves cut items on paste and clears the clipboard only after success", async () => {
     const { note, destination } = createClipboardFixture();
 
     operations.cut([note.id]);
     expect(operations.canPaste(destination.id)).toBe(true);
-    const [moved] = operations.paste(destination.id);
+    const {
+      results: [moved],
+    } = await operations.pasteWithConflicts(destination.id);
     expect(moved.id).toBe(note.id);
     expect(fs.getNode(note.id).parent).toBe(destination.id);
     expect(operations.getClipboard()).toBe(null);
-    expect(() => operations.paste(destination.id)).toThrow(
+    await expect(operations.pasteWithConflicts(destination.id)).rejects.toThrow(
       /clipboard is empty/,
     );
   });
 
-  test("keeps a cut clipboard and its source when the destination is invalid", () => {
+  test("keeps a cut clipboard and its source when the destination is invalid", async () => {
     const { source, nested } = createClipboardFixture();
 
     operations.cut([source.id]);
     expect(operations.canPaste(nested.id)).toBe(false);
-    expect(() => operations.paste(nested.id)).toThrow(/into itself/);
+    await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
+      /into itself/,
+    );
     expect(operations.getClipboard()).toEqual({
       mode: "cut",
       ids: [source.id],
@@ -279,7 +287,7 @@ describe("file operations", () => {
     expect(operations.canPaste(destination.id)).toBe(false);
   });
 
-  test("keeps items cut in the Recycle Bin, so Paste takes them out", () => {
+  test("keeps items cut in the Recycle Bin, so Paste takes them out", async () => {
     const { note, destination } = createClipboardFixture();
     operations.removeToBin([note.id]);
     operations.cut([note.id]);
@@ -291,9 +299,47 @@ describe("file operations", () => {
     const kept = fs.createFile(destination.id, "kept.txt");
     operations.removeToBin([kept.id]);
     operations.cut([kept.id]);
-    operations.paste(destination.id);
+    await operations.pasteWithConflicts(destination.id);
     expect(fs.getNode(kept.id).parent).toBe(destination.id);
     expect(fs.isInRecycleBin(kept.id)).toBe(false);
+    // Restored and deleted again, it went to the bin after the cut.
+    const again = fs.createFile(destination.id, "again.txt");
+    operations.removeToBin([again.id]);
+    operations.cut([again.id]);
+    operations.restore([again.id]);
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [again.id] });
+    operations.removeToBin([again.id]);
+    expect(operations.getClipboard()).toBeNull();
+  });
+
+  test("skips items deleted while a paste runs and keeps them off the clipboard", async () => {
+    const { conflictSource, conflictTarget } = createConflictFixture();
+    const [a, b, c, d] = ["a.txt", "b.txt", "c.txt", "d.txt"].map((name) =>
+      fs.createFile(conflictSource.id, name),
+    );
+    operations.cut([a.id, b.id, c.id, d.id]);
+    let checks = 0;
+    const result = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      () => "rename",
+      {
+        // Cancel comes before d moves.
+        isCancelled: () => ++checks === 4,
+        onProgress: () => {
+          // After a moves, b goes to the bin and c is destroyed.
+          if (fs.getNode(c.id)) {
+            fs.remove(b.id);
+            fs.destroy(c.id);
+          }
+        },
+      },
+    );
+    expect(result.cancelled).toBe(true);
+    expect(fs.getNode(a.id).parent).toBe(conflictTarget.id);
+    expect(fs.isInRecycleBin(b.id)).toBe(true);
+    expect(fs.getNode(c.id)).toBeNull();
+    // Cancel keeps only d, the item still waiting.
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [d.id] });
   });
 
   test("keeps a cut or copy made while a paste runs", async () => {
@@ -621,17 +667,25 @@ describe("file operations", () => {
       '"missing" was not found',
     );
     operations.copy([note.id]);
-    expect(() => operations.paste(note.id)).toThrow("must be a folder");
+    await expect(operations.pasteWithConflicts(note.id)).rejects.toThrow(
+      "must be a folder",
+    );
     operations.copy([source.id]);
-    expect(() => operations.paste(nested.id)).toThrow(
+    await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
       'cannot copy "Source" into itself',
     );
-    expect(() => operations.paste(source.id)).toThrow("into itself");
+    await expect(operations.pasteWithConflicts(source.id)).rejects.toThrow(
+      "into itself",
+    );
     expect(operations.canPaste(nested.id)).toBeFalse();
     operations.cut([source.id]);
-    expect(() => operations.paste(nested.id)).toThrow("into itself");
+    await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
+      "into itself",
+    );
     fs.getNode(source.id).protected = true;
-    expect(() => operations.paste(fs.DESKTOP)).toThrow("access is denied");
+    await expect(operations.pasteWithConflicts(fs.DESKTOP)).rejects.toThrow(
+      "access is denied",
+    );
     expect(() => operations.cut([fs.MY_DOCUMENTS])).toThrow("access is denied");
     operations.resetForTests();
     await expect(operations.pasteWithConflicts(fs.DESKTOP)).rejects.toThrow(

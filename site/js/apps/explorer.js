@@ -788,8 +788,12 @@ const importDroppedFiles = async (destinationId, dataTransfer) => {
   }
 };
 // The items an Explorer drag carries. A folder never shows as a drop target
-// for itself or for a folder inside it.
+// for itself or for a folder inside it. The document hears dragend also
+// when a redraw removed the dragged item.
 let explorerDragIds = [];
+document.addEventListener("dragend", () => {
+  explorerDragIds = [];
+});
 const wireFolderDropTarget = (element, destinationId) => {
   element.dataset.dropDestinationId = destinationId;
   element.addEventListener("dragover", (event) => {
@@ -818,6 +822,7 @@ const wireFolderDropTarget = (element, destinationId) => {
   element.addEventListener("drop", async (event) => {
     event.preventDefault();
     element.classList.remove("drop-target");
+    explorerDragIds = [];
     try {
       const payload = event.dataTransfer?.getData(
         "application/x-astro-vfs-ids",
@@ -1582,9 +1587,6 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
         JSON.stringify(explorerDragIds),
       );
       event.dataTransfer.effectAllowed = "move";
-    });
-    item.addEventListener("dragend", () => {
-      explorerDragIds = [];
     });
     item.addEventListener("dblclick", () => openExplorerNode(win, node));
     item.addEventListener("keydown", (e) => {

@@ -330,9 +330,13 @@ const wireDesktopIconDrag = (icon) => {
             });
           }
           returnIcons();
-          movingDesktopIds.clear();
+          selected.forEach(({ item }) =>
+            movingDesktopIds.delete(item.dataset.desktopId),
+          );
+          // Icons of another drop that still runs stay hidden.
           container.querySelectorAll(".desktop-icon").forEach((item) => {
-            item.style.visibility = "";
+            if (!movingDesktopIds.has(item.dataset.desktopId))
+              item.style.visibility = "";
           });
           // A failed delete shows an alert, like the Delete key.
           if (failure) await alertFileOperationError(failure);

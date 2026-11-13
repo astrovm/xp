@@ -71,13 +71,17 @@
   // the Recycle Bin after the cut or copy. This runs only after a change was
   // saved, so a failed delete keeps the clipboard. It covers every way to
   // delete: the Delete key, a drag to the bin, uninstall and other tabs.
+  // An item is still there when it exists, and is in the Recycle Bin only
+  // if it already was there (fromBin).
+  const isStillThere = (id, fromBin) =>
+    !!fs.getNode(id) && (!fs.isInRecycleBin(id) || fromBin.includes(id));
   const pruneClipboard = () => {
     if (!clipboard) return;
-    const remaining = clipboard.ids.filter(
-      (id) =>
-        !!fs.getNode(id) &&
-        (!fs.isInRecycleBin(id) || clipboard.fromBin.includes(id)),
+    const remaining = clipboard.ids.filter((id) =>
+      isStillThere(id, clipboard.fromBin),
     );
+    // An item restored from the bin and deleted again leaves the clipboard.
+    clipboard.fromBin = clipboard.fromBin.filter((id) => fs.isInRecycleBin(id));
     if (remaining.length !== clipboard.ids.length) setClipboardIds(remaining);
   };
 
@@ -190,33 +194,6 @@
     }
   };
 
-  const paste = (destinationId) => {
-    if (!clipboard) throw new Error("FileOperations: clipboard is empty");
-    assertWritableFolder(destinationId);
-    const ids = getTopLevelIds(clipboard.ids);
-    const mode = clipboard.mode;
-    if (mode === "cut") assertMovableTo(ids, destinationId);
-    else assertCopyableTo(ids, destinationId);
-
-    // VirtualFS deduplicates conflicts deterministically. All validation
-    // happens before mutations so ordinary paste failures preserve state.
-    const results =
-      mode === "cut"
-        ? ids.map((id) => fs.move(id, destinationId))
-        : ids.map((id) => fs.copy(id, destinationId));
-    if (mode === "cut") {
-      clipboard = null;
-      notify({ type: "clipboard", mode: null });
-    }
-    notify({
-      type: "paste",
-      mode,
-      destinationId,
-      ids: results.map((node) => node.id),
-    });
-    return results;
-  };
-
   const getConflicts = (ids, destinationId) => {
     requireFolder(destinationId);
     return getTopLevelIds(ids)
@@ -263,6 +240,9 @@
       if (decision === "cancel") return { cancelled: true, results: [] };
       decisions.push({ conflict, decision });
     }
+    // An item deleted while the paste runs is skipped, so a paste never
+    // takes an item out of the Recycle Bin that went there after the start.
+    const fromBin = ids.filter((id) => fs.isInRecycleBin(id));
     // Items already moved leave a cut clipboard; the rest can be retried.
     // A new cut or copy made during the paste stays on the clipboard.
     const pastesClipboard = () =>
@@ -270,7 +250,11 @@
     const keepUnmovedOnClipboard = (index) => {
       if (!pastesClipboard()) return;
       setClipboardIds(
-        ids.slice(index).filter((remainingId) => !!fs.getNode(remainingId)),
+        ids
+          .slice(index)
+          .filter(
+            (id) => clipboard.ids.includes(id) && isStillThere(id, fromBin),
+          ),
       );
     };
     const results = [];
@@ -279,6 +263,7 @@
         keepUnmovedOnClipboard(index);
         return { cancelled: true, results };
       }
+      if (!isStillThere(id, fromBin)) continue;
       const planned = decisions.find(
         ({ conflict }) => conflict.source.id === id,
       );
@@ -438,7 +423,6 @@
     canPaste,
     copy,
     cut,
-    paste: (...args) => fs.transaction(() => paste(...args)),
     getConflicts,
     dataUrlFromBlob,
     readFileContent,

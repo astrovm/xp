@@ -168,6 +168,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   // the first moved item.
   const first = fs.createFile(fs.DESKTOP, "first.txt");
   const second = fs.createFile(fs.DESKTOP, "second.txt");
+  const third = fs.createFile(fs.DESKTOP, "third.txt");
   await flushShell();
   s.document
     .querySelectorAll(".desktop-icon")
@@ -179,19 +180,39 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
     );
   const pasteWithConflicts = ops.pasteWithConflicts;
   let waiting = null;
-  ops.pasteWithConflicts = async (destinationId) => {
+  let afterOtherDrop = null;
+  let finish;
+  const finished = new Promise((resolve) => (finish = resolve));
+  ops.pasteWithConflicts = async (destinationId, resolver, { items }) => {
+    if (items.ids.includes(third.id)) {
+      await fs.move(third.id, destinationId);
+      return { cancelled: false, results: [] };
+    }
     await fs.move(first.id, destinationId);
     await flushShell();
     waiting = icon(second.id).style.visibility;
+    // Another drop that ends first leaves this drop's icons hidden.
+    s.document
+      .querySelectorAll(".desktop-icon")
+      .forEach((item) =>
+        item.classList.toggle("selected", item.dataset.desktopId === third.id),
+      );
+    await drag(s, icon(third.id), icon(folder.id));
+    afterOtherDrop = icon(second.id).style.visibility;
     await fs.move(second.id, destinationId);
+    finish();
     return { cancelled: false, results: [] };
   };
   try {
     await drag(s, icon(first.id), icon(folder.id));
+    await finished;
+    await flushShell();
   } finally {
     ops.pasteWithConflicts = pasteWithConflicts;
   }
   expect(waiting).toBe("hidden");
+  expect(afterOtherDrop).toBe("hidden");
+  expect(fs.getNode(third.id).parent).toBe(folder.id);
   expect(fs.getNode(second.id).parent).toBe(folder.id);
   expect(
     [...s.document.querySelectorAll(".desktop-icon")].every(

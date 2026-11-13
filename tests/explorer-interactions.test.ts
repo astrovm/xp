@@ -153,7 +153,15 @@ test("Explorer drag and drop moves internal files and imports external file cont
   target.dispatchEvent(overSelf);
   expect(overSelf.defaultPrevented).toBeFalse();
   expect(target.classList.contains("drop-target")).toBeFalse();
-  target.dispatchEvent(drag("dragend"));
+  // The document hears dragend also when a redraw removed the item.
+  h.s.document.dispatchEvent(drag("dragend"));
+  target.dispatchEvent(drag("dragover"));
+  expect(target.classList.contains("drop-target")).toBeTrue();
+  target.dispatchEvent(drag("dragleave"));
+  // A drop ends the drag too.
+  target.dispatchEvent(drag("dragstart"));
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));
+  target.dispatchEvent(drag("drop"));
   target.dispatchEvent(drag("dragover"));
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
