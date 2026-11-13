@@ -395,6 +395,8 @@ export const createSystemRuntime = (context) => {
       const items = document.createElement("div");
       items.className = "explorer-items";
       items.tabIndex = 0;
+      // The window gives the list the focus when it becomes active.
+      items.dataset.defaultFocus = "";
       main.appendChild(items);
       // Clicking empty space clears the selection, like XP. The Filmstrip
       // preview and its buttons keep it.
@@ -515,17 +517,27 @@ export const createSystemRuntime = (context) => {
           button.setAttribute("aria-expanded", "false"),
         );
       };
-      // After a command, the list gets the focus back, like XP, unless the
-      // command moved it, such as to a rename box or a dialog.
+      const inExplorerMenus = (element) =>
+        explorerMenu.contains(element) ||
+        explorerSubmenu.contains(element) ||
+        explorerMenuOwners.includes(element);
+      // The control that had the focus before the menus gets it back, like
+      // XP.
+      let menuReturnFocus = null;
+      win.el.addEventListener("focusin", (event) => {
+        if (!inExplorerMenus(event.target)) menuReturnFocus = event.target;
+      });
+      const leaveExplorerMenus = () => {
+        if (menuReturnFocus?.isConnected && win.el.contains(menuReturnFocus))
+          menuReturnFocus.focus({ preventScroll: true });
+        else focusExplorerList(win);
+      };
+      // When a menu closes for a command, the focus goes back, unless it is
+      // already somewhere else.
       const focusListAfterMenu = () => {
         const active = document.activeElement;
-        if (
-          active === document.body ||
-          explorerMenu.contains(active) ||
-          explorerSubmenu.contains(active) ||
-          explorerMenuOwners.includes(active)
-        )
-          focusExplorerList(win);
+        if (active === document.body || inExplorerMenus(active))
+          leaveExplorerMenus();
       };
       const explorerSubmenus = {
         "folder-menu": [
@@ -760,6 +772,10 @@ export const createSystemRuntime = (context) => {
               return;
             }
             const selected = selectedExplorerNodes(win);
+            // The menu closes first, so a dialog that the command opens
+            // gives the focus back to the list when it closes.
+            hideExplorerMenus();
+            focusListAfterMenu();
             if (command === "close") closeGameWindow(win.gameId);
             if (command === "cut") fileOps.cut(selected);
             if (command === "copy") fileOps.copy(selected);
@@ -798,8 +814,6 @@ export const createSystemRuntime = (context) => {
             if (command === "refresh") renderExplorerItems(win);
 
             if (command === "about-windows") openAboutWindows();
-            hideExplorerMenus();
-            focusListAfterMenu();
             return;
           }
           const subcommandButton = event.target.closest(
@@ -807,6 +821,8 @@ export const createSystemRuntime = (context) => {
           );
           const subcommand = subcommandButton?.dataset.explorerSubcommand;
           if (subcommand) {
+            hideExplorerMenus();
+            focusListAfterMenu();
             if (subcommand === "search-current") openSearchDialog();
             if (subcommand === "folders-bar") {
               content.classList.add("folders-visible");
@@ -819,9 +835,6 @@ export const createSystemRuntime = (context) => {
               navigateExplorer(win, fs.MY_COMPUTER);
             if (subcommand === "properties-current")
               openShellProperties(win.currentFolderId);
-
-            hideExplorerMenus();
-            focusListAfterMenu();
             return;
           }
           const actionButton = event.target.closest("[data-explorer-action]");
@@ -874,6 +887,20 @@ export const createSystemRuntime = (context) => {
           navigateExplorer(win, destination);
         else event.target.value = fs.getPath(win.currentFolderId);
       });
+      // Alt and a menu's letter open that menu, like XP.
+      const openExplorerMenuByAccessKey = (event) => {
+        const target = explorerMenuButtons.find(
+          (button) => button.dataset.accessKey === event.key.toLowerCase(),
+        );
+        if (!target) return;
+        event.preventDefault();
+        showExplorerMenu(target.dataset.explorerMenu, target, true);
+      };
+      // The access keys work from anywhere in the window, also the list.
+      win.el.addEventListener("keydown", (event) => {
+        if (event.altKey && !chrome.contains(event.target))
+          openExplorerMenuByAccessKey(event);
+      });
       chrome.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           const activeButton = explorerMenuOwners.find(
@@ -884,20 +911,14 @@ export const createSystemRuntime = (context) => {
           // second one leaves the menu bar, like XP.
           if (activeButton) activeButton.focus();
           else if (explorerMenuOwners.includes(document.activeElement))
-            focusExplorerList(win);
+            leaveExplorerMenus();
           return;
         }
         const heading = document.activeElement?.closest?.(
           "[data-explorer-menu]",
         );
         if (event.altKey) {
-          const target = explorerMenuButtons.find(
-            (button) => button.dataset.accessKey === event.key.toLowerCase(),
-          );
-          if (target) {
-            event.preventDefault();
-            showExplorerMenu(target.dataset.explorerMenu, target, true);
-          }
+          openExplorerMenuByAccessKey(event);
           return;
         }
         if (

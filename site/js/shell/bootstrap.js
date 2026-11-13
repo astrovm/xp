@@ -526,7 +526,13 @@ document.addEventListener("keydown", async (e) => {
       }
       if (e.shiftKey && e.key === "F10") {
         e.preventDefault();
-        const rect = explorerItem.getBoundingClientRect();
+        // The menu opens at the focused item, else at the first selected
+        // item, else at the list.
+        const rect = (
+          explorerItem ||
+          explorerSurface.querySelector(".explorer-item.selected") ||
+          explorerSurface
+        ).getBoundingClientRect();
         openExplorerContextMenu(explorerWin, rect.left, rect.bottom);
         return;
       }

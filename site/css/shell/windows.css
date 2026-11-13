@@ -56,6 +56,11 @@ html[data-xp-appearance="silver"],
   --win-title-shadow: #c7c2d1;
 }
 
+/* The frame takes the focus only so that the keys reach the window. */
+.xp-window:focus {
+  outline: none;
+}
+
 .xp-window {
   --win-frame-left: var(--frame-left-inactive-sizing);
   --win-frame-right: var(--frame-right-inactive-sizing);

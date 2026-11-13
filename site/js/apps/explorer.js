@@ -1104,13 +1104,16 @@ const selectedExplorerNodes = (win) =>
     .map((item) => item.dataset.nodeId)
     .filter((id) => !!fs.getNode(id));
 
-// Gives the focus back to the list, on its selected item if it has one,
-// like XP after a menu or a dialog closes.
-const focusExplorerList = (win) => {
+// Gives the focus back to the list, like XP after a menu closes: to
+// `previous` if it is still an item of the list, else to the first selected
+// item, else to the list.
+const focusExplorerList = (win, previous) => {
   const items = win.el.querySelector(".explorer-items");
-  (items.querySelector(".explorer-item.selected") || items).focus({
-    preventScroll: true,
-  });
+  const target =
+    previous?.isConnected && items.contains(previous)
+      ? previous
+      : items.querySelector(".explorer-item.selected") || items;
+  target.focus({ preventScroll: true });
 };
 
 // Inline rename, like XP: the label becomes an edit box; Enter or leaving
@@ -1130,6 +1133,7 @@ const startExplorerRename = (win, nodeId) => {
   const input = document.createElement("input");
   input.className = "explorer-rename";
   input.value = node.name;
+  input.dataset.originalName = node.name;
   label.replaceWith(input);
   input.focus();
   input.setSelectionRange(
@@ -1138,10 +1142,16 @@ const startExplorerRename = (win, nodeId) => {
       ? node.name.lastIndexOf(".")
       : node.name.length,
   );
+  // Each rename ends once. Chrome fires blur while the box leaves the page,
+  // so that blur finds the rename ended.
+  let finished = false;
+  // A new render drops the box without a commit and opens a new one.
+  input.dropRename = () => (finished = true);
   // Enter and Escape give the focus back to the item. A click elsewhere
-  // keeps the focus where the user put it. Each ends the rename once: the
-  // box leaves the page, so its blur does nothing more.
+  // keeps the focus where the user put it.
   const finish = async (commit, refocus) => {
+    if (finished) return;
+    finished = true;
     input.replaceWith(label);
     if (refocus) item.focus();
     if (!commit || input.value === node.name) return;
@@ -1156,10 +1166,11 @@ const startExplorerRename = (win, nodeId) => {
     if (event.key === "Enter") finish(true, true);
     if (event.key === "Escape") finish(false, true);
   });
-  // A new render removes the box and opens a new one, so that is no commit.
-  input.addEventListener("blur", () => {
-    if (input.isConnected) finish(true, false);
-  });
+  // A blur that keeps the box focused is a switch to another app or tab:
+  // the item keeps the focus for when the user comes back.
+  input.addEventListener("blur", () =>
+    finish(true, document.activeElement === input),
+  );
   return input;
 };
 
@@ -1456,6 +1467,8 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   const selected = selectedExplorerNodes(win);
   const recycle = win.currentFolderId === fs.RECYCLE_BIN;
   const protectedSelection = selected.some((id) => fs.isProtected(id));
+  // The item or list that had the focus gets it back when the menu closes.
+  const previousFocus = document.activeElement;
   const menu = document.createElement("div");
   menu.className = "xp-context-menu explorer-context-menu";
   menu.setAttribute("role", "menu");
@@ -1464,7 +1477,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   const close = () => {
     const hadFocus = menu.contains(document.activeElement);
     menu.remove();
-    if (hadFocus) focusExplorerList(win);
+    if (hadFocus) focusExplorerList(win, previousFocus);
   };
   const add = (label, command, disabled) => {
     const button = document.createElement("button");
@@ -1496,7 +1509,10 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
     try {
       const command = event.target.dataset.command;
       if (!command) return;
-      if (command === "open") fs.open(selected[0]);
+      // The menu closes first, so a dialog that the command opens gives the
+      // focus back to the list when it closes.
+      close();
+      if (command === "open") openExplorerNode(win, fs.getNode(selected[0]));
       if (command === "cut") fileOps.cut(selected);
       if (command === "copy") fileOps.copy(selected);
       if (command === "restore") await fileOps.restore(selected);
@@ -1504,7 +1520,6 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       if (command === "rename") startExplorerRename(win, selected[0]);
       if (command === "delete") await confirmRecycleDelete(selected);
       if (command === "permanent") await confirmRecycleBinDelete(selected);
-      close();
     } catch (error) {
       await alertFileOperationError(error);
     }
@@ -1686,6 +1701,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     focusedId && document.activeElement.classList.contains("explorer-rename")
       ? document.activeElement
       : null;
+  rename?.dropRename();
   // If the focused item is gone, the list keeps the focus, like XP.
   const keepFocus = () => {
     if (!itemHadFocus) return;
@@ -1694,10 +1710,14 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       items.querySelector(
         `.explorer-item[data-node-id="${CSS.escape(focusedId)}"]`,
       );
+    // A box with no change yet shows the current name, which another
+    // window can have changed.
     if (rename && kept) {
       const input = startExplorerRename(win, focusedId);
-      input.value = rename.value;
-      input.setSelectionRange(rename.selectionStart, rename.selectionEnd);
+      if (rename.value !== rename.dataset.originalName) {
+        input.value = rename.value;
+        input.setSelectionRange(rename.selectionStart, rename.selectionEnd);
+      }
     } else if (!kept) focusExplorerList(win);
   };
   win.renderedFolderId = folder.id;

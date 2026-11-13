@@ -900,7 +900,9 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
     element?.className ||
     element?.tagName;
   const focused = () => label(s.document.activeElement);
+  // A right-click presses the item first, which focuses it.
   const contextMenu = (node) => {
+    item(node).focus();
     item(node).dispatchEvent(
       new s.window.MouseEvent("contextmenu", { bubbles: true }),
     );
@@ -915,10 +917,16 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   contextMenu(b);
   expect(selected()).toEqual([a.id, b.id]);
   expect(focused()).toBe("cut");
-  // Escape gives the focus back to the selection.
+  // Escape gives the focus back to the item that had it.
   key(s.document.activeElement, "Escape");
   expect(win.querySelector(".explorer-context-menu")).toBeNull();
-  expect(focused()).toBe(label(item(a)));
+  expect(focused()).toBe(label(item(b)));
+  // Shift+F10 opens the menu also when the list itself has the focus.
+  h.items(win).focus();
+  key(h.items(win), "F10", { shiftKey: true });
+  expect(win.querySelector(".explorer-context-menu")).not.toBeNull();
+  key(s.document.activeElement, "Escape");
+  expect(focused()).toBe(label(h.items(win)));
   // A right-click on another item selects only it.
   const menu = contextMenu(c);
   expect(selected()).toEqual([c.id]);
@@ -931,22 +939,50 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   let input = win.querySelector(".explorer-rename");
   expect(focused()).toBe(label(input));
 
+  // A box with no change shows a name that another window changed.
+  fs.rename(c.id, "other.txt");
+  await flushShell();
+  input = win.querySelector(".explorer-rename");
+  expect(input.value).toBe("other.txt");
+  expect(fs.getNode(c.id).name).toBe("other.txt");
   // A new render keeps the box, the typed text and its selection.
   input.value = "renamed.txt";
   input.setSelectionRange(0, 7);
   fs.createFile(folder.id, "d.txt", { content: "d" });
   await flushShell();
   expect(input.isConnected).toBe(false);
+  // Chrome fires blur on the box that the render removed. That is no commit.
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  await flushShell();
   input = win.querySelector(".explorer-rename");
   expect(focused()).toBe(label(input));
   expect(input.closest(".explorer-item").dataset.nodeId).toBe(c.id);
   expect(input.value).toBe("renamed.txt");
   expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]);
   // The removed box did not commit.
-  expect(fs.getNode(c.id).name).toBe("c.txt");
+  expect(fs.getNode(c.id).name).toBe("other.txt");
+  const renames = [];
+  const rename = fs.rename;
+  fs.rename = (...args) => {
+    renames.push(args[1]);
+    return rename(...args);
+  };
   key(input, "Enter");
+  // Chrome's blur while Enter removes the box is no second commit.
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
   await flushShell();
+  fs.rename = rename;
+  expect(renames).toEqual(["renamed.txt"]);
   expect(fs.getNode(c.id).name).toBe("renamed.txt");
+  expect(focused()).toBe(label(item(c)));
+
+  // A switch to another app commits, and the item gets the focus back.
+  key(item(c), "F2");
+  input = win.querySelector(".explorer-rename");
+  input.value = "switched.txt";
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  await flushShell();
+  expect(fs.getNode(c.id).name).toBe("switched.txt");
   expect(focused()).toBe(label(item(c)));
 
   // A click elsewhere commits the rename and keeps the focus there.
@@ -957,25 +993,44 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   address.focus();
   await flushShell();
   expect(fs.getNode(c.id).name).toBe("again.txt");
+  // Properties from the menu gives the focus back to the item when it
+  // closes.
+  contextMenu(c).querySelector('[data-command="properties"]').click();
+  await flushShell();
+  const properties = s.document.querySelector(".xp-dialog");
+  expect(properties.contains(s.document.activeElement)).toBeTrue();
+  properties.querySelector(".dlg-buttons button").click();
+  await flushShell();
+  expect(focused()).toBe(label(item(c)));
+  address.focus();
   expect(focused()).toBe(label(address));
 
   // A menu bar command gives the focus back to the list.
   const edit = win.querySelector('[data-explorer-menu="edit"]');
+  item(c).focus();
   edit.click();
   const selectAll = win.querySelector('[data-explorer-command="select-all"]');
   selectAll.focus();
   selectAll.click();
   await flushShell();
   expect(selected()).toHaveLength(4);
-  expect(focused()).toBe(label(item(a)));
-  // Also when the click left the focus on nothing.
+  expect(focused()).toBe(label(item(c)));
+  // Also when the click left the focus on nothing: the control that had
+  // it last gets it.
   item(b).click();
   s.document.activeElement.blur();
   win.querySelector('[data-explorer-menu="view"]').click();
   win.querySelector('[data-explorer-command="list"]').click();
   await flushShell();
+  expect(focused()).toBe(label(item(c)));
+  // Alt and a menu's letter open that menu also from the list.
+  item(b).focus();
+  key(item(b), "e", { altKey: true });
+  expect(edit.getAttribute("aria-expanded")).toBe("true");
+  key(s.document.activeElement, "Escape");
+  key(edit, "Escape");
   expect(focused()).toBe(label(item(b)));
-  // A command that opens a dialog keeps the focus in the dialog.
+  // A command leaves the focus where it is when it is outside the menus.
   edit.click();
   address.focus();
   win.querySelector('[data-explorer-command="invert-selection"]').click();
@@ -986,8 +1041,29 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   edit.focus();
   key(edit, "Escape");
   expect(focused()).toBe(label(edit));
+  // The address bar had the focus before the menu.
   key(edit, "Escape");
+  expect(focused()).toBe(label(address));
+  item(a).focus();
+  // A window that opens takes the focus, and the Explorer window gets its
+  // item back when it is active again.
+  win.querySelector('[data-explorer-menu="view"]').click();
+  win.querySelector('[data-explorer-command="explorer-bar"]').click();
+  win.querySelector('[data-explorer-subcommand="search-current"]').click();
+  await flushShell();
+  const search = s.document.querySelector('.xp-window[data-game="__search"]');
+  expect(search.contains(s.document.activeElement)).toBeTrue();
+  win
+    .querySelector(".title-bar")
+    .dispatchEvent(new s.window.PointerEvent("pointerdown", { bubbles: true }));
   expect(focused()).toBe(label(item(a)));
+  // Open on a folder shows it in the same window.
+  const sub = fs.createFolder(folder.id, "Sub");
+  await flushShell();
+  contextMenu(sub).querySelector('[data-command="open"]').click();
+  await flushShell();
+  expect(win.querySelector(".explorer-address input").value).toContain("Sub");
+  await h.open(folder.id);
   // Escape in the address bar leaves the focus there.
   address.focus();
   key(address, "Escape");

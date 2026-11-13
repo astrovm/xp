@@ -450,6 +450,13 @@ const createWindowElement = (gameId) => {
   const win = document.createElement("div");
   win.className = "xp-window";
   win.dataset.game = gameId;
+  // The frame takes the focus when the window has nothing else to focus.
+  win.tabIndex = -1;
+  // The window remembers its focused control, to give it back when the
+  // window becomes active again, like XP.
+  win.addEventListener("focusin", (event) => {
+    win.lastFocusedElement = event.target;
+  });
 
   const titleBar = document.createElement("div");
   titleBar.className = "title-bar";
@@ -884,6 +891,19 @@ const loadIframe = (gameId, win) => {
   );
 };
 
+// The keys go to the active window, like XP. If the focus is outside it, the
+// window focuses the control that had the focus last, else its default
+// control, else its frame.
+const focusWindowContent = (win) => {
+  if (win.el.contains(document.activeElement)) return;
+  const last = win.el.lastFocusedElement;
+  const target =
+    last?.isConnected && win.el.contains(last) && !last.closest("[hidden]")
+      ? last
+      : win.el.querySelector("[data-default-focus]") || win.el;
+  target.focus({ preventScroll: true });
+};
+
 const focusWindow = (gameId) => {
   const win = openWindows.get(gameId);
   if (!win) return;
@@ -909,6 +929,7 @@ const focusWindow = (gameId) => {
   win.zIndex = ++zIndexCounter;
   win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : win.zIndex;
   win.mountedApplication?.focus?.();
+  focusWindowContent(win);
 
   openWindows.forEach((w, id) => {
     w.el.classList.toggle("active", id === gameId);
