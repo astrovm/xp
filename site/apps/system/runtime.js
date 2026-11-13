@@ -906,10 +906,16 @@ export const createSystemRuntime = (context) => {
       });
       explorerMenu.addEventListener("pointerover", (event) => {
         // Keys in the submenu move to the item under the pointer before the
-        // submenu closes or changes, like XP.
+        // submenu closes or changes, like XP. A disabled item cannot take
+        // them, so they go to the submenu's own item.
         const item = event.target.closest(".game-menu-item");
         if (item && explorerSubmenu.contains(document.activeElement))
-          item.focus();
+          (item.disabled
+            ? explorerMenu.querySelector(
+                `[data-explorer-command="${CSS.escape(explorerSubmenu.dataset.parentCommand)}"]`,
+              )
+            : item
+          ).focus();
         const parentItem = event.target.closest(".has-submenu");
         if (parentItem)
           showExplorerSubmenu(

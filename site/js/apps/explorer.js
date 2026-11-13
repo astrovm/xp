@@ -856,16 +856,12 @@ const wireFolderDropTarget = (element, destinationId) => {
     }
   });
 };
+// Each Explorer window closes its own menus, so it also gives back the keys
+// and resets its menu buttons.
 const closeExplorerMenu = (root = document) => {
-  root.querySelectorAll(".explorer-menu").forEach((menu) => {
-    if (menu.closeMenus) menu.closeMenus();
-    else menu.hidden = true;
-  });
   root
-    .querySelectorAll(
-      '[data-explorer-menu][aria-expanded="true"], [data-explorer-action="view"][aria-expanded="true"]',
-    )
-    .forEach((button) => button.setAttribute("aria-expanded", "false"));
+    .querySelectorAll(".explorer-menu")
+    .forEach((menu) => menu.closeMenus?.());
 };
 
 const systemFolderShortcuts = {

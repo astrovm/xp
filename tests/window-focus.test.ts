@@ -239,6 +239,29 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   expect(s.document.activeElement === plainItem).toBeTrue();
   key(plainItem, "Escape");
   key(viewHeading, "Escape");
+
+  // A disabled item cannot take the keys, so a hover on it gives them to
+  // the submenu's own item.
+  list.focus();
+  list.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  const folderItem = menu.querySelector(".has-submenu");
+  folderItem.focus();
+  key(folderItem, "ArrowRight");
+  expect(submenu.contains(s.document.activeElement)).toBeTrue();
+  const disabledItem = menu.querySelector(".game-menu-item:disabled");
+  disabledItem.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.hidden).toBeTrue();
+  expect(s.document.activeElement === folderItem).toBeTrue();
+  key(folderItem, "Escape");
+  key(docs.querySelector('[data-explorer-menu="file"]'), "Escape");
   list.focus();
 
   // Views opened from the address bar gives the keys back to it.
