@@ -146,6 +146,26 @@ test("Notepad Save As creates a text file, overwrites it and opens another docum
   await h.answer("no");
   expect(h.win.isConnected).toBeFalse();
 });
+test("Notepad saves a deleted file outside the Recycle Bin, under its own name", async () => {
+  const h = await setup();
+  // The Recycle Bin already has a note.txt, so the deleted file gets a
+  // new name there.
+  const older = h.fs.createFile(h.fs.DESKTOP, "note.txt", { content: "" });
+  h.fs.remove(older.id);
+  h.fs.remove(h.file.id);
+  expect(h.fs.getNode(h.file.id).name).not.toBe("note.txt");
+  h.edit("kept");
+  await h.command("save");
+  const name = h.s.document.getElementById("dlg-file-name");
+  expect(name.value).toBe("note.txt");
+  expect(
+    h.s.document.querySelector(".xp-dialog .dlg-file-folder").textContent,
+  ).toContain("My Documents");
+  await h.choose("note.txt");
+  const saved = h.fs.findChild(h.fs.MY_DOCUMENTS, "note.txt");
+  expect(h.fs.getContent(saved.id)).toBe("kept");
+  expect(h.fs.getContent(h.file.id)).toBe("first\nsecond");
+});
 test("Notepad switching files preserves a canceled draft and saves on confirmation", async () => {
   const h = await setup(),
     other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {

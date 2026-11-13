@@ -429,7 +429,9 @@ const mountPaint = (shell, instance) => {
     // Save and Save As keep the open file's type, unless Paint cannot
     // write it.
     const canWriteType = SAVE_TYPES.includes(`.${extensionFor(fileName)}`);
-    const canSaveInPlace = fileId && canWriteType;
+    // A deleted picture is in the Recycle Bin, or gone: Save asks where
+    // to save it, like Save As.
+    const canSaveInPlace = fileId && canWriteType && shell.folderOf(fileId);
     let destination =
       canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
     if (!destination) {

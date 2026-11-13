@@ -46,7 +46,13 @@ async function setup() {
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
     pictureUrl: (file) => file.content || null,
-    folderOf: (id) => (id === "other" ? "other-folder" : null),
+    // "anim" and "deleted" stand for pictures in the Recycle Bin.
+    folderOf: (id) =>
+      id === "other"
+        ? "other-folder"
+        : ["anim", "deleted"].includes(id)
+          ? null
+          : "pictures",
     setTitle: (title) => titles.push(title),
     showMessage: (...args) => messages.push(args),
     close: () => messages.push(["close"]),
@@ -238,6 +244,20 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
     defaultName: "anim",
     startFolder: "pictures",
   });
+  // Save asks where to save a deleted picture. It never writes into the
+  // Recycle Bin.
+  const writes = h.writes.length;
+  await h.mounted.openFile({
+    id: "deleted",
+    name: "trip.png",
+    content: "data",
+  });
+  await h.command("save");
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "trip.png",
+    startFolder: "pictures",
+  });
+  expect(h.writes).toHaveLength(writes);
 });
 test("Paint tools, palette, menu checks and keyboard controls stay synchronized", async () => {
   const h = await setup();

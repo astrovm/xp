@@ -296,3 +296,24 @@ test("a protected selection keeps only the folder task", async () => {
     profile.querySelector(".explorer-sidebar > section:first-child").hidden,
   ).toBeTrue();
 });
+
+test("folders in the Recycle Bin take no new items", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.DESKTOP, "Old");
+  fs.createFolder(folder.id, "Inner");
+  fs.remove(folder.id);
+  // A deleted folder is not a drop target in the Recycle Bin window.
+  const bin = await openFolder(s, fs.RECYCLE_BIN);
+  const item = bin.querySelector(
+    `.explorer-item[data-node-id="${folder.id}"]`,
+  );
+  expect(item.dataset.dropDestinationId).toBeUndefined();
+  // Inside a deleted folder, Explorer offers no Make a new folder task,
+  // and its subfolders take no drops.
+  const inside = await openFolder(s, folder.id);
+  expect(tasks(inside)).not.toContain("Make a new folder");
+  expect(
+    inside.querySelector(".explorer-item").dataset.dropDestinationId,
+  ).toBeUndefined();
+});

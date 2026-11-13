@@ -989,7 +989,9 @@ const renderExplorerTaskPane = (win) => {
       confirmRecycleDelete(editable),
     );
   } else if (
-    !fs.getNode(win.currentFolderId).protected ||
+    // Nothing new goes in a folder inside the Recycle Bin.
+    !fs.isInRecycleBin(win.currentFolderId) &&
+    (!fs.getNode(win.currentFolderId).protected ||
     [
       fs.MY_DOCUMENTS,
       fs.MY_PICTURES,
@@ -999,7 +1001,7 @@ const renderExplorerTaskPane = (win) => {
       fs.DRIVE_C,
       fs.DRIVE_D,
       fs.DRIVE_F,
-    ].includes(win.currentFolderId)
+    ].includes(win.currentFolderId))
   ) {
     addTask(
       "Make a new folder",
@@ -1537,7 +1539,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       item.click();
       openExplorerContextMenu(win, event.clientX, event.clientY);
     });
-    if (node.type === "folder") wireFolderDropTarget(item, node.id);
+    // A deleted folder takes no drops: nothing new goes in the Recycle Bin.
+    if (node.type === "folder" && !fs.isInRecycleBin(node.id))
+      wireFolderDropTarget(item, node.id);
     items.appendChild(item);
   });
   explorerContent.querySelector(".explorer-status").textContent =

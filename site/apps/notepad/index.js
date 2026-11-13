@@ -52,7 +52,9 @@ const mountNotepad = (context, instance) => {
     const result = await XPDialogs.saveFile({
       title: "Save As",
       startFolder: current?.parent || fs.MY_DOCUMENTS,
-      defaultName: current?.name || "Untitled.txt",
+      // The Recycle Bin can rename a deleted file. Save As suggests the
+      // name the user gave it.
+      defaultName: current?.originalName || current?.name || "Untitled.txt",
       filter: [".txt"],
       defaultExtension: ".txt",
     });
@@ -86,7 +88,8 @@ const mountNotepad = (context, instance) => {
 
   const save = async () => {
     const node = win.nodeId && fs.getNode(win.nodeId);
-    if (!node) return saveAs();
+    // A deleted file is in the Recycle Bin: Save asks where to save it.
+    if (!node || fs.isInRecycleBin(node.id)) return saveAs();
     const contentToSave = editor.value;
     try {
       await fs.setContent(node.id, contentToSave, {
