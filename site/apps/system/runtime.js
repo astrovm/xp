@@ -514,10 +514,12 @@ export const createSystemRuntime = (context) => {
       viewsButton.setAttribute("aria-haspopup", "menu");
       viewsButton.setAttribute("aria-expanded", "false");
       const explorerMenuOwners = [...explorerMenuButtons, viewsButton];
-      // True while the keys are in a menu that they entered from the list.
-      let menuEnteredFromList = false;
+      // True while the open menu belongs to a button that the mouse pressed
+      // without taking the keys, such as Views. Escape then gives the keys
+      // back to where they were, like XP.
+      let menuOpenedAway = false;
       const hideExplorerMenus = () => {
-        menuEnteredFromList = false;
+        menuOpenedAway = false;
         explorerMenu.hidden = true;
         explorerSubmenu.hidden = true;
         explorerMenuOwners.forEach((button) =>
@@ -534,6 +536,13 @@ export const createSystemRuntime = (context) => {
       // A focusin whose target already lost the focus is skipped. The
       // window sends a press on a toolbar or title-bar button back to its
       // control, before this listener runs.
+      // XP closes a window's menus when another element outside the
+      // window takes the keys, such as after Alt+Esc or Ctrl+Esc. A render
+      // that removes the focused item has no new target and keeps them.
+      win.el.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && !win.el.contains(event.relatedTarget))
+          hideExplorerMenus();
+      });
       win.el.addEventListener("focusin", (event) => {
         if (
           event.target === document.activeElement &&
@@ -762,6 +771,9 @@ export const createSystemRuntime = (context) => {
         renderExplorerMenuEntries(explorerMenu, actions, "explorerCommand");
         explorerSubmenu.hidden = true;
         explorerMenu.hidden = false;
+        menuOpenedAway =
+          Boolean(button.closest("[data-mouse-keeps-focus]")) &&
+          document.activeElement !== button;
         explorerMenuOwners.forEach((entry) =>
           entry.setAttribute("aria-expanded", String(entry === button)),
         );
@@ -924,15 +936,9 @@ export const createSystemRuntime = (context) => {
         }
         // A menu that the mouse opened, such as Views, leaves the keys on
         // the list. Escape still closes it, and an arrow key moves into it,
-        // like XP. Keys with Ctrl, Shift or the Windows key stay with the
-        // shell, such as Ctrl+Shift+Esc.
-        if (
-          explorerMenu.hidden ||
-          event.ctrlKey ||
-          event.shiftKey ||
-          event.metaKey
-        )
-          return;
+        // like XP. Keys with Ctrl or the Windows key stay with the shell,
+        // such as Ctrl+Shift+Esc.
+        if (explorerMenu.hidden || event.ctrlKey || event.metaKey) return;
         if (event.key === "Escape") {
           event.preventDefault();
           hideExplorerMenus();
@@ -944,7 +950,6 @@ export const createSystemRuntime = (context) => {
             ...explorerMenu.querySelectorAll("button:not(:disabled)"),
           ];
           (event.key === "ArrowDown" ? commands[0] : commands.at(-1)).focus();
-          menuEnteredFromList = true;
         }
       });
       chrome.addEventListener("keydown", (event) => {
@@ -952,12 +957,12 @@ export const createSystemRuntime = (context) => {
           const activeButton = explorerMenuOwners.find(
             (button) => button.getAttribute("aria-expanded") === "true",
           );
-          const fromList = menuEnteredFromList;
+          const away = menuOpenedAway;
           hideExplorerMenus();
           // A first Escape closes the menu and keeps its heading active. A
-          // second one leaves the menu bar, like XP. A menu that the keys
-          // entered from the list gives them back to the list at once.
-          if (fromList) leaveExplorerMenus();
+          // second one leaves the menu bar, like XP. A menu that the mouse
+          // opened away from the keys gives them back at once.
+          if (activeButton && away) leaveExplorerMenus();
           else if (activeButton) activeButton.focus();
           else if (explorerMenuOwners.includes(document.activeElement))
             leaveExplorerMenus();

@@ -55,7 +55,7 @@ async function twoWindows() {
 }
 
 test("a press on a part that XP never focuses keeps the keys on the window's control", async () => {
-  const { s, docs, focused, press, release, activate, key } =
+  const { s, docs, pictures, focused, press, release, activate, key } =
     await twoWindows();
   activate(docs);
   expect(focused()).toBe("explorer-items");
@@ -113,20 +113,31 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
     expect(focused()).toBe("explorer-items");
   }
   // Other keys on the list leave the menu alone, also Escape with Ctrl,
-  // Shift, Alt or the Windows key, which go to the shell.
+  // Alt or the Windows key, which go to the shell.
   openViews();
   key(list, "Home");
-  for (const modifier of ["ctrlKey", "shiftKey", "altKey", "metaKey"]) {
+  const escape = (options) => {
     const event = new s.window.KeyboardEvent("keydown", {
       key: "Escape",
       bubbles: true,
       cancelable: true,
-      [modifier]: true,
+      ...options,
     });
     list.dispatchEvent(event);
-    expect(`${modifier} ${menu.hidden}`).toBe(`${modifier} false`);
-  }
+    return event;
+  };
+  expect(escape({ metaKey: true }).defaultPrevented).toBeFalse();
   expect(menu.hidden).toBeFalse();
+  // Ctrl+Esc reaches the shell, which opens the Start menu. The Start menu
+  // takes the keys, so Views closes, like XP.
+  escape({ ctrlKey: true });
+  const startMenu = s.document.getElementById("start-menu");
+  expect(startMenu.hidden).toBeFalse();
+  expect(docs.contains(s.document.activeElement)).toBeFalse();
+  expect(menu.hidden).toBeTrue();
+  escape({ ctrlKey: true });
+  activate(docs);
+  openViews();
   // A context menu keeps its arrow keys while Views is open.
   const item = docs.querySelector(".explorer-item");
   item.focus();
@@ -135,8 +146,54 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   key(s.document.activeElement, "ArrowDown");
   expect(context.contains(s.document.activeElement)).toBeTrue();
   key(s.document.activeElement, "Escape");
-  key(list, "Escape");
+  list.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      shiftKey: true,
+      bubbles: true,
+    }),
+  );
   expect(menu.hidden).toBeTrue();
+
+  // A menu closed by a press outside it leaves no state behind: Escape on
+  // a heading that the mouse opened keeps the heading.
+  openViews();
+  key(list, "ArrowDown");
+  press(list, "pointerdown");
+  release(list);
+  expect(menu.hidden).toBeTrue();
+  const file = docs.querySelector('[data-explorer-menu="file"]');
+  file.focus();
+  file.click();
+  key(s.document.activeElement, "Escape");
+  expect(s.document.activeElement === file).toBeTrue();
+  key(file, "Escape");
+
+  // Views opened from the address bar gives the keys back to it.
+  const address = docs.querySelector(".explorer-address input");
+  address.focus();
+  openViews();
+  expect(s.document.activeElement === address).toBeTrue();
+  key(address, "Escape");
+  expect(menu.hidden).toBeTrue();
+  expect(s.document.activeElement === address).toBeTrue();
+
+  // The menu closes when another window takes the keys.
+  list.focus();
+  openViews();
+  pictures.querySelector(".explorer-items").focus();
+  expect(menu.hidden).toBeTrue();
+  activate(docs);
+
+  // A middle-press that ends on another element ends the press.
+  s.document.dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { button: 1, bubbles: true }),
+  );
+  s.document.dispatchEvent(
+    new s.window.PointerEvent("pointerup", { button: 1, bubbles: true }),
+  );
+  docs.querySelector('[data-explorer-action="search"]').focus();
+  expect(focused()).toBe("search");
 
   // The keyboard can still focus a toolbar button.
   const folders = docs.querySelector('[data-explorer-action="folders"]');

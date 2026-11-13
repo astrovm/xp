@@ -912,7 +912,15 @@ const loadIframe = (gameId, win) => {
 // because a press can end in an iframe or with a drag, with no click.
 let pointerHeld = false;
 document.addEventListener("pointerdown", () => (pointerHeld = true), true);
-// A right-click or a middle-click ends with its own event.
+// A right-click or a middle-click ends with its own event, or at its
+// pointerup when it ends on another element.
+document.addEventListener(
+  "pointerup",
+  (event) => {
+    if (event.button !== 0) pointerHeld = false;
+  },
+  true,
+);
 ["click", "contextmenu", "auxclick", "pointercancel", "keydown"].forEach(
   (type) => document.addEventListener(type, () => (pointerHeld = false), true),
 );

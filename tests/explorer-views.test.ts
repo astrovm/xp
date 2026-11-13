@@ -184,14 +184,26 @@ test("the Views menu closes on other toolbar buttons, toggles, and gives focus b
   expect(menu.hidden).toBeFalse();
   button.click();
   expect(menu.hidden).toBeTrue();
-  // Escape closes the menu and focuses the Views button.
+  // Escape closes a menu that the keyboard opened and focuses the Views
+  // button.
+  const escape = () =>
+    menu.dispatchEvent(
+      new h.s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+  button.focus();
   button.click();
   menu.querySelector("[data-explorer-command]").focus();
-  menu.dispatchEvent(
-    new h.s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-  );
+  escape();
   expect(menu.hidden).toBeTrue();
-  expect(h.s.document.activeElement).toBe(button);
+  expect(h.s.document.activeElement === button).toBeTrue();
+  // A mouse press leaves the keys on the list, so Escape gives them back
+  // there.
+  h.items(win).focus();
+  button.click();
+  menu.querySelector("[data-explorer-command]").focus();
+  escape();
+  expect(menu.hidden).toBeTrue();
+  expect(h.s.document.activeElement === h.items(win)).toBeTrue();
   // A click outside the window closes it too.
   button.click();
   h.s.document.body.dispatchEvent(
