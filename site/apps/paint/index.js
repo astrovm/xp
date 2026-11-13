@@ -7,7 +7,7 @@ import {
   showEditColorsDialog,
   showTransformDialog,
 } from "./dialogs.js";
-import { encodeCanvas } from "./file-formats.js";
+import { encodeCanvas, extensionFor } from "./file-formats.js";
 import { installPaintScrollbars } from "./scrollbars.js";
 
 export const PAINT_COLORS = [
@@ -216,12 +216,20 @@ const createMenuBar = (run, panelVisible) => {
   return bar;
 };
 
-const imageFromFile = async (file) => {
+// The shell gives the picture's address: stored picture data, or an XP
+// sample picture. A file with neither is not a picture Paint can read.
+// The picture types Paint opens, and the ones it saves. Browsers cannot
+// encode GIF, so Paint saves a GIF picture as another type.
+const PICTURE_TYPES = [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"];
+const SAVE_TYPES = PICTURE_TYPES.filter((type) => type !== ".gif");
+
+const imageFromFile = async (url) => {
+  if (!url) throw new Error("No picture data");
   const image = document.createElement("img");
   await new Promise((resolve, reject) => {
     image.addEventListener("load", resolve, { once: true });
     image.addEventListener("error", reject, { once: true });
-    image.src = file.content;
+    image.src = url;
   });
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
@@ -403,7 +411,7 @@ const mountPaint = (shell, instance) => {
 
   const loadFile = async (file) => {
     try {
-      engine.replace(await imageFromFile(file));
+      engine.replace(await imageFromFile(shell.pictureUrl(file)));
       fileId = file.id;
       fileName = file.name;
       savedContent = file.content;
@@ -418,28 +426,42 @@ const mountPaint = (shell, instance) => {
     }
   };
   const save = async (saveAs) => {
+    // Save and Save As keep the open file's type, unless Paint cannot
+    // write it.
+    const canWriteType = SAVE_TYPES.includes(`.${extensionFor(fileName)}`);
+    // A deleted picture is in the Recycle Bin, or gone: Save asks where
+    // to save it, like Save As.
+    const canSaveInPlace = fileId && canWriteType && shell.folderOf(fileId);
     let destination =
-      fileId && !saveAs ? { existingId: fileId, name: fileName } : null;
+      canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
     if (!destination) {
+      // The dialog adds .bmp unless a type Paint saves is typed. A new
+      // picture, or one of a type Paint cannot write, starts without one.
       destination = await shell.saveFile({
         title: "Save As",
-        defaultName: /\.[^.]+$/.test(fileName) ? fileName : `${fileName}.bmp`,
-        startFolder: shell.myPictures,
+        defaultName:
+          fileId && canWriteType ? fileName : fileName.replace(/\.[^.]+$/, ""),
+        // Like XP, Save As starts in the open picture's folder.
+        startFolder: (fileId && shell.folderOf(fileId)) || shell.myPictures,
+        filter: SAVE_TYPES,
+        defaultExtension: ".bmp",
+        allFiles: false,
       });
     }
     if (!destination) return false;
-    const normalizedName = /\.[^.]+$/.test(destination.name)
-      ? destination.name
-      : `${destination.name}.bmp`;
     try {
       const revisionToSave = editRevision;
-      const content = await encodeCanvas(canvas, normalizedName);
+      const content = await encodeCanvas(canvas, destination.name);
       const file = destination.existingId
         ? await shell.setFileContent(destination.existingId, content, {
             expectedContent:
               destination.existingId === fileId ? savedContent : undefined,
           })
-        : await shell.createFile(destination.parentId, normalizedName, content);
+        : await shell.createFile(
+            destination.parentId,
+            destination.name,
+            content,
+          );
       fileId = file.id;
       fileName = file.name;
       savedContent = content;
@@ -482,7 +504,7 @@ const mountPaint = (shell, instance) => {
       const file = await shell.openFile({
         title: "Open",
         startFolder: shell.myPictures,
-        filter: [".bmp", ".dib", ".gif", ".jpg", ".jpeg", ".png"],
+        filter: PICTURE_TYPES,
       });
       if (file) await loadFile(file);
     } else if (command === "save") await save(false);

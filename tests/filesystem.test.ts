@@ -198,6 +198,18 @@ describe("virtual filesystem", () => {
     expect(fs.getChildren(fs.RECYCLE_BIN).length).toBe(0);
   });
 
+  test("forgets the deleted name of an item copied or moved out of the Recycle Bin", () => {
+    const file = fs.createFile(fs.DESKTOP, "a.txt");
+    fs.remove(file.id);
+    expect(fs.getNode(file.id).originalName).toBe("a.txt");
+    const copy = fs.copy(file.id, fs.MY_DOCUMENTS);
+    expect(copy.originalName).toBeNull();
+    expect(copy.originalParent).toBeNull();
+    fs.move(file.id, fs.MY_DOCUMENTS);
+    expect(fs.getNode(file.id).originalName).toBeNull();
+    expect(fs.getNode(file.id).originalParent).toBeNull();
+  });
+
   test("empties the Recycle Bin recursively", () => {
     const { folder, file } = createTestFolder();
 
@@ -346,7 +358,10 @@ describe("virtual filesystem edge cases", () => {
     expect(fs.getChildren(fs.MY_DOCUMENTS).map(({ id }) => id)).toContain(
       fs.MY_MUSIC,
     );
-    expect(fs.getChildren(fs.MY_PICTURES)).toEqual([]);
+    // Only the system folder comes back; the corrupt list's entries do not.
+    expect(fs.getChildren(fs.MY_PICTURES).map(({ id }) => id)).toEqual([
+      fs.SAMPLE_PICTURES,
+    ]);
   });
 
   test("restores a missing system folder together with its missing parent", () => {
@@ -500,5 +515,130 @@ describe("virtual filesystem edge cases", () => {
     const extensionless = fs.createFile(fs.DESKTOP, "README");
     fs.getNode(extensionless.id).ext = undefined;
     expect(fs.open(extensionless.id)).toBeTrue();
+  });
+});
+
+describe("XP sample pictures", () => {
+  const storedNodes = (nodes) =>
+    JSON.stringify({ version: 1, nodes: { ...nodes } });
+  // A returning user's stored disk from before Sample Pictures existed.
+  const storedWithoutSamples = (fs, extraNodes = {}) => {
+    const nodes = Object.fromEntries(
+      Object.values(fs.WELL_KNOWN)
+        .filter((id) => id !== fs.SAMPLE_PICTURES)
+        .map((id) => [id, { ...fs.getNode(id) }]),
+    );
+    nodes[fs.MY_PICTURES].children = [];
+    return storedNodes({ ...nodes, ...extraNodes });
+  };
+
+  beforeEach(installMemoryStorage);
+
+  test("a new disk has XP's four sample pictures in My Pictures", () => {
+    const fs = loadFilesystem();
+    const folder = fs.findChild(fs.MY_PICTURES, "Sample Pictures");
+    expect(folder.id).toBe(fs.SAMPLE_PICTURES);
+    expect(fs.isProtected(folder.id)).toBeTrue();
+    const pictures = fs.getChildren(folder.id);
+    expect(pictures.map(({ name, size }) => [name, size])).toEqual([
+      ["Blue hills.jpg", 28521],
+      ["Sunset.jpg", 71189],
+      ["Water lilies.jpg", 83794],
+      ["Winter.jpg", 105542],
+    ]);
+    expect(pictures.every((node) => node.ext === ".jpg")).toBeTrue();
+    expect(pictures.every((node) => !fs.isProtected(node.id))).toBeTrue();
+    expect(fs.getPictureUrl(pictures[0].id)).toBe(
+      "/assets/xp/sample-pictures/blue-hills.jpg",
+    );
+  });
+
+  test("the sample sizes match the extracted pictures", async () => {
+    const fs = loadFilesystem();
+    for (const node of fs.getChildren(fs.SAMPLE_PICTURES)) {
+      const file = Bun.file(
+        new URL(`../site${fs.getPictureUrl(node.id)}`, import.meta.url),
+      );
+      expect(file.size).toBe(node.size);
+    }
+  });
+
+  test("a returning user's disk gets the samples once", () => {
+    const seed = loadFilesystem();
+    localStorage.setItem("virtualFileSystem", storedWithoutSamples(seed));
+    let fs = loadFilesystem();
+    expect(fs.getChildren(fs.SAMPLE_PICTURES)).toHaveLength(4);
+    expect(fs.getChildren(fs.MY_PICTURES).map(({ id }) => id)).toEqual([
+      fs.SAMPLE_PICTURES,
+    ]);
+    // A deleted sample stays deleted after the next start.
+    fs.destroy("sample-winter");
+    fs = loadFilesystem();
+    expect(fs.getNode("sample-winter")).toBeNull();
+    expect(fs.getChildren(fs.SAMPLE_PICTURES)).toHaveLength(3);
+  });
+
+  test("a sample the user moved away is not added twice", () => {
+    const seed = loadFilesystem();
+    const moved = {
+      ...seed.getNode("sample-sunset"),
+      parent: seed.DESKTOP,
+      children: [],
+    };
+    const nodes = JSON.parse(
+      storedWithoutSamples(seed, { "sample-sunset": moved }),
+    );
+    nodes.nodes[seed.DESKTOP].children = ["sample-sunset"];
+    localStorage.setItem("virtualFileSystem", JSON.stringify(nodes));
+    const fs = loadFilesystem();
+    expect(fs.getParent("sample-sunset").id).toBe(fs.DESKTOP);
+    expect(fs.getChildren(fs.SAMPLE_PICTURES).map(({ name }) => name)).toEqual([
+      "Blue hills.jpg",
+      "Water lilies.jpg",
+      "Winter.jpg",
+    ]);
+  });
+
+  test("a user folder named Sample Pictures moves aside", () => {
+    const seed = loadFilesystem();
+    const mine = {
+      ...seed.getNode(seed.MY_MUSIC),
+      id: "mine",
+      name: "Sample Pictures",
+      parent: seed.MY_PICTURES,
+      protected: false,
+    };
+    const nodes = JSON.parse(storedWithoutSamples(seed, { mine }));
+    nodes.nodes[seed.MY_PICTURES].children = ["mine"];
+    localStorage.setItem("virtualFileSystem", JSON.stringify(nodes));
+    const fs = loadFilesystem();
+    expect(fs.getNode("mine").name).toBe("Sample Pictures (2)");
+    expect(fs.findChild(fs.MY_PICTURES, "Sample Pictures").id).toBe(
+      fs.SAMPLE_PICTURES,
+    );
+  });
+
+  test("picture addresses come from picture data or the sample key", () => {
+    const fs = loadFilesystem();
+    const art = fs.createFile(fs.DESKTOP, "art.png", {
+      content: "data:image/png;base64,iVBORw0KGgo=",
+    });
+    expect(fs.getPictureUrl(art.id)).toBe("data:image/png;base64,iVBORw0KGgo=");
+    const text = fs.createFile(fs.DESKTOP, "notes.txt", { content: "hello" });
+    expect(fs.getPictureUrl(text.id)).toBeNull();
+    expect(fs.getPictureUrl(fs.SAMPLE_PICTURES)).toBeNull();
+    expect(fs.getPictureUrl("missing")).toBeNull();
+    // Stored data can carry any key; only the known samples resolve.
+    fs.getNode(text.id).sample = "constructor";
+    expect(fs.getPictureUrl(text.id)).toBeNull();
+    // A copy is the same picture.
+    const copy = fs.copy("sample-sunset", fs.DESKTOP);
+    expect(fs.getPictureUrl(copy.id)).toBe(
+      "/assets/xp/sample-pictures/sunset.jpg",
+    );
+    // Saved content replaces the sample picture.
+    fs.setContent(copy.id, "plain text");
+    expect(fs.getNode(copy.id).sample).toBeUndefined();
+    expect(fs.getPictureUrl(copy.id)).toBeNull();
   });
 });

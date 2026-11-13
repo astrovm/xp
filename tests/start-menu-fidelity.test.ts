@@ -380,11 +380,11 @@ test("Start menu options cover hidden groups, file types, and menus", async () =
   ];
   expect(
     pictures.map((button) => button.textContent.replace("▶", "").trim()),
-  ).toEqual(["Alpha", "Beta", "notes.txt", "photo.bmp"]);
-  expect(pictures[2].querySelector("img").getAttribute("src")).toContain(
+  ).toEqual(["Alpha", "Beta", "Sample Pictures", "notes.txt", "photo.bmp"]);
+  expect(pictures[3].querySelector("img").getAttribute("src")).toContain(
     "TextDocument.png",
   );
-  expect(pictures[3].querySelector("img").getAttribute("src")).toContain(
+  expect(pictures[4].querySelector("img").getAttribute("src")).toContain(
     "GenericFile.png",
   );
   pictures[0].dispatchEvent(new s.window.PointerEvent("pointerenter"));
@@ -443,8 +443,9 @@ test("Classic expanded documents and pictures list their folders", async () => {
   expect(
     s.document.querySelectorAll(".start-program-flyout")[1].textContent,
   ).toContain("My Music");
+  // My Pictures holds XP's Sample Pictures folder.
   folders[1].click();
   expect(
     s.document.querySelectorAll(".start-program-flyout")[1].textContent,
-  ).toBe("(Empty)");
+  ).toBe("Sample Pictures▶");
 });

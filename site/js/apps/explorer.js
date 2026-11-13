@@ -126,7 +126,8 @@ const resolveShellCommand = (value) => {
     };
   const nodeId = fs.resolvePath(String(value).trim());
   const node = nodeId && fs.getNode(nodeId);
-  if (node)
+  // Like XP, Run cannot find an item by its place in the Recycle Bin.
+  if (node && !isDeletedNode(node.id))
     return {
       kind: node.type === "folder" ? "folder" : "file",
       title: node.name,
@@ -527,6 +528,23 @@ const wireInternetGames = (win) => {
 };
 
 // XP's wording and titles, with the Recycle Bin icon.
+// Delete questions report a failed delete themselves, so no caller leaves
+// it unhandled.
+const alertFileOperationError = (error) =>
+  XPDialogs.alert(
+    error.message || "The file operation failed.",
+    "File operation",
+    "error",
+  );
+
+// Explorer and the Desktop report a refused name the same way.
+const alertRenameError = (error) =>
+  XPDialogs.alert(
+    error.message || "The file operation failed.",
+    "Error Renaming File or Folder",
+    "error",
+  );
+
 const confirmRecycleDelete = (ids) => {
   const node = fs.getNode(ids[0]);
   const [text, title] =
@@ -544,9 +562,25 @@ const confirmRecycleDelete = (ids) => {
             `Are you sure you want to send '${node.name}' to the Recycle Bin?`,
             "Confirm File Delete",
           ];
-  return XPDialogs.confirm(text, title, "recycle").then(
-    async (yes) => yes && (await fileOps.removeToBin(ids)),
+  return XPDialogs.confirm(text, title, "recycle")
+    .then(async (yes) => yes && (await fileOps.removeToBin(ids)))
+    .catch(alertFileOperationError);
+};
+
+// Deletes items from the Recycle Bin for good. An item restored meanwhile,
+// for example in another tab, is not deleted: the operation fails instead.
+const confirmRecycleBinDelete = async (ids) => {
+  const yes = await XPDialogs.confirm(
+    "Are you sure you want to permanently delete the selected items?",
+    "Confirm File Delete",
+    "warning",
   );
+  if (!yes) return;
+  try {
+    await fileOps.permanentlyDelete(ids);
+  } catch (error) {
+    await alertFileOperationError(error);
+  }
 };
 
 // Empty Recycle Bin is only enabled while the bin has items.
@@ -565,11 +599,7 @@ const confirmEmptyRecycleBin = () => {
       await fileOps.emptyRecycleBin();
       return true;
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertFileOperationError(error);
     }
   });
 };
@@ -603,13 +633,15 @@ const choosePasteConflict = ({ existing }) =>
   });
 // Every caller checks canPaste or fills the clipboard first. Pastes cannot
 // overlap: the conflict and progress dialogs are modal.
-const pasteIntoFolder = async (destinationId) => {
-  const clipboard = fileOps.getClipboard();
+// Pastes the clipboard, or moves or copies `items` ({ mode, ids }) without
+// the clipboard, as a drag does.
+const pasteIntoFolder = async (destinationId, items = null) => {
+  const source = items || fileOps.getClipboard();
   let cancelled = false;
   const progress =
-    clipboard.ids.length > 1
+    source.ids.length > 1
       ? XPDialogs.progress({
-          title: clipboard.mode === "cut" ? "Moving..." : "Copying...",
+          title: source.mode === "cut" ? "Moving..." : "Copying...",
           text: "Preparing file operation...",
           cancellable: true,
           onCancel: () => {
@@ -622,6 +654,7 @@ const pasteIntoFolder = async (destinationId) => {
       destinationId,
       choosePasteConflict,
       {
+        items,
         isCancelled: () => cancelled,
         onProgress: ({ completed, total, mode }) =>
           progress?.update(
@@ -664,7 +697,7 @@ const importFileEntry = (entry, destinationId, state) =>
     entry.file(async (file) => {
       try {
         if (state.cancelled) return resolve(false);
-        const content = file.type.startsWith("text/") ? await file.text() : "";
+        const content = await fileOps.readFileContent(file);
         const existing = fs.findChild(destinationId, file.name);
         let replaceId;
         if (existing) {
@@ -754,12 +787,26 @@ const importDroppedFiles = async (destinationId, dataTransfer) => {
     state.progress.close();
   }
 };
+// The items an Explorer drag carries. A folder never shows as a drop target
+// for itself or for a folder inside it. A drop, a dragend that reaches the
+// document, or the next dragstart ends the list.
+let explorerDragIds = [];
+document.addEventListener("dragend", () => {
+  explorerDragIds = [];
+});
 const wireFolderDropTarget = (element, destinationId) => {
   element.dataset.dropDestinationId = destinationId;
   element.addEventListener("dragover", (event) => {
     const internal = event.dataTransfer?.types?.includes(
       "application/x-astro-vfs-ids",
     );
+    if (
+      internal &&
+      explorerDragIds.some(
+        (id) => id === destinationId || fs.isDescendantOf(id, destinationId),
+      )
+    )
+      return;
     if (
       internal ||
       fileOps.canPaste(destinationId) ||
@@ -775,16 +822,30 @@ const wireFolderDropTarget = (element, destinationId) => {
   element.addEventListener("drop", async (event) => {
     event.preventDefault();
     element.classList.remove("drop-target");
+    explorerDragIds = [];
     try {
       const payload = event.dataTransfer?.getData(
         "application/x-astro-vfs-ids",
       );
       const ids = payload ? JSON.parse(payload) : [];
       if (!Array.isArray(ids)) throw new Error("Invalid dropped item list");
-      if (ids.length) {
-        fileOps.cut(ids);
-        await pasteIntoFolder(destinationId);
-      } else await importDroppedFiles(destinationId, event.dataTransfer);
+      // A drag moves the items without the clipboard, like XP. A folder
+      // dropped on itself stays where it is.
+      if (ids.includes(destinationId)) return;
+      // Only items that were in the Recycle Bin at drag start may leave it.
+      // A drag from an older tab has no such list, so the items in the bin
+      // at the drop count.
+      const binPayload = event.dataTransfer.getData(
+        "application/x-astro-vfs-from-bin",
+      );
+      const fromBin = binPayload ? JSON.parse(binPayload) : null;
+      if (ids.length)
+        await pasteIntoFolder(destinationId, {
+          mode: "cut",
+          ids,
+          fromBin: Array.isArray(fromBin) ? fromBin : undefined,
+        });
+      else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {
       XPDialogs.alert(
         error.message || "The dropped files could not be imported.",
@@ -816,9 +877,14 @@ const systemFolderShortcuts = {
 const explorerDisplayName = (node) =>
   node.id === fs.SHARED_DOCUMENTS ? "Shared Documents" : node.name;
 
+// An item in the Recycle Bin, not the bin itself. Like XP, Explorer never
+// browses into a deleted folder.
+const isDeletedNode = (id) => id !== fs.RECYCLE_BIN && fs.isInRecycleBin(id);
+
 const navigateExplorer = (win, folderId, { history = true } = {}) => {
   const folder = fs.getNode(folderId);
-  if (!folder || folder.type !== "folder") return false;
+  if (!folder || folder.type !== "folder" || isDeletedNode(folderId))
+    return false;
   if (history) {
     const entries = win.history.slice(0, win.historyIndex + 1);
     if (entries.at(-1) !== folderId) entries.push(folderId);
@@ -830,18 +896,33 @@ const navigateExplorer = (win, folderId, { history = true } = {}) => {
   return true;
 };
 
-// Back is disabled at the first entry, which is always an existing protected
-// folder. Forward can stay enabled after a failed step into a deleted folder.
-const explorerBack = (win) => {
-  win.historyIndex -= 1;
-  navigateExplorer(win, win.history[win.historyIndex], { history: false });
+// Back and Forward skip folders that were deleted since, and the folder
+// that is already open. The index is -1 when no such folder is left, and
+// the button is then disabled.
+const explorerHistoryTarget = (win, step) => {
+  for (
+    let index = win.historyIndex + step;
+    index >= 0 && index < win.history.length;
+    index += step
+  ) {
+    const id = win.history[index];
+    if (
+      id !== win.currentFolderId &&
+      fs.getNode(id)?.type === "folder" &&
+      !isDeletedNode(id)
+    )
+      return index;
+  }
+  return -1;
 };
-
-const explorerForward = (win) => {
-  if (win.historyIndex >= win.history.length - 1) return;
-  win.historyIndex += 1;
-  navigateExplorer(win, win.history[win.historyIndex], { history: false });
+const stepExplorerHistory = (win, step) => {
+  const index = explorerHistoryTarget(win, step);
+  if (index === -1) return;
+  win.historyIndex = index;
+  navigateExplorer(win, win.history[index], { history: false });
 };
+const explorerBack = (win) => stepExplorerHistory(win, -1);
+const explorerForward = (win) => stepExplorerHistory(win, 1);
 
 const selectedExplorerNodes = (win) =>
   [...win.el.querySelectorAll(".explorer-item.selected")]
@@ -851,6 +932,8 @@ const selectedExplorerNodes = (win) =>
 // Inline rename, like XP: the label becomes an edit box; Enter or leaving
 // it commits, and Escape cancels.
 const startExplorerRename = (win, nodeId) => {
+  // Like XP, items in the Recycle Bin keep their names until restored.
+  if (fs.isInRecycleBin(nodeId)) return;
   const item = win.el.querySelector(
     `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
   );
@@ -877,11 +960,7 @@ const startExplorerRename = (win, nodeId) => {
     try {
       await fileOps.rename(nodeId, input.value);
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "Error Renaming File or Folder",
-        "error",
-      );
+      await alertRenameError(error);
     }
   };
   input.addEventListener("keydown", (event) => {
@@ -1001,11 +1080,13 @@ const renderExplorerTaskPane = (win) => {
       fs.DRIVE_F,
     ].includes(win.currentFolderId)
   ) {
-    addTask(
-      "Make a new folder",
-      "NewFolder.png",
-      async () => await fileOps.createFolder(win.currentFolderId, "New Folder"),
-    );
+    addTask("Make a new folder", "NewFolder.png", async () => {
+      try {
+        await fileOps.createFolder(win.currentFolderId, "New Folder");
+      } catch (error) {
+        await alertFileOperationError(error);
+      }
+    });
   }
   section.hidden = !body.children.length;
 };
@@ -1152,9 +1233,10 @@ const renderExplorerTree = (win) => {
     row.className = "explorer-tree-item";
     row.dataset.nodeId = id;
     row.style.paddingLeft = `${6 + depth * 14}px`;
-    const hasFolders = fs
-      .getChildren(id)
-      .some((child) => child.type === "folder");
+    // The tree lists no deleted folders under the Recycle Bin.
+    const hasFolders =
+      id !== fs.RECYCLE_BIN &&
+      fs.getChildren(id).some((child) => child.type === "folder");
     row.textContent = `${hasFolders ? (expanded.has(id) ? "− " : "+ ") : "  "}${node.name}`;
     row.classList.toggle("active", id === win.currentFolderId);
     row.addEventListener("click", () => {
@@ -1162,12 +1244,13 @@ const renderExplorerTree = (win) => {
       navigateExplorer(win, id);
     });
     row.addEventListener("dblclick", () => {
+      if (!hasFolders) return;
       if (expanded.has(id)) expanded.delete(id);
       else expanded.add(id);
       renderExplorerTree(win);
     });
     tree.appendChild(row);
-    if (expanded.has(id))
+    if (hasFolders && expanded.has(id))
       fs.getChildren(id)
         .filter((child) => child.type === "folder")
         .forEach((child) => addNode(child.id, depth + 1));
@@ -1221,21 +1304,10 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       if (command === "properties") XPDialogs.properties(selected[0]);
       if (command === "rename") startExplorerRename(win, selected[0]);
       if (command === "delete") await confirmRecycleDelete(selected);
-      if (command === "permanent") {
-        const yes = await XPDialogs.confirm(
-          "Are you sure you want to permanently delete the selected items?",
-          "Confirm File Delete",
-          "warning",
-        );
-        if (yes) await fileOps.permanentlyDelete(selected);
-      }
+      if (command === "permanent") await confirmRecycleBinDelete(selected);
       close();
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertFileOperationError(error);
     }
   });
   menu.addEventListener("keydown", (event) => {
@@ -1332,6 +1404,11 @@ const explorerItemDescription = (node) => {
 };
 
 const openExplorerNode = (win, node) => {
+  // XP opens Properties for an item in the Recycle Bin.
+  if (isDeletedNode(node.id)) {
+    XPDialogs.properties(node.id);
+    return;
+  }
   if (node.type === "folder") {
     navigateExplorer(win, node.id);
     return;
@@ -1391,9 +1468,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
             ? XP_ICON_PATHS["MyPictures.png"]
             : XP_ICON_PATHS["MyDocuments.png"];
   chrome.querySelector('[data-explorer-action="back"]').disabled =
-    win.historyIndex <= 0;
+    explorerHistoryTarget(win, -1) === -1;
   chrome.querySelector('[data-explorer-action="forward"]').disabled =
-    win.historyIndex >= win.history.length - 1;
+    explorerHistoryTarget(win, 1) === -1;
   chrome.querySelector('[data-explorer-action="up"]').disabled =
     !folder.parent &&
     ![fs.MY_COMPUTER, fs.RECYCLE_BIN].includes(win.currentFolderId);
@@ -1515,9 +1592,14 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("dragstart", (event) => {
       const ids = selectedExplorerNodes(win);
+      explorerDragIds = ids.includes(node.id) ? ids : [node.id];
       event.dataTransfer.setData(
         "application/x-astro-vfs-ids",
-        JSON.stringify(ids.includes(node.id) ? ids : [node.id]),
+        JSON.stringify(explorerDragIds),
+      );
+      event.dataTransfer.setData(
+        "application/x-astro-vfs-from-bin",
+        JSON.stringify(explorerDragIds.filter((id) => fs.isInRecycleBin(id))),
       );
       event.dataTransfer.effectAllowed = "move";
     });
@@ -1537,7 +1619,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       item.click();
       openExplorerContextMenu(win, event.clientX, event.clientY);
     });
-    if (node.type === "folder") wireFolderDropTarget(item, node.id);
+    // A deleted folder takes no drops: nothing new goes in the Recycle Bin.
+    if (node.type === "folder" && !fs.isInRecycleBin(node.id))
+      wireFolderDropTarget(item, node.id);
     items.appendChild(item);
   });
   explorerContent.querySelector(".explorer-status").textContent =
@@ -1634,7 +1718,10 @@ const setupExplorerFilesystemSync = () =>
   fs.subscribe(() => {
     openWindows.forEach((win) => {
       if (win.type !== "system" || !win.currentFolderId) return;
-      if (!fs.getNode(win.currentFolderId))
+      if (
+        !fs.getNode(win.currentFolderId) ||
+        isDeletedNode(win.currentFolderId)
+      )
         win.currentFolderId = fs.MY_COMPUTER;
       renderExplorerItems(win);
     });

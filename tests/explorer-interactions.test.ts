@@ -146,10 +146,62 @@ test("Explorer drag and drop moves internal files and imports external file cont
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
   expect(target.classList.contains("drop-target")).toBeFalse();
+  // A folder never shows as a drop target for itself.
+  h.item(h.child.id).click();
+  target.dispatchEvent(drag("dragstart"));
+  const overSelf = drag("dragover");
+  target.dispatchEvent(overSelf);
+  expect(overSelf.defaultPrevented).toBeFalse();
+  expect(target.classList.contains("drop-target")).toBeFalse();
+  // A dragend that reaches the document ends the drag.
+  h.s.document.dispatchEvent(drag("dragend"));
+  target.dispatchEvent(drag("dragover"));
+  expect(target.classList.contains("drop-target")).toBeTrue();
+  target.dispatchEvent(drag("dragleave"));
+  // A file deleted after the drag started stays in the Recycle Bin.
+  const late = h.fs.createFile(h.fs.getNode(h.file.id).parent, "late.txt");
+  await flushShell();
+  h.item(late.id).click();
+  h.item(late.id).dispatchEvent(drag("dragstart"));
+  expect(transfer.getData("application/x-astro-vfs-from-bin")).toBe("[]");
+  await h.fs.remove(late.id);
+  target.dispatchEvent(drag("drop"));
+  await flushShell();
+  await flushShell();
+  expect(h.fs.isInRecycleBin(late.id)).toBeTrue();
+  // A drag from an older tab has no Recycle Bin list. Items in the bin
+  // at the drop count as picked there.
+  const older = new w.DataTransfer();
+  older.setData("application/x-astro-vfs-ids", JSON.stringify([late.id]));
+  const olderDrop = new w.Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(olderDrop, "dataTransfer", { value: older });
+  target.dispatchEvent(olderDrop);
+  await flushShell();
+  await flushShell();
+  expect(h.fs.getNode(late.id).parent).toBe(h.child.id);
+  // A drop ends the drag too.
+  target.dispatchEvent(drag("dragstart"));
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));
+  target.dispatchEvent(drag("drop"));
+  target.dispatchEvent(drag("dragover"));
+  expect(target.classList.contains("drop-target")).toBeTrue();
+  target.dispatchEvent(drag("dragleave"));
+  // A folder dropped on itself stays where it is, with no message.
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));
+  target.dispatchEvent(drag("drop"));
+  await flushShell();
+  expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(0);
+  transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.file.id]));
+  // A drag moves the file and never touches the clipboard, like XP.
+  w.FileOperations.copy([h.child.id]);
   target.dispatchEvent(drag("drop"));
   await flushShell();
   await flushShell();
   expect(h.fs.getNode(h.file.id).parent).toBe(h.child.id);
+  expect(w.FileOperations.getClipboard()).toEqual({
+    mode: "copy",
+    ids: [h.child.id],
+  });
   const external = {
     types: ["Files"],
     files: [new w.File(["imported"], "external.txt", { type: "text/plain" })],

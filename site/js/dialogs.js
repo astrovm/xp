@@ -564,6 +564,27 @@
     return icon;
   };
 
+  // Thumbnails view shows a picture file as the picture itself, scaled to
+  // fit the frame, like XP. Other items, and pictures that fail to load,
+  // show their icon.
+  const createThumbnail = (node) => {
+    const icon = createNodeIcon(node);
+    const url = fs().getPictureUrl(node.id);
+    if (!url) return icon;
+    const preview = document.createElement("img");
+    preview.className = "dlg-thumbnail-picture";
+    preview.alt = "";
+    preview.decoding = "async";
+    preview.addEventListener(
+      "error",
+      () => icon.replaceWith(createNodeIcon(node)),
+      { once: true },
+    );
+    preview.src = url;
+    icon.replaceChildren(preview);
+    return icon;
+  };
+
   const describeNodeType = (node) => {
     if (node.id === fs().DRIVE_C) return "Local Disk";
     if (node.id === fs().DRIVE_D) return "Local Disk";
@@ -661,7 +682,9 @@
   // this promise. onAccept({ folderId, name }) validates the current entry
   // and returns false (or Promise<false>) to keep the dialog open, or any
   // other value (or Promise of one) to close the dialog and resolve with
-  // that value. Cancel resolves with null.
+  // that value. Cancel resolves with null. completeName(name, filter) gives
+  // the full name for the typed one and the chosen file type, such as the
+  // name with a default extension.
   const describeFilter = (filter) =>
     filter?.length
       ? `${filter.map((ext) => ext.replace(".", "").toUpperCase()).join(", ")} Files (${filter.map((ext) => `*${ext}`).join(";")})`
@@ -820,6 +843,8 @@
     folderLabel,
     onAccept,
     onDialog = null,
+    completeName = (name) => name,
+    allFiles = true,
   }) =>
     new Promise((resolve) => {
       let currentFolderId = startFolder || fs().MY_DOCUMENTS;
@@ -1268,7 +1293,7 @@
       const typeSelect = document.createElement("select");
       typeSelect.className = "dlg-file-type";
       [filter, null]
-        .filter((entry, index) => index === 0 || filter?.length)
+        .filter((entry, index) => index === 0 || (filter?.length && allFiles))
         .forEach((entry) => {
           const option = document.createElement("option");
           option.textContent =
@@ -1348,7 +1373,18 @@
       const accept = () => {
         // A message box must not open behind a drop-down list.
         dialog.closePopup?.();
-        const name = nameInput.value.trim();
+        const typed = nameInput.value.trim();
+        const name = typed && completeName(typed, activeFilter);
+        // Like XP, a folder's name opens that folder instead.
+        const folder = [typed, name]
+          .map((candidate) => findChildByName(currentFolderId, candidate))
+          .find((node) => node?.type === "folder");
+        if (folder) {
+          nameInput.value = "";
+          navigate(folder.id);
+          nameInput.focus();
+          return;
+        }
         const context = { folderId: currentFolderId, name };
         Promise.resolve(onAccept(context)).then((result) => {
           if (result === false) return;
@@ -1407,7 +1443,12 @@
             const label = document.createElement("span");
             label.className = "dlg-file-item-name";
             label.textContent = child.name;
-            item.append(createNodeIcon(child), label);
+            item.append(
+              view === "thumbnails"
+                ? createThumbnail(child)
+                : createNodeIcon(child),
+              label,
+            );
             if (view === "details" || view === "tiles") {
               const { type, size, date } = itemDetails(child);
               (view === "details" ? [size, type, date] : [type, size]).forEach(
@@ -1487,19 +1528,38 @@
 
   // XPDialogs.saveFile({ title, startFolder, defaultName, filter }) ->
   //   Promise resolving with { parentId, name, existingId }, or null.
+  // defaultExtension is added to a name without an extension before the
+  // dialog looks for a file to replace, like XP's default extension.
+  // A name keeps an extension of the chosen file type, or any extension
+  // with All Files. Other names get the default extension, like XP's. The
+  // extension follows the file system's rule, so ".txt" has none.
+  const withDefaultExtension = (name, defaultExtension, filter) => {
+    const extension = fs().extractExtension(name);
+    const kept = filter?.length ? filter.includes(extension) : !!extension;
+    return defaultExtension && !kept ? `${name}${defaultExtension}` : name;
+  };
+
   const saveFile = ({
     title = "Save As",
     startFolder = null,
     defaultName = "",
     filter = null,
+    defaultExtension = "",
+    allFiles = true,
   } = {}) =>
     browseFiles({
       title,
-      startFolder,
+      // A deleted file's folder is in the Recycle Bin, and nothing can be
+      // saved there. The dialog then starts in My Documents.
+      startFolder:
+        startFolder && fs().isInRecycleBin(startFolder) ? null : startFolder,
       filter,
+      allFiles,
       initialName: defaultName,
       acceptLabel: "&Save",
       folderLabel: "Save &in:",
+      completeName: (name, activeFilter) =>
+        withDefaultExtension(name, defaultExtension, activeFilter),
       onAccept: ({ folderId, name }) => {
         if (!name) return false;
         const existing = findChildByName(folderId, name);

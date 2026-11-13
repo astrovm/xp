@@ -140,13 +140,167 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   });
   await flushShell();
   const icon = (id) => s.document.querySelector(`[data-desktop-id="${id}"]`);
+  // A drag never touches the clipboard, like XP.
+  const ops = s.window.FileOperations;
+  ops.copy([recycle.id]);
   await drag(s, icon(move.id), icon(folder.id));
   expect(fs.getNode(move.id).parent).toBe(folder.id);
   expect(fs.getNode(move.id).content).toBe("keep me");
+  expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
+  // Cancel on a name clash leaves the file, its icon and the clipboard.
+  const clash = fs.createFile(fs.DESKTOP, "move.txt");
+  await flushShell();
+  const start = [icon(clash.id).style.left, icon(clash.id).style.top];
+  await drag(s, icon(clash.id), icon(folder.id));
+  // The icon hides while the question is open.
+  expect(icon(clash.id).style.visibility).toBe("hidden");
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="cancel"]')
+    .click();
+  await flushShell();
+  await flushShell();
+  expect(fs.getNode(clash.id).parent).toBe(fs.DESKTOP);
+  expect([icon(clash.id).style.left, icon(clash.id).style.top]).toEqual(start);
+  expect(icon(clash.id).style.visibility).toBe("");
+  expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
+  // Icons still waiting to move stay hidden when the Desktop redraws after
+  // the first moved item.
+  const first = fs.createFile(fs.DESKTOP, "first.txt");
+  const second = fs.createFile(fs.DESKTOP, "second.txt");
+  const third = fs.createFile(fs.DESKTOP, "third.txt");
+  await flushShell();
+  s.document
+    .querySelectorAll(".desktop-icon")
+    .forEach((item) =>
+      item.classList.toggle(
+        "selected",
+        [first.id, second.id].includes(item.dataset.desktopId),
+      ),
+    );
+  const pasteWithConflicts = ops.pasteWithConflicts;
+  let waiting = null;
+  let afterOtherDrop = null;
+  let otherIds = null;
+  let finish;
+  const finished = new Promise((resolve) => (finish = resolve));
+  ops.pasteWithConflicts = async (destinationId, resolver, { items }) => {
+    if (items.ids.includes(third.id)) {
+      otherIds = items.ids;
+      await fs.move(third.id, destinationId);
+      return { cancelled: false, results: [] };
+    }
+    await fs.move(first.id, destinationId);
+    await flushShell();
+    waiting = icon(second.id).style.visibility;
+    // Another drop that ends first leaves this drop's icons hidden, and
+    // never takes them, even while they still look selected.
+    icon(second.id).classList.add("selected");
+    icon(third.id).classList.add("selected");
+    await drag(s, icon(third.id), icon(folder.id));
+    afterOtherDrop = icon(second.id).style.visibility;
+    await fs.move(second.id, destinationId);
+    finish();
+    return { cancelled: false, results: [] };
+  };
+  try {
+    await drag(s, icon(first.id), icon(folder.id));
+    await finished;
+    await flushShell();
+  } finally {
+    ops.pasteWithConflicts = pasteWithConflicts;
+  }
+  expect(waiting).toBe("hidden");
+  expect(afterOtherDrop).toBe("hidden");
+  expect(otherIds).toEqual([third.id]);
+  expect(fs.getNode(third.id).parent).toBe(folder.id);
+  expect(fs.getNode(second.id).parent).toBe(folder.id);
+  expect(
+    [...s.document.querySelectorAll(".desktop-icon")].every(
+      (item) => item.style.visibility === "",
+    ),
+  ).toBeTrue();
   await drag(s, icon(recycle.id), icon("__recycle-bin"));
   expect(fs.getNode(recycle.id).parent).toBe(fs.RECYCLE_BIN);
   expect(fs.getNode(recycle.id).content).toBe("recover me");
   expect(s.document.querySelectorAll(".drop-target").length).toBe(0);
+  // Items deleted while the drag runs stay deleted, and the rest still go.
+  const late = fs.createFile(fs.DESKTOP, "late.txt");
+  const stays = fs.createFile(fs.DESKTOP, "stays.txt");
+  await flushShell();
+  const selectOnly = (ids) =>
+    s.document
+      .querySelectorAll(".desktop-icon")
+      .forEach((item) =>
+        item.classList.toggle("selected", ids.includes(item.dataset.desktopId)),
+      );
+  selectOnly([late.id, stays.id]);
+  const startDrag = (item) =>
+    ["pointerdown", "pointermove"].forEach((type, index) =>
+      item.dispatchEvent(
+        new s.window.PointerEvent(type, {
+          button: 0,
+          pointerId: 1,
+          clientX: index ? 190 : 10,
+          clientY: index ? 140 : 10,
+          bubbles: true,
+        }),
+      ),
+    );
+  const endDrag = async (item, target) => {
+    s.document.elementsFromPoint = () => [s.document.body, target];
+    item.dispatchEvent(
+      new s.window.PointerEvent("pointerup", {
+        button: 0,
+        pointerId: 1,
+        clientX: 190,
+        clientY: 140,
+        bubbles: true,
+      }),
+    );
+    await flushShell();
+    await flushShell();
+  };
+  const lateIcon = icon(late.id);
+  startDrag(lateIcon);
+  await fs.remove(late.id);
+  await endDrag(lateIcon, icon("__recycle-bin"));
+  expect(fs.isInRecycleBin(late.id)).toBeTrue();
+  expect(fs.isInRecycleBin(stays.id)).toBeTrue();
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].some((dialog) =>
+      dialog.textContent.includes("cannot delete"),
+    ),
+  ).toBeFalse();
+  fs.restore(stays.id);
+  await flushShell();
+  selectOnly([stays.id]);
+  const staysIcon = icon(stays.id);
+  startDrag(staysIcon);
+  await fs.remove(stays.id);
+  await endDrag(staysIcon, icon(folder.id));
+  expect(fs.isInRecycleBin(stays.id)).toBeTrue();
+  // A failed delete shows an alert.
+  const removeToBin = s.window.FileOperations.removeToBin;
+  s.window.FileOperations.removeToBin = async () => {
+    throw new Error("Storage is full.");
+  };
+  try {
+    const folderStart = [icon(folder.id).style.left, icon(folder.id).style.top];
+    await drag(s, icon(folder.id), icon("__recycle-bin"));
+    await flushShell();
+    expect(
+      [...s.document.querySelectorAll(".xp-dialog")].at(-1)?.textContent,
+    ).toContain("Storage is full.");
+    expect(fs.getNode(folder.id).parent).toBe(fs.DESKTOP);
+    // The icon goes back to its place.
+    expect([icon(folder.id).style.left, icon(folder.id).style.top]).toEqual(
+      folderStart,
+    );
+    expect(icon(folder.id).style.visibility).toBe("");
+  } finally {
+    s.window.FileOperations.removeToBin = removeToBin;
+  }
 });
 test("desktop files can be created, renamed outside the field, copied, cut, and opened through menus", async () => {
   const s = await login(await loadShell()),
@@ -361,4 +515,25 @@ test("desktop sorts place folders by their type and break date ties by name", as
       .map((el) => el.dataset.desktopId)
       .filter((id) => ids.has(id)),
   ).toEqual([bitmap.id, text.id, folder.id]);
+});
+test("keys never select a desktop icon that is still moving away", async () => {
+  const s = await login(await loadShell()),
+    fs = s.window.VirtualFS;
+  fs.createFile(fs.DESKTOP, "kept.txt");
+  const moving = fs.createFile(fs.DESKTOP, "zz moving.txt");
+  await flushShell();
+  const icons = [...s.document.querySelectorAll(".desktop-icon")];
+  const movingIcon = icons.find((item) => item.dataset.desktopId === moving.id);
+  expect(icons.at(-1)).toBe(movingIcon);
+  movingIcon.classList.add("desktop-moving");
+  icons[0].focus();
+  icons[0].dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "End",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(movingIcon.classList.contains("selected")).toBeFalse();
+  expect(icons.at(-2).classList.contains("selected")).toBeTrue();
 });

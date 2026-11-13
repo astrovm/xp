@@ -11,59 +11,18 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import Module, { createRequire } from "node:module";
+import Module from "node:module";
 import { relative, resolve } from "node:path";
 import type { BunPlugin } from "bun";
+import {
+  coverageEnabled,
+  getInstrumenter,
+  isCovered,
+  projectDirectory,
+  rawCoverageDirectory,
+} from "./coverage-config";
 
 type CommonJsModule = { _compile(code: string, path: string): void };
-
-export const projectDirectory = resolve(import.meta.dir, "../..");
-export const coverageEnabled = process.env.COVERAGE === "1";
-export const coverageDirectory = resolve(
-  projectDirectory,
-  process.env.COVERAGE_DIR || "coverage",
-);
-export const rawCoverageDirectory = resolve(coverageDirectory, "raw");
-
-// First-party code that ships or runs in CI. Imported engines, generated
-// runtimes, and maintenance tools that need the licensed XP source media are
-// excluded because no test environment can run them.
-export const coverageIncludes = [
-  /^site\/js\/.+\.js$/,
-  /^site\/apps\/.+\.js$/,
-  /^site\/iframe\/scummvm\/.+\.js$/,
-  /^catalog\/.+\.ts$/,
-  /^rtc\/.+\.ts$/,
-  /^worker\/.+\.(js|ts)$/,
-  /^tools\/(content-address|deploy|dev-server|extract-swf|validate-icons|validate-javascript)\.ts$/,
-];
-export const coverageExcludes = [
-  /^site\/apps\/paint\/(lib|src)\//,
-  /^site\/apps\/pinball\/runtime\//,
-];
-
-export const isCovered = (path: string) => {
-  const file = relative(projectDirectory, path);
-  return (
-    coverageIncludes.some((pattern) => pattern.test(file)) &&
-    !coverageExcludes.some((pattern) => pattern.test(file))
-  );
-};
-
-const loadModule = createRequire(import.meta.url);
-
-// Babel is loaded only when coverage is requested, keeping normal runs fast.
-let instrumenter: ReturnType<
-  typeof import("istanbul-lib-instrument").createInstrumenter
->;
-const getInstrumenter = () =>
-  (instrumenter ??= loadModule("istanbul-lib-instrument").createInstrumenter({
-    coverageGlobalScope: "globalThis",
-    coverageGlobalScopeFunc: false,
-    esModules: true,
-    parserPlugins: ["typescript", "importAttributes"],
-    produceSourceMap: false,
-  }));
 
 const cacheDirectory = resolve(projectDirectory, "coverage/cache");
 
@@ -83,11 +42,6 @@ export const instrumentSource = (code: string, path: string) => {
   writeFileSync(`${cached}.${process.pid}`, instrumented);
   renameSync(`${cached}.${process.pid}`, cached);
   return instrumented;
-};
-
-export const emptyFileCoverage = (code: string, path: string) => {
-  getInstrumenter().instrumentSync(code, relative(projectDirectory, path));
-  return getInstrumenter().lastFileCoverage();
 };
 
 // ES modules and TypeScript load through a Bun plugin. Browser scripts that

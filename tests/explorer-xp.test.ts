@@ -2,6 +2,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   cleanupShells,
+  clickStartAction,
   flushShell,
   loadShell,
   login,
@@ -295,4 +296,137 @@ test("a protected selection keeps only the folder task", async () => {
   expect(
     profile.querySelector(".explorer-sidebar > section:first-child").hidden,
   ).toBeTrue();
+});
+
+test("Explorer never browses into the Recycle Bin's folders", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.DESKTOP, "Old");
+  fs.createFolder(folder.id, "Inner");
+  const open = await openFolder(s, folder.id);
+  fs.remove(folder.id);
+  await settle();
+  // A window showing a folder that goes to the Recycle Bin moves to My
+  // Computer.
+  expect(names(open)).toContain("Local Disk (C:)");
+  const bin = await openFolder(s, fs.RECYCLE_BIN);
+  const item = bin.querySelector(`.explorer-item[data-node-id="${folder.id}"]`);
+  // A deleted folder takes no drops.
+  expect(item.dataset.dropDestinationId).toBeUndefined();
+  // Like XP, opening a deleted folder shows its Properties.
+  item.dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  await settle();
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("Old Properties");
+  expect(names(bin)).toEqual(["Old"]);
+  // The Folders tree lists no deleted folders.
+  const row = bin.querySelector(
+    `.explorer-tree-item[data-node-id="${fs.RECYCLE_BIN}"]`,
+  );
+  expect(row.textContent).toBe("  Recycle Bin");
+  row.dispatchEvent(new s.window.MouseEvent("dblclick"));
+  expect(
+    !!bin.querySelector(`.explorer-tree-item[data-node-id="${folder.id}"]`),
+  ).toBeFalse();
+  // Items in the Recycle Bin keep their names: F2 does not rename them.
+  bin
+    .querySelector(`.explorer-item[data-node-id="${folder.id}"]`)
+    .dispatchEvent(
+      new s.window.KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+    );
+  expect(!!bin.querySelector(".explorer-rename")).toBeFalse();
+  // Run cannot find an item by its place in the Recycle Bin.
+  clickStartAction(s, "run");
+  const run = s.document.querySelector(".run-dialog");
+  run.querySelector("#run-command").value = "Recycle Bin\\Old";
+  run.querySelector('[data-action="run"]').click();
+  await settle();
+  expect(s.document.querySelector(".run-dialog").textContent).toContain(
+    "Windows cannot find 'Recycle Bin\\Old'",
+  );
+  // Opening it by its id does not browse into it either.
+  fs.open(folder.id);
+  await settle();
+  expect(names(open)).not.toContain("Inner");
+});
+
+test("the Recycle Bin's File menu deletes for good and never renames", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "old.txt");
+  fs.remove(file.id);
+  const bin = await openFolder(s, fs.RECYCLE_BIN);
+  bin.querySelector(`.explorer-item[data-node-id="${file.id}"]`).click();
+  const command = (name) =>
+    bin.querySelector(`.explorer-menu [data-explorer-command="${name}"]`);
+  bin.querySelector('[data-explorer-menu="file"]').click();
+  expect(command("rename").disabled).toBeTrue();
+  command("delete").click();
+  await settle();
+  const dialog = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(dialog.textContent).toContain("permanently delete the selected items");
+  dialog.querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(!!fs.getNode(file.id)).toBeFalse();
+  // An item restored while the question is open, for example in another
+  // tab, is not deleted.
+  const kept = fs.createFile(fs.DESKTOP, "kept.txt");
+  fs.remove(kept.id);
+  await settle();
+  bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`).click();
+  bin.querySelector('[data-explorer-menu="file"]').click();
+  command("delete").click();
+  await settle();
+  fs.restore(kept.id);
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="yes"]')
+    .click();
+  await settle();
+  expect(fs.getNode(kept.id).parent).toBe(fs.DESKTOP);
+  const lastDialog = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(lastDialog().textContent).toContain("File operation");
+  lastDialog().querySelector('[data-action="ok"]').click();
+  await settle();
+  // Shift+Delete in the Recycle Bin takes the same checked path.
+  fs.remove(kept.id);
+  await settle();
+  const item = bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`);
+  item.click();
+  item.focus();
+  item.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Delete",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+  fs.restore(kept.id);
+  lastDialog().querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(fs.getNode(kept.id).parent).toBe(fs.DESKTOP);
+  lastDialog().querySelector('[data-action="ok"]').click();
+  await settle();
+  // A failure without a message still gets one.
+  fs.remove(kept.id);
+  await settle();
+  bin.querySelector(`.explorer-item[data-node-id="${kept.id}"]`).click();
+  const permanentlyDelete = s.window.FileOperations.permanentlyDelete;
+  s.window.FileOperations.permanentlyDelete = () => {
+    throw new Error("");
+  };
+  try {
+    bin.querySelector('[data-explorer-menu="file"]').click();
+    command("delete").click();
+    await settle();
+    lastDialog().querySelector('[data-action="yes"]').click();
+    await settle();
+    expect(lastDialog().textContent).toContain("The file operation failed.");
+  } finally {
+    s.window.FileOperations.permanentlyDelete = permanentlyDelete;
+  }
 });

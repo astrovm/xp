@@ -5,6 +5,7 @@ export const createSystemRuntime = (context) => {
     XPDialogs,
     closeGameWindow,
     confirmRecycleDelete,
+    confirmRecycleBinDelete,
     explorerBack,
     explorerForward,
     fileOps,
@@ -544,9 +545,12 @@ export const createSystemRuntime = (context) => {
                 win.currentFolderId === fs.MY_COMPUTER
                   ? "rename-current"
                   : "rename",
+              // Items in the Recycle Bin keep their names until restored.
               disabled:
                 win.currentFolderId !== fs.MY_COMPUTER &&
-                (selected.length !== 1 || protectedSelection),
+                (selected.length !== 1 ||
+                  protectedSelection ||
+                  win.currentFolderId === fs.RECYCLE_BIN),
             },
             { label: "Properties", action: "properties-current" },
             { separator: true },
@@ -662,7 +666,12 @@ export const createSystemRuntime = (context) => {
               ![fs.RECYCLE_BIN, fs.MY_COMPUTER].includes(win.currentFolderId)
             )
               pasteIntoFolder(win.currentFolderId);
-            if (command === "delete") confirmRecycleDelete(selected);
+            // In the Recycle Bin, Delete removes items for good, like the
+            // Delete key.
+            if (command === "delete")
+              await (win.currentFolderId === fs.RECYCLE_BIN
+                ? confirmRecycleBinDelete(selected)
+                : confirmRecycleDelete(selected));
             if (command === "delete-current" || command === "rename-current")
               XPDialogs.alert(
                 `Cannot ${command === "delete-current" ? "delete" : "rename"} My Computer.`,
@@ -742,10 +751,10 @@ export const createSystemRuntime = (context) => {
           if (action === "search") openSearchDialog();
           if (action === "go") {
             const input = chrome.querySelector(".explorer-address input");
-            const destination = fs.resolvePath(input.value);
-            if (destination && fs.getNode(destination)?.type === "folder")
-              navigateExplorer(win, destination);
-            else input.value = fs.getPath(win.currentFolderId);
+            // Explorer opens only folders, never one in the Recycle Bin.
+            // Otherwise the address goes back to the open folder.
+            if (!navigateExplorer(win, fs.resolvePath(input.value)))
+              input.value = fs.getPath(win.currentFolderId);
           }
         } catch (error) {
           await XPDialogs.alert(

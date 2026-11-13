@@ -52,9 +52,45 @@
     return () => listeners.delete(listener);
   };
 
+  // Each cut or copy gets a new token. A paste changes the clipboard only
+  // while the clipboard still holds the cut that it pastes.
+  let clipboardToken = 0;
+  const newClipboard = (mode, ids) => ({
+    mode,
+    ids,
+    token: ++clipboardToken,
+    // Items cut or copied from the Recycle Bin stay on the clipboard there.
+    fromBin: ids.filter((id) => fs.isInRecycleBin(id)),
+  });
+  const setClipboardIds = (ids) => {
+    clipboard = ids.length ? { ...clipboard, ids } : null;
+    notify({ type: "clipboard", mode: clipboard?.mode || null });
+  };
+
+  // The clipboard forgets items that were destroyed, and items that went to
+  // the Recycle Bin after the cut or copy. This runs only after a change was
+  // saved, so a failed delete keeps the clipboard. It covers every way to
+  // delete: the Delete key, a drag to the bin, uninstall and other tabs.
+  // An item is still there when it exists, and is in the Recycle Bin only
+  // if it already was there (fromBin).
+  const isStillThere = (id, fromBin) =>
+    !!fs.getNode(id) && (!fs.isInRecycleBin(id) || fromBin.includes(id));
+  const pruneClipboard = () => {
+    if (!clipboard) return;
+    const remaining = clipboard.ids.filter((id) =>
+      isStillThere(id, clipboard.fromBin),
+    );
+    // An item restored from the bin and deleted again leaves the clipboard.
+    clipboard.fromBin = clipboard.fromBin.filter((id) => fs.isInRecycleBin(id));
+    if (remaining.length !== clipboard.ids.length) setClipboardIds(remaining);
+  };
+
   // A filesystem mutation can come from any shell surface. Forward those
   // changes so views using this service stay synchronized as well.
-  fs.subscribe(() => notify({ type: "filesystem-change" }));
+  fs.subscribe(() => {
+    pruneClipboard();
+    notify({ type: "filesystem-change" });
+  });
 
   const requireFolder = (id) => {
     const node = fs.getNode(id);
@@ -66,7 +102,8 @@
 
   const assertWritableFolder = (id) => {
     const folder = requireFolder(id);
-    if (id === fs.RECYCLE_BIN || id === fs.MY_COMPUTER) {
+    // Nothing new goes in the Recycle Bin, or in a folder inside it.
+    if (fs.isInRecycleBin(id) || id === fs.MY_COMPUTER) {
       throw new Error("FileOperations: this location cannot accept new items");
     }
     return folder;
@@ -122,7 +159,7 @@
   };
 
   const setClipboard = (mode, ids) => {
-    clipboard = { mode, ids: getTopLevelIds(ids) };
+    clipboard = newClipboard(mode, getTopLevelIds(ids));
     notify({ type: "clipboard", mode });
     return snapshotClipboard();
   };
@@ -139,7 +176,7 @@
         );
       }
     });
-    clipboard = { mode: "cut", ids: topLevelIds };
+    clipboard = newClipboard("cut", topLevelIds);
     notify({ type: "clipboard", mode: "cut" });
     return snapshotClipboard();
   };
@@ -157,33 +194,6 @@
     }
   };
 
-  const paste = (destinationId) => {
-    if (!clipboard) throw new Error("FileOperations: clipboard is empty");
-    assertWritableFolder(destinationId);
-    const ids = getTopLevelIds(clipboard.ids);
-    const mode = clipboard.mode;
-    if (mode === "cut") assertMovableTo(ids, destinationId);
-    else assertCopyableTo(ids, destinationId);
-
-    // VirtualFS deduplicates conflicts deterministically. All validation
-    // happens before mutations so ordinary paste failures preserve state.
-    const results =
-      mode === "cut"
-        ? ids.map((id) => fs.move(id, destinationId))
-        : ids.map((id) => fs.copy(id, destinationId));
-    if (mode === "cut") {
-      clipboard = null;
-      notify({ type: "clipboard", mode: null });
-    }
-    notify({
-      type: "paste",
-      mode,
-      destinationId,
-      ids: results.map((node) => node.id),
-    });
-    return results;
-  };
-
   const getConflicts = (ids, destinationId) => {
     requireFolder(destinationId);
     return getTopLevelIds(ids)
@@ -199,15 +209,33 @@
   // Resolver receives { source, existing, mode } and returns "replace",
   // "rename", or "cancel" (sync or Promise). Replace is limited to files;
   // folders always use the filesystem's deterministic copy naming.
+  // options.items ({ mode, ids, fromBin }) moves or copies those items
+  // instead of the clipboard, and leaves the clipboard as it is, like a
+  // drag. fromBin lists the items that were in the Recycle Bin at drag
+  // start. Without it, the items in the bin when the paste starts count.
   const pasteWithConflicts = async (
     destinationId,
     resolveConflict,
     options = {},
   ) => {
-    if (!clipboard) throw new Error("FileOperations: clipboard is empty");
+    const usesClipboard = !options.items;
+    const source = options.items || clipboard;
+    if (!source) throw new Error("FileOperations: clipboard is empty");
     assertWritableFolder(destinationId);
-    const ids = getTopLevelIds(clipboard.ids);
-    const mode = clipboard.mode;
+    if (!Array.isArray(source.ids))
+      throw new Error("FileOperations: items must be an array");
+    // Items destroyed since the user picked them are skipped.
+    const liveIds = source.ids.filter((id) => !!fs.getNode(id));
+    if (source.ids.length && !liveIds.length)
+      return { cancelled: false, results: [] };
+    const ids = getTopLevelIds(liveIds);
+    // A paste takes an item out of the Recycle Bin only if it was there
+    // when the user picked it (cut, copy or drag start), and is still
+    // there. Other items deleted before or during the paste are skipped.
+    let fromBin = (Array.isArray(source.fromBin) ? source.fromBin : ids).filter(
+      (id) => ids.includes(id) && fs.isInRecycleBin(id),
+    );
+    const mode = source.mode;
     if (mode === "cut") assertMovableTo(ids, destinationId);
     else assertCopyableTo(ids, destinationId);
     if (
@@ -215,79 +243,97 @@
       ids.every((id) => fs.getNode(id).parent === destinationId)
     )
       return { cancelled: false, results: ids.map((id) => fs.getNode(id)) };
-    const decisions = [];
-    for (const conflict of getConflicts(ids, destinationId)) {
-      const response = await Promise.resolve(
-        resolveConflict?.({ ...conflict, mode }) || "rename",
-      );
-      const decision = ["replace", "rename", "cancel"].includes(response)
-        ? response
-        : "rename";
-      if (decision === "cancel") return { cancelled: true, results: [] };
-      decisions.push({ conflict, decision });
-    }
-    // Items already moved leave a cut clipboard; the rest can be retried.
-    const keepUnmovedOnClipboard = (index) => {
-      if (mode !== "cut") return;
-      const remaining = ids
-        .slice(index)
-        .filter((remainingId) => !!fs.getNode(remainingId));
-      clipboard = remaining.length ? { mode: "cut", ids: remaining } : null;
-      notify({ type: "clipboard", mode: clipboard?.mode || null });
-    };
-    const results = [];
-    for (const [index, id] of ids.entries()) {
-      if (options.isCancelled?.()) {
-        keepUnmovedOnClipboard(index);
-        return { cancelled: true, results };
-      }
-      const planned = decisions.find(
-        ({ conflict }) => conflict.source.id === id,
-      );
-      try {
-        await fs.transaction(() => {
-          // Replace only the file that still holds the clashing name; it may
-          // have been renamed or moved while the conflict dialog was open.
-          const existing =
-            planned?.decision === "replace"
-              ? fs.findChild(destinationId, fs.getNode(id).name)
-              : null;
-          if (
-            existing?.id === planned?.conflict.existing.id &&
-            existing?.type === "file" &&
-            planned.conflict.source.type === "file"
-          ) {
-            fs.destroy(existing.id);
-          }
-          results.push(
-            mode === "cut"
-              ? fs.move(id, destinationId)
-              : fs.copy(id, destinationId),
-          );
-        });
-      } catch (error) {
-        keepUnmovedOnClipboard(index);
-        throw error;
-      }
-      options.onProgress?.({
-        completed: index + 1,
-        total: ids.length,
-        mode,
-        id,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    if (mode === "cut") {
-      clipboard = null;
-      notify({ type: "clipboard", mode: null });
-    }
-    notify({
-      type: "paste",
-      mode,
-      destinationId,
-      ids: results.map((node) => node.id),
+    // An item that leaves the bin while the paste runs, then goes back,
+    // went there after the user picked it.
+    const unsubscribe = fs.subscribe(() => {
+      fromBin = fromBin.filter((id) => fs.isInRecycleBin(id));
     });
-    return { cancelled: false, results };
+    try {
+      const decisions = [];
+      for (const conflict of getConflicts(ids, destinationId)) {
+        const response = await Promise.resolve(
+          resolveConflict?.({ ...conflict, mode }) || "rename",
+        );
+        const decision = ["replace", "rename", "cancel"].includes(response)
+          ? response
+          : "rename";
+        if (decision === "cancel") return { cancelled: true, results: [] };
+        decisions.push({ conflict, decision });
+      }
+      // Items already moved leave a cut clipboard; the rest can be retried.
+      // A new cut or copy made during the paste stays on the clipboard.
+      const pastesClipboard = () =>
+        mode === "cut" && usesClipboard && clipboard?.token === source.token;
+      const keepUnmovedOnClipboard = (index) => {
+        if (!pastesClipboard()) return;
+        setClipboardIds(
+          ids
+            .slice(index)
+            .filter(
+              (id) => clipboard.ids.includes(id) && isStillThere(id, fromBin),
+            ),
+        );
+      };
+      const results = [];
+      for (const [index, id] of ids.entries()) {
+        if (options.isCancelled?.()) {
+          keepUnmovedOnClipboard(index);
+          return { cancelled: true, results };
+        }
+        const reportProgress = () =>
+          options.onProgress?.({
+            completed: index + 1,
+            total: ids.length,
+            mode,
+            id,
+          });
+        if (!isStillThere(id, fromBin)) {
+          reportProgress();
+          continue;
+        }
+        const planned = decisions.find(
+          ({ conflict }) => conflict.source.id === id,
+        );
+        try {
+          await fs.transaction(() => {
+            // Replace only the file that still holds the clashing name; it may
+            // have been renamed or moved while the conflict dialog was open.
+            const existing =
+              planned?.decision === "replace"
+                ? fs.findChild(destinationId, fs.getNode(id).name)
+                : null;
+            if (
+              existing?.id === planned?.conflict.existing.id &&
+              existing?.type === "file" &&
+              planned.conflict.source.type === "file"
+            ) {
+              fs.destroy(existing.id);
+            }
+            results.push(
+              mode === "cut"
+                ? fs.move(id, destinationId)
+                : fs.copy(id, destinationId),
+            );
+          });
+        } catch (error) {
+          keepUnmovedOnClipboard(index);
+          throw error;
+        }
+        if (mode === "cut" && !usesClipboard) forgetCutItems([id]);
+        reportProgress();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      if (pastesClipboard()) setClipboardIds([]);
+      notify({
+        type: "paste",
+        mode,
+        destinationId,
+        ids: results.map((node) => node.id),
+      });
+      return { cancelled: false, results };
+    } finally {
+      unsubscribe();
+    }
   };
 
   const createFolder = (parentId, name) => {
@@ -299,6 +345,14 @@
     return fs.createFile(parentId, name, options);
   };
   const rename = (id, name) => fs.rename(id, name);
+
+  // Items dragged away leave a cut clipboard, so a later Paste never moves
+  // them again.
+  const forgetCutItems = (ids) => {
+    if (clipboard?.mode !== "cut") return;
+    const remaining = clipboard.ids.filter((id) => !ids.includes(id));
+    if (remaining.length !== clipboard.ids.length) setClipboardIds(remaining);
+  };
 
   const removeToBin = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
@@ -363,6 +417,24 @@
 
   const emptyRecycleBin = () => fs.emptyRecycleBin();
 
+  // Files from the user's computer keep their data: text stays text, and
+  // everything else, like pictures, becomes a data URL.
+  const dataUrlFromBlob = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(reader.result), {
+        once: true,
+      });
+      reader.addEventListener("error", () => reject(reader.error), {
+        once: true,
+      });
+      reader.readAsDataURL(blob);
+    });
+  const readFileContent = (file) =>
+    file.type.startsWith("text/") || /\.(txt|log|csv|md)$/i.test(file.name)
+      ? file.text()
+      : dataUrlFromBlob(file);
+
   const resetForTests = () => {
     clipboard = null;
     listeners.clear();
@@ -376,8 +448,9 @@
     canPaste,
     copy,
     cut,
-    paste: (...args) => fs.transaction(() => paste(...args)),
     getConflicts,
+    dataUrlFromBlob,
+    readFileContent,
     pasteWithConflicts,
     createFolder,
     createFile,

@@ -433,19 +433,25 @@ test("a picture chosen after its browse dialog closed still becomes the wallpape
 });
 
 test("a stored custom wallpaper is restored on the desktop", async () => {
-  const wallpaper = "data:image/png;base64,iVBORw0KGgo=";
-  const s = await login(
-    await loadShell({
-      initialStorage: {
-        displaySettings: JSON.stringify({ customWallpaper: wallpaper }),
-      },
-    }),
-  );
-  expect(
-    s.document
-      .getElementById("desktop")
-      .style.getPropertyValue("--desktop-background"),
-  ).toBe(`url("${wallpaper}")`);
+  // BMP is one of XP's Background Files types, and Paint saves BMP.
+  for (const wallpaper of [
+    "data:image/png;base64,iVBORw0KGgo=",
+    "data:image/bmp;base64,Qk0=",
+  ]) {
+    const s = await login(
+      await loadShell({
+        initialStorage: {
+          displaySettings: JSON.stringify({ customWallpaper: wallpaper }),
+        },
+      }),
+    );
+    expect(
+      s.document
+        .getElementById("desktop")
+        .style.getPropertyValue("--desktop-background"),
+    ).toBe(`url("${wallpaper}")`);
+    cleanupShells();
+  }
 });
 
 test("Display Properties is an XP dialog with What's This help", async () => {
@@ -531,7 +537,7 @@ test("Color quality names the screen's real color depth", async () => {
 test("Browse offers the browser picker the same picture types it lists", async () => {
   const h = await open();
   expect(h.q("#display-image").accept).toBe(
-    "image/png,image/jpeg,image/gif,image/webp",
+    "image/bmp,image/png,image/jpeg,image/gif,image/webp",
   );
 });
 
@@ -556,4 +562,193 @@ test("Desktop Items keeps the owner inactive until it closes", async () => {
   expect(owner.classList.contains("active")).toBeFalse();
   h.dialogButton(s.document.querySelector(".desktop-items-dialog"), "Cancel");
   expect(owner.classList.contains("active")).toBeTrue();
+});
+
+test("Browse sets a picture from the virtual disk without the browser picker", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const fs = s.window.VirtualFS;
+  const requests = [];
+  s.window.fetch = async (url) => {
+    requests.push(url);
+    return new s.window.Response(
+      new s.window.Blob([new Uint8Array([255, 216, 255])], {
+        type: "image/jpeg",
+      }),
+    );
+  };
+  let picked = 0;
+  q("#display-image").click = () => picked++;
+  const custom = q(".display-custom-wallpaper");
+  const choose = async (folderId, name) => {
+    q(".display-browse").click();
+    const browse = s.document.querySelector(".wallpaper-browse-dialog");
+    const list = browse.querySelector(".dlg-file-list");
+    // Double-click the folder, like a user, when the picture is inside one.
+    if (folderId !== fs.MY_PICTURES)
+      [...list.querySelectorAll(".dlg-file-item")]
+        .find((item) => item.textContent === fs.getNode(folderId).name)
+        .dispatchEvent(new s.window.MouseEvent("dblclick"));
+    [...list.querySelectorAll(".dlg-file-item")]
+      .find((item) => item.textContent === name)
+      .click();
+    h.dialogButton(browse, "Open");
+    for (
+      let i = 0;
+      i < 20 && s.document.querySelector(".wallpaper-browse-dialog");
+      i++
+    )
+      await flushShell();
+  };
+  await choose(fs.SAMPLE_PICTURES, "Winter.jpg");
+  expect(requests).toEqual(["/assets/xp/sample-pictures/winter.jpg"]);
+  expect(picked).toBe(0);
+  expect(s.document.querySelector(".wallpaper-browse-dialog")).toBeNull();
+  expect(custom.textContent).toBe("Winter");
+  q('[data-display-action="apply"]').click();
+  expect(h.saved()).toMatchObject({
+    customWallpaper: "data:image/jpeg;base64,/9j/",
+    customWallpaperName: "Winter",
+  });
+  // A picture saved by Paint keeps its data and needs no download.
+  const bitmap = "data:image/bmp;base64,Qk0=";
+  fs.createFile(fs.MY_PICTURES, "drawing.bmp", { content: bitmap });
+  await choose(fs.MY_PICTURES, "drawing.bmp");
+  expect(requests).toHaveLength(1);
+  q('[data-display-action="apply"]').click();
+  expect(h.saved()).toMatchObject({
+    customWallpaper: bitmap,
+    customWallpaperName: "drawing",
+  });
+  expect(
+    s.document
+      .getElementById("desktop")
+      .style.getPropertyValue("--desktop-background"),
+  ).toBe(`url("${bitmap}")`);
+});
+
+test("Browse explains a virtual picture it cannot use and stays open", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const fs = s.window.VirtualFS;
+  let picked = 0;
+  q("#display-image").click = () => picked++;
+  const tryOpen = async (name) => {
+    q(".display-browse").click();
+    const browse = s.document.querySelector(".wallpaper-browse-dialog");
+    browse.querySelector("#dlg-file-name").value = name;
+    h.dialogButton(browse, "Open");
+    let error = null;
+    for (let i = 0; i < 20 && !error; i++) {
+      await flushShell();
+      error = [...s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+        dialog.textContent.includes("is not a picture"),
+      );
+    }
+    expect(error.textContent).toContain(
+      `${name} is not a picture that can be used as a background. Choose a BMP, PNG, JPEG, GIF, or WebP file.`,
+    );
+    h.dialogButton(error, "OK");
+    await flushShell();
+    expect(s.document.querySelector(".wallpaper-browse-dialog")).toBe(browse);
+    h.dialogButton(browse, "Cancel");
+    await flushShell();
+  };
+  // Picture data of a type the desktop cannot keep.
+  fs.createFile(fs.MY_PICTURES, "vector.png", {
+    content: "data:image/svg+xml;base64,PHN2Zy8+",
+  });
+  await tryOpen("vector.png");
+  // A sample picture the server cannot send.
+  s.window.fetch = async () => new s.window.Response("", { status: 404 });
+  fs.copy("sample-sunset", fs.MY_PICTURES);
+  await tryOpen("Sunset.jpg");
+  // A network failure.
+  s.window.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  await tryOpen("Sunset.jpg");
+  expect(picked).toBe(0);
+  expect(q(".display-custom-wallpaper").hidden).toBeTrue();
+});
+
+test("Browse drops a sample picture that finishes after Cancel", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const fs = s.window.VirtualFS;
+  const responses = [];
+  s.window.fetch = () =>
+    new Promise((resolve) =>
+      responses.push(() =>
+        resolve(
+          new s.window.Response(
+            new s.window.Blob([new Uint8Array([255, 216, 255])], {
+              type: "image/jpeg",
+            }),
+          ),
+        ),
+      ),
+    );
+  fs.copy("sample-sunset", fs.MY_PICTURES);
+  let picked = 0;
+  q("#display-image").click = () => picked++;
+  q(".display-browse").click();
+  const browse = s.document.querySelector(".wallpaper-browse-dialog");
+  browse.querySelector("#dlg-file-name").value = "Sunset.jpg";
+  // A second Open while the picture downloads does nothing.
+  h.dialogButton(browse, "Open");
+  h.dialogButton(browse, "Open");
+  await flushShell();
+  expect(responses).toHaveLength(1);
+  expect(picked).toBe(0);
+  h.dialogButton(browse, "Cancel");
+  await flushShell();
+  responses[0]();
+  for (let i = 0; i < 10; i++) await flushShell();
+  expect(q(".display-custom-wallpaper").hidden).toBeTrue();
+  expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  expect(h.d.closest(".xp-window").classList.contains("active")).toBeTrue();
+});
+
+test("Browse opens the browser picker for names that are not pictures here", async () => {
+  const h = await open();
+  const { s, q } = h;
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.MY_PICTURES, "notes.png", { content: "not a picture" });
+  let picked = 0;
+  q("#display-image").click = () => picked++;
+  q(".display-browse").click();
+  const browse = s.document.querySelector(".wallpaper-browse-dialog");
+  const name = browse.querySelector("#dlg-file-name");
+  for (const typed of ["notes.png", "missing.jpg"]) {
+    name.value = typed;
+    h.dialogButton(browse, "Open");
+    await flushShell();
+  }
+  expect(picked).toBe(2);
+  h.dialogButton(browse, "Cancel");
+});
+
+test("a picked picture the browser cannot read is reported", async () => {
+  const h = await open();
+  const { s, q } = h;
+  s.window.FileReader = class extends s.window.EventTarget {
+    readAsDataURL() {
+      this.error = new Error("unreadable");
+      queueMicrotask(() => this.dispatchEvent(new s.window.Event("error")));
+    }
+  };
+  const input = q("#display-image");
+  Object.defineProperty(input, "files", {
+    configurable: true,
+    value: [new s.window.File(["x"], "locked.png", { type: "image/png" })],
+  });
+  input.dispatchEvent(new s.window.Event("change"));
+  let error = null;
+  for (let i = 0; i < 20 && !error; i++) {
+    await flushShell();
+    error = s.document.querySelector(".xp-dialog");
+  }
+  expect(error.textContent).toContain("locked.png is not a picture");
+  expect(q(".display-custom-wallpaper").hidden).toBeTrue();
 });

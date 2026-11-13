@@ -13,7 +13,7 @@ import {
   isCovered,
   projectDirectory,
   rawCoverageDirectory,
-} from "../tests/helpers/coverage";
+} from "../tests/helpers/coverage-config";
 
 // Every metric must stay at 100%; CI fails the build otherwise.
 const THRESHOLDS = {

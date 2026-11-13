@@ -119,15 +119,15 @@ test("renaming desktop files and system icons commits, cancels, and reports erro
     input.dispatchEvent(new s.window.FocusEvent("blur"));
   });
   expect(fs.getNode(file.id).name).toBe("blurred.txt");
-  const errors = [];
-  const originalError = s.window.console.error;
-  s.window.console.error = (error) => errors.push(error);
-  try {
-    await rename("bad?name.txt", async (input) => press(s, input, "Enter"));
-  } finally {
-    s.window.console.error = originalError;
-  }
-  expect(errors[0].message).toContain("invalid characters");
+  // Like Explorer, a refused name shows an error and keeps the old name.
+  await rename("bad?name.txt", async (input) => press(s, input, "Enter"));
+  await flushShell();
+  const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(error.textContent).toContain("Error Renaming File or Folder");
+  expect(error.textContent).toContain("invalid characters");
+  expect(fs.getNode(file.id).name).toBe("blurred.txt");
+  error.querySelector('[data-action="ok"]').click();
+  await flushShell();
 
   const system = async (value, finish) => {
     contextMenu(s, icon(s, "__my-computer"));

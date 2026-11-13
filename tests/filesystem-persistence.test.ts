@@ -10,6 +10,13 @@ const sourcePath = fileURLToPath(
   new URL("../site/js/filesystem.js", import.meta.url),
 );
 const source = instrumentSource(readFileSync(sourcePath, "utf8"), sourcePath);
+const operationsPath = fileURLToPath(
+  new URL("../site/js/file-operations.js", import.meta.url),
+);
+const operationsSource = instrumentSource(
+  readFileSync(operationsPath, "utf8"),
+  operationsPath,
+);
 const storage = () => {
   const values = new Map();
   return {
@@ -29,6 +36,19 @@ const tab = (indexedDB, localStorage, globals = {}) => {
   });
   runInContext(source, context);
   return context.VirtualFS;
+};
+// A tab with the file operations service, like the shell loads it.
+const tabWithOperations = (indexedDB, localStorage) => {
+  const context = createContext({
+    __coverage__: globalThis.__coverage__,
+    indexedDB,
+    localStorage,
+    document: {},
+    console,
+  });
+  runInContext(source, context);
+  runInContext(operationsSource, context);
+  return { fs: context.VirtualFS, operations: context.FileOperations };
 };
 const request = (req) =>
   new Promise((resolve, reject) => {
@@ -386,6 +406,86 @@ describe("filesystem persistence failures", () => {
     pageshow();
     await shown;
     expect(fs.getNode(fs.MY_NETWORK_PLACES)).toBeTruthy();
+    fs.close();
+    db.close();
+  });
+
+  test("stores healed sample pictures with the next write after a failed heal", async () => {
+    const indexedDB = new IDBFactory();
+    const first = tab(indexedDB, storage());
+    await first.ready;
+    first.close();
+    // Documents stored before Sample Pictures existed.
+    const db = await request(indexedDB.open("astro-documents", 1));
+    const store = db.transaction("nodes", "readwrite").objectStore("nodes");
+    const pictures = await request(store.get(first.MY_PICTURES));
+    store.put({ ...pictures, children: [] });
+    for (const id of [
+      first.SAMPLE_PICTURES,
+      "sample-blue-hills",
+      "sample-sunset",
+      "sample-water-lilies",
+      "sample-winter",
+    ])
+      store.delete(id);
+    await new Promise((resolve) => (store.transaction.oncomplete = resolve));
+    // The heal's write fails, so this tab heals only its own copy.
+    const prototype = Object.getPrototypeOf(
+      db.transaction("nodes").objectStore("nodes"),
+    );
+    const put = prototype.put;
+    prototype.put = function (value, ...args) {
+      const result = put.call(this, value, ...args);
+      this.transaction.abort();
+      return result;
+    };
+    const fs = tab(indexedDB, storage(), { console: { error: () => {} } });
+    try {
+      await fs.ready;
+    } finally {
+      prototype.put = put;
+    }
+    expect(await storedNode(db, "sample-sunset")).toBeUndefined();
+    // Deleting one sample also stores the folder's other samples.
+    await fs.destroy("sample-winter");
+    fs.close();
+    const reopened = tab(indexedDB, storage());
+    await reopened.ready;
+    expect(
+      reopened.getChildren(reopened.SAMPLE_PICTURES).map(({ name }) => name),
+    ).toEqual(["Blue hills.jpg", "Sunset.jpg", "Water lilies.jpg"]);
+    expect((await storedNode(db, "sample-sunset")).revision).toBe(1);
+    reopened.close();
+    db.close();
+  });
+
+  test("keeps a cut item on the clipboard when its delete is not saved", async () => {
+    const indexedDB = new IDBFactory();
+    const { fs, operations } = tabWithOperations(indexedDB, storage());
+    await fs.ready;
+    const file = await fs.createFile(fs.DESKTOP, "cut.txt");
+    operations.cut([file.id]);
+    const db = await request(indexedDB.open("astro-documents", 1));
+    const prototype = Object.getPrototypeOf(
+      db.transaction("nodes").objectStore("nodes"),
+    );
+    const put = prototype.put;
+    prototype.put = function (value, ...args) {
+      const result = put.call(this, value, ...args);
+      this.transaction.abort();
+      return result;
+    };
+    try {
+      await expect(fs.remove(file.id)).rejects.toThrow();
+    } finally {
+      prototype.put = put;
+    }
+    // The file stays, so it stays cut.
+    expect(fs.getNode(file.id).parent).toBe(fs.DESKTOP);
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [file.id] });
+    // A saved delete takes it off the clipboard.
+    await fs.remove(file.id);
+    expect(operations.getClipboard()).toBeNull();
     fs.close();
     db.close();
   });

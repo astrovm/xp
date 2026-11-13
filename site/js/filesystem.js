@@ -32,9 +32,35 @@
     MY_DOCUMENTS: "my-documents",
     MY_PICTURES: "my-pictures",
     MY_MUSIC: "my-music",
+    SAMPLE_PICTURES: "sample-pictures",
     RECENT: "recent",
     MY_NETWORK_PLACES: "my-network-places",
     RECYCLE_BIN: "recycle-bin",
+  };
+
+  // XP's sample pictures, extracted from the SP3 CD. Nodes keep only the
+  // key, because the build renames assets and stored paths would go stale.
+  const SAMPLE_PICTURES = {
+    "blue-hills": {
+      name: "Blue hills.jpg",
+      url: "/assets/xp/sample-pictures/blue-hills.jpg",
+      size: 28521,
+    },
+    sunset: {
+      name: "Sunset.jpg",
+      url: "/assets/xp/sample-pictures/sunset.jpg",
+      size: 71189,
+    },
+    "water-lilies": {
+      name: "Water lilies.jpg",
+      url: "/assets/xp/sample-pictures/water-lilies.jpg",
+      size: 83794,
+    },
+    winter: {
+      name: "Winter.jpg",
+      url: "/assets/xp/sample-pictures/winter.jpg",
+      size: 105542,
+    },
   };
 
   // ---- Storage (localStorage in the browser, in-memory under Node) ----
@@ -159,12 +185,37 @@
     folder(WELL_KNOWN.MY_DOCUMENTS, "My Documents", WELL_KNOWN.USER_PROFILE);
     folder(WELL_KNOWN.MY_PICTURES, "My Pictures", WELL_KNOWN.MY_DOCUMENTS);
     folder(WELL_KNOWN.MY_MUSIC, "My Music", WELL_KNOWN.MY_DOCUMENTS);
+    folder(
+      WELL_KNOWN.SAMPLE_PICTURES,
+      "Sample Pictures",
+      WELL_KNOWN.MY_PICTURES,
+    );
     // XP keeps recent documents in the profile's hidden Recent folder,
     // which the file dialogs show as My Recent Documents. My Network Places
     // is a shell folder of its own, like the Recycle Bin.
     folder(WELL_KNOWN.RECENT, "Recent", WELL_KNOWN.USER_PROFILE, true);
     folder(WELL_KNOWN.MY_NETWORK_PLACES, "My Network Places", null);
     folder(WELL_KNOWN.RECYCLE_BIN, "Recycle Bin", null);
+    // The sample files are ordinary files: users can delete or rename them.
+    Object.entries(SAMPLE_PICTURES).forEach(([key, picture]) => {
+      seeded[`sample-${key}`] = {
+        id: `sample-${key}`,
+        name: picture.name,
+        type: "file",
+        parent: WELL_KNOWN.SAMPLE_PICTURES,
+        children: [],
+        created: timestamp,
+        modified: timestamp,
+        size: picture.size,
+        protected: false,
+        ext: ".jpg",
+        content: "",
+        app: null,
+        originalParent: null,
+        originalName: null,
+        sample: key,
+      };
+    });
 
     Object.values(seeded).forEach((node) => {
       if (node.parent) {
@@ -178,7 +229,8 @@
   // is stale or was tampered with.
   const healSeed = () => {
     const seeded = seedNodes();
-    Object.values(seeded).forEach((seedNode) => {
+    const seedFolders = Object.values(seeded).filter(isFolder);
+    seedFolders.forEach((seedNode) => {
       const existing = nodes[seedNode.id];
       if (existing) {
         existing.type = "folder";
@@ -189,7 +241,19 @@
         existing.children = Array.isArray(existing.children)
           ? existing.children.filter((childId) => nodes[childId])
           : [];
-      } else nodes[seedNode.id] = seedNode;
+      } else {
+        // A new system folder brings its seed files once. Later heals leave
+        // them alone, so a deleted sample stays deleted.
+        nodes[seedNode.id] = {
+          ...seedNode,
+          children: seedNode.children.filter(
+            (childId) => !isFolder(seeded[childId]) && !nodes[childId],
+          ),
+        };
+        nodes[seedNode.id].children.forEach((childId) => {
+          nodes[childId] = seeded[childId];
+        });
+      }
       const parent = nodes[seedNode.parent];
       if (parent && !parent.children.includes(seedNode.id)) {
         // A folder the user made with a system folder's name moves aside,
@@ -509,6 +573,10 @@
     detach(node);
     node.name = dedupeName(targetParentId, node.name);
     node.parent = targetParentId;
+    // An item moved out of the Recycle Bin forgets where it was deleted
+    // from, like a restored one.
+    node.originalParent = null;
+    node.originalName = null;
     target.children.push(id);
     touch(id);
     touch(targetParentId);
@@ -535,6 +603,9 @@
         created: timestamp,
         modified: timestamp,
         protected: false,
+        // A copy is a new item, never one waiting in the Recycle Bin.
+        originalParent: null,
+        originalName: null,
       };
       nodes[clone.id] = clone;
       nodes[parentId].children.push(clone.id);
@@ -651,10 +722,23 @@
     }
     node.content = String(content ?? "");
     node.size = node.content.length;
+    // The new content replaces the sample picture.
+    delete node.sample;
     touch(id);
     if (node.parent) touch(node.parent);
     emitChange();
     return node;
+  };
+
+  // A picture file's address: its stored data URL, or the asset of an XP
+  // sample picture. Other files have none.
+  const getPictureUrl = (id) => {
+    const node = nodes[id];
+    if (!node || node.type !== "file") return null;
+    if (/^data:image\//i.test(node.content)) return node.content;
+    return Object.hasOwn(SAMPLE_PICTURES, node.sample ?? "")
+      ? SAMPLE_PICTURES[node.sample].url
+      : null;
   };
 
   // ---- File associations ----
@@ -830,9 +914,16 @@
       batchDepth--;
       nodes = before;
     }
+    // A node healed in memory after a failed write was never stored, and
+    // has no revision. It goes with the next write, so a later change to
+    // its folder cannot leave it out of storage.
     const changed = [
       ...new Set([...Object.keys(before), ...Object.keys(candidate)]),
-    ].filter((id) => !sameNode(before[id], candidate[id]));
+    ].filter(
+      (id) =>
+        !sameNode(before[id], candidate[id]) ||
+        (candidate[id] && !candidate[id].revision),
+    );
     if (!changed.length) return result;
     const write = database.transaction("nodes", "readwrite");
     const done = transactionDone(write);
@@ -914,6 +1005,7 @@
     isProtected,
     getSize,
     validateName,
+    extractExtension,
     createFolder: mutate(createFolder),
     createFile: mutate(createFile),
     rename: mutate(rename),
@@ -926,6 +1018,7 @@
     emptyRecycleBin: mutate(emptyRecycleBin),
     reset: mutate(reset),
     getContent,
+    getPictureUrl,
     setContent: mutate(setContent),
     registerFileType,
     registerFolderHandler,

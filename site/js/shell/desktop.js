@@ -10,6 +10,15 @@ const DESKTOP_ICON_METRICS = Object.freeze({
 });
 let desktopDragged = false;
 let desktopSelectionAnchor = null;
+// Icons dropped on a folder or the Recycle Bin stay hidden until the move
+// ends, also when the Desktop redraws after each moved item. A moving icon
+// is never part of the selection, so no other drag or command takes it.
+const movingDesktopIds = new Set();
+const markDesktopIconMoving = (icon, moving) => {
+  icon.classList.toggle("desktop-moving", moving);
+  icon.style.visibility = moving ? "hidden" : "";
+};
+const SELECTED_DESKTOP_ICONS = ".desktop-icon.selected:not(.desktop-moving)";
 
 const getDesktopIconMetrics = (container) =>
   container.clientWidth <= 480
@@ -83,7 +92,7 @@ const clearDesktopSelection = () => {
 };
 
 const getSelectedDesktopIds = () =>
-  [...document.querySelectorAll(".desktop-icon.selected")].map(
+  [...document.querySelectorAll(SELECTED_DESKTOP_ICONS)].map(
     (icon) => icon.dataset.desktopId,
   );
 
@@ -214,13 +223,13 @@ const wireDesktopIconDrag = (icon) => {
 
     const startX = event.clientX;
     const startY = event.clientY;
-    const selected = [
-      ...document.querySelectorAll(".desktop-icon.selected"),
-    ].map((item) => ({
-      item,
-      left: item.offsetLeft,
-      top: item.offsetTop,
-    }));
+    const selected = [...document.querySelectorAll(SELECTED_DESKTOP_ICONS)].map(
+      (item) => ({
+        item,
+        left: item.offsetLeft,
+        top: item.offsetTop,
+      }),
+    );
     const container = document.getElementById("desktop-icons");
     const eligibility = getDesktopSelectionEligibility();
     const draggedIds = new Set(eligibility.filesystemIds);
@@ -276,11 +285,13 @@ const wireDesktopIconDrag = (icon) => {
         eligibility.movable && upEvent.type === "pointerup"
           ? findDesktopDropTarget(upEvent.clientX, upEvent.clientY, draggedIds)
           : null;
-      if (upEvent.type === "pointercancel") {
+      const returnIcons = () =>
         selected.forEach(({ item, left, top }) => {
           item.style.left = `${left}px`;
           item.style.top = `${top}px`;
         });
+      if (upEvent.type === "pointercancel") {
+        returnIcons();
         return;
       }
       if (
@@ -297,20 +308,50 @@ const wireDesktopIconDrag = (icon) => {
             ]),
           ],
         });
-        selected.forEach(({ item, left, top }) => {
-          item.style.left = `${left}px`;
-          item.style.top = `${top}px`;
-        });
+        returnIcons();
         return;
       }
       if (desktopDragged) {
         if (dropTarget) {
-          if (dropTarget.action === "recycle") {
-            await fileOps.removeToBin(eligibility.filesystemIds);
-          } else {
-            fileOps.cut(eligibility.filesystemIds);
-            await pasteIntoFolder(dropTarget.destinationId);
+          // The icons hide while the items move. Items that move away leave
+          // the Desktop when it redraws. After a failure or Cancel, the
+          // icons come back at their places.
+          selected.forEach(({ item }) => {
+            movingDesktopIds.add(item.dataset.desktopId);
+            markDesktopIconMoving(item, true);
+          });
+          let failure = null;
+          // Desktop items are never in the Recycle Bin when a drag starts.
+          // Items deleted during the drag stay where they are.
+          const ids = eligibility.filesystemIds.filter(
+            (id) => !!fs.getNode(id) && !fs.isInRecycleBin(id),
+          );
+          if (ids.length && dropTarget.action === "recycle") {
+            try {
+              await fileOps.removeToBin(ids);
+            } catch (error) {
+              failure = error;
+            }
+          } else if (ids.length) {
+            // A drag moves the items without the clipboard, like XP. A
+            // failure shows its own alert.
+            await pasteIntoFolder(dropTarget.destinationId, {
+              mode: "cut",
+              ids,
+              fromBin: [],
+            });
           }
+          returnIcons();
+          selected.forEach(({ item }) =>
+            movingDesktopIds.delete(item.dataset.desktopId),
+          );
+          // Icons of another drop that still runs stay hidden.
+          container.querySelectorAll(".desktop-icon").forEach((item) => {
+            if (!movingDesktopIds.has(item.dataset.desktopId))
+              markDesktopIconMoving(item, false);
+          });
+          // A failed delete shows an alert, like the Delete key.
+          if (failure) await alertFileOperationError(failure);
         } else if (getDesktopLayoutSettings().autoArrange) {
           layoutDesktopIcons(true);
         } else {
@@ -356,7 +397,7 @@ const wireDesktopSelectionRectangle = () => {
     closeDesktopContextMenu();
     const additive = event.ctrlKey || event.metaKey;
     const initialSelection = new Set(
-      Array.from(document.querySelectorAll(".desktop-icon.selected")).map(
+      Array.from(document.querySelectorAll(SELECTED_DESKTOP_ICONS)).map(
         (icon) => icon.dataset.desktopId,
       ),
     );
@@ -503,6 +544,7 @@ const buildDesktopIcons = () => {
       });
     });
     icon.dataset.desktopId = id;
+    if (movingDesktopIds.has(id)) markDesktopIconMoving(icon, true);
     if (system) icon.dataset.systemId = id;
     if (node?.type === "folder") icon.dataset.dropDestinationId = node.id;
     if (id === "__recycle-bin") icon.dataset.dropAction = "recycle";
@@ -624,7 +666,10 @@ const beginDesktopRename = (id) => {
       try {
         await fileOps.rename(id, input.value);
       } catch (error) {
-        console.error(error);
+        // Like Explorer, a name Windows refuses shows an error.
+        refreshDesktop();
+        await alertRenameError(error);
+        return;
       }
     }
     refreshDesktop();
@@ -963,11 +1008,7 @@ const setupDesktopContextMenu = () => {
           async () => {
             try {
               for (const file of input.files) {
-                const content =
-                  file.type.startsWith("text/") ||
-                  /\.(txt|log|csv|md)$/i.test(file.name)
-                    ? await file.text()
-                    : await dataUrlFromBlob(file);
+                const content = await fileOps.readFileContent(file);
                 await fileOps.createFile(fs.DESKTOP, file.name, {
                   content,
                   size: file.size,
@@ -1060,7 +1101,7 @@ const setupDesktopContextMenu = () => {
       event.preventDefault();
       closeDesktopContextMenu();
       (
-        document.querySelector(".desktop-icon.selected") ||
+        document.querySelector(SELECTED_DESKTOP_ICONS) ||
         document.getElementById("desktop-icons")
       ).focus();
       return;

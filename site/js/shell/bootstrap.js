@@ -129,9 +129,11 @@ const confirmPermanentDelete = (ids) =>
       : "Are you sure you want to permanently delete these items?",
     "Confirm File Delete",
     "warning",
-  ).then(
-    (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),
-  );
+  )
+    .then(
+      (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),
+    )
+    .catch(alertFileOperationError);
 
 document.addEventListener(
   "keydown",
@@ -330,7 +332,10 @@ document.addEventListener("keydown", async (e) => {
     const desktopHasFocus =
       desktopIcon || document.activeElement?.id === "desktop-icons";
     if (desktopHasFocus) {
-      const desktopIcons = [...document.querySelectorAll(".desktop-icon")];
+      // Keys never move to an icon that is still moving away.
+      const desktopIcons = [
+        ...document.querySelectorAll(".desktop-icon:not(.desktop-moving)"),
+      ];
       if (e.key === "F5") {
         e.preventDefault();
         refreshDesktop();
@@ -509,15 +514,11 @@ document.addEventListener("keydown", async (e) => {
       }
       if (e.key === "Delete" && selected.length && !protectedSelection) {
         e.preventDefault();
-        if (e.shiftKey) confirmPermanentDelete(selected);
-        else if (explorerWin.currentFolderId === fs.RECYCLE_BIN)
-          XPDialogs.confirm(
-            "Are you sure you want to permanently delete the selected items?",
-            "Confirm File Delete",
-            "warning",
-          ).then(
-            async (yes) => yes && (await fileOps.permanentlyDelete(selected)),
-          );
+        // In the Recycle Bin, Delete and Shift+Delete both delete for good,
+        // and only what is still in the bin.
+        if (explorerWin.currentFolderId === fs.RECYCLE_BIN)
+          confirmRecycleBinDelete(selected);
+        else if (e.shiftKey) confirmPermanentDelete(selected);
         else confirmRecycleDelete(selected);
         return;
       }

@@ -143,6 +143,21 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(fs.getContent(file.id)).toBe("old");
   context.setFileContent(file.id, "new");
   expect(fs.getContent(file.id)).toBe("new");
+  expect(context.folderOf("sample-winter")).toBe(fs.SAMPLE_PICTURES);
+  expect(context.folderOf("missing")).toBeNull();
+  // A deleted picture's folder is in the Recycle Bin. Paint never saves there.
+  const folder = fs.createFolder(fs.MY_PICTURES, "Trip");
+  const photo = context.createFile(folder.id, "beach.png", "");
+  fs.remove(folder.id);
+  expect(context.folderOf(photo.id)).toBeNull();
+  expect(() => context.createFile(folder.id, "late.png", "")).toThrow(
+    /cannot accept new items/,
+  );
+  // Paint reads pictures through the shell, sample pictures included.
+  expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(
+    "/assets/xp/sample-pictures/winter.jpg",
+  );
+  expect(context.pictureUrl(file)).toBeNull();
 
   context.setWallpaper("data:image/png;base64,AAAA");
   const desktop = s.document.getElementById("desktop");
@@ -314,6 +329,15 @@ test("Paint saves through the shell's Save As dialog into My Pictures", async ()
   expect(dialog.querySelector(".dlg-file-folder-value").textContent).toContain(
     "My Pictures",
   );
+  // XP's Paint lists only the types it saves, with no All Files.
+  expect(
+    [...dialog.querySelectorAll(".dlg-file-type option")].map(
+      (option) => option.textContent,
+    ),
+  ).toEqual([
+    "BMP, DIB, JPG, JPEG, PNG Files (*.bmp;*.dib;*.jpg;*.jpeg;*.png)",
+  ]);
+  expect(dialog.querySelector("#dlg-file-name").value).toBe("untitled");
   dialog.querySelector("#dlg-file-name").value = "sketch";
   dialog
     .querySelector("#dlg-file-name")

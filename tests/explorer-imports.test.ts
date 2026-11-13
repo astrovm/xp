@@ -84,8 +84,9 @@ test("dropping directory entries imports all reader batches and nested text/bina
   const root = h.fs.findChild(h.target.id, "Tree");
   expect(h.fs.findChild(root.id, "first.txt").content).toBe("contents");
   const nested = h.fs.findChild(root.id, "Nested");
+  // Binary files keep their bytes as a data URL, like desktop uploads.
   expect(h.fs.findChild(nested.id, "data.bin")).toMatchObject({
-    content: "",
+    content: "data:application/octet-stream;base64,Ynl0ZXM=",
     size: 5,
   });
 });

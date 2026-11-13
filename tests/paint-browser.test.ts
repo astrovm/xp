@@ -7,7 +7,8 @@ async function setup() {
     titles = [],
     messages = [],
     writes = [],
-    wallpapers = [];
+    wallpapers = [],
+    saveOptions = [];
   const getContext = s.window.HTMLCanvasElement.prototype.getContext;
   s.window.HTMLCanvasElement.prototype.getContext = function (...args) {
     const context = getContext.apply(this, args);
@@ -44,11 +45,22 @@ async function setup() {
   const context = {
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
+    pictureUrl: (file) => file.content || null,
+    // "anim" and "deleted" stand for pictures in the Recycle Bin.
+    folderOf: (id) =>
+      id === "other"
+        ? "other-folder"
+        : ["anim", "deleted"].includes(id)
+          ? null
+          : "pictures",
     setTitle: (title) => titles.push(title),
     showMessage: (...args) => messages.push(args),
     close: () => messages.push(["close"]),
     setWallpaper: (value) => wallpapers.push(value),
-    saveFile: async () => ({ parentId: "pictures", name: "drawing" }),
+    saveFile: async (options) => {
+      saveOptions.push(options);
+      return { parentId: "pictures", name: "drawing.bmp" };
+    },
     openFile: async () => ({
       id: "opened",
       name: "image.png",
@@ -97,6 +109,7 @@ async function setup() {
     messages,
     writes,
     wallpapers,
+    saveOptions,
     command,
     answer,
     key,
@@ -120,6 +133,14 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   await h.answer("yes");
   expect(await saved).toBeTrue();
   expect(h.writes[0].slice(0, 2)).toEqual(["pictures", "drawing.bmp"]);
+  // Save As lists the types Paint writes, with no All Files, and the
+  // dialog adds .bmp to other names.
+  expect(h.saveOptions[0]).toMatchObject({
+    defaultName: "untitled",
+    filter: [".bmp", ".dib", ".jpg", ".jpeg", ".png"],
+    defaultExtension: ".bmp",
+    allFiles: false,
+  });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
   await h.command("save");
@@ -198,8 +219,45 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
   await h.command("open");
   await h.mounted.openFile({ content: "invalid" });
   expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
+  // A file without picture data never reaches the image loader.
+  h.messages.length = 0;
+  await h.mounted.openFile({ id: "empty", name: "empty.png", content: "" });
+  expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
   await h.mounted.openFile({ id: "other", name: "other.bmp", content: "data" });
   expect(h.titles.at(-1)).toBe("other.bmp - Paint");
+  // Save As keeps the open picture's type when Paint can write it.
+  const saves = [];
+  h.context.saveFile = async (options) => {
+    saves.push(options);
+    return null;
+  };
+  await h.command("save-as");
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "other.bmp",
+    startFolder: "other-folder",
+  });
+  // Browsers cannot write GIF, so Save asks for a new name and type.
+  await h.mounted.openFile({ id: "anim", name: "anim.gif", content: "data" });
+  await h.command("save");
+  // A picture whose folder is gone saves to My Pictures.
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "anim",
+    startFolder: "pictures",
+  });
+  // Save asks where to save a deleted picture. It never writes into the
+  // Recycle Bin.
+  const writes = h.writes.length;
+  await h.mounted.openFile({
+    id: "deleted",
+    name: "trip.png",
+    content: "data",
+  });
+  await h.command("save");
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "trip.png",
+    startFolder: "pictures",
+  });
+  expect(h.writes).toHaveLength(writes);
 });
 test("Paint tools, palette, menu checks and keyboard controls stay synchronized", async () => {
   const h = await setup();

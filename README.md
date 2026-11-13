@@ -125,7 +125,7 @@ Typechecking uses the native TypeScript 7 compiler from `@typescript/native`. Ty
 
 Tests run in 4 parallel worker processes. More workers barely speed them up and slow down the rest of the computer. Each test file groups its tests under a `describe` that names the subject, and each test name is a lowercase, present-tense behavior that reads as a sentence after it, for example `Flash URL router` › `rejects ambiguous and unsafe routes`. Shell tests move XP timers forward with `shell.advanceTime(ms)` from `tests/helpers/shell-harness.ts` instead of waiting in real time.
 
-`bun run test:coverage` instruments first-party code with Istanbul, including the classic scripts the shell harness loads into Happy DOM. It writes an HTML report to `coverage/index.html` and fails unless lines, statements, functions, and branches are all at 100%. Instrumentation slows the suite, so this run allows each test 30 seconds. CI enforces the same threshold on every pull request.
+`bun run test:coverage` instruments first-party code with Istanbul, including the classic scripts the shell harness loads into Happy DOM. It writes an HTML report to `coverage/index.html` and fails unless lines, statements, functions, and branches are all at 100%. Instrumentation slows the suite, so this run allows each test 30 seconds. It runs the tests in 4 shards, one after another, because each test process keeps every Happy DOM window it opened until it exits. One run of all tests in the same processes needs about 20 GB. CI enforces the same threshold on every pull request.
 
 Mutation testing checks that the tests notice when the code changes. Stryker changes a line a little, one change at a time, and runs the tests that reach it:
 

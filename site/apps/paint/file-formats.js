@@ -40,9 +40,10 @@ export const encodeBmp = (image) => {
   return bytes;
 };
 
+// Like the file system, a leading dot starts the name, not an extension.
 export const extensionFor = (name) => {
-  const match = name.toLowerCase().match(/\.([^.]+)$/);
-  return match?.[1] || "bmp";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "bmp";
 };
 
 export const encodeCanvas = async (canvas, name) => {
@@ -54,11 +55,7 @@ export const encodeCanvas = async (canvas, name) => {
       "image/bmp",
     );
   }
-  const type = ["jpg", "jpeg"].includes(extension)
-    ? "image/jpeg"
-    : extension === "gif"
-      ? "image/png"
-      : "image/png";
+  const type = ["jpg", "jpeg"].includes(extension) ? "image/jpeg" : "image/png";
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, type));
   return bytesToDataUrl(new Uint8Array(await blob.arrayBuffer()), type);
 };
