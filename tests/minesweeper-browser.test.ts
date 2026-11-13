@@ -256,3 +256,19 @@ test("Minesweeper's menus follow XP's menu bar rules", async () => {
   expect(h.s.document.activeElement === h.root).toBeTrue();
   expect(h.cells()).toHaveLength(480);
 });
+
+test("Minesweeper keeps the keys on the same square of a new game", async () => {
+  const h = await setup();
+  const square = h.cells()[5];
+  square.focus();
+  square.dispatchEvent(
+    new h.s.window.KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+  );
+  expect(square.isConnected).toBeFalse();
+  expect(h.s.document.activeElement === h.cells()[5]).toBeTrue();
+  // A smaller field gives them to its last square.
+  h.command("intermediate");
+  h.cells()[200].focus();
+  h.command("beginner");
+  expect(h.s.document.activeElement === h.cells().at(-1)).toBeTrue();
+});

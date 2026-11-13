@@ -140,6 +140,26 @@ describe("virtual filesystem", () => {
     expect(duplicate.name).toBe("todo (2).txt");
   });
 
+  test("refuses a rename to the name of another item, like XP", () => {
+    const { folder, file } = createTestFolder();
+    const other = fs.createFile(folder.id, "other.txt");
+    let refused;
+    try {
+      fs.rename(other.id, "NOTES.TXT");
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused.code).toBe("name-exists");
+    expect(refused.message).toBe(
+      "Cannot rename other.txt: A file with the name you specified already exists. Specify a different file name.",
+    );
+    expect(fs.getNode(other.id).name).toBe("other.txt");
+    // An item can still change the case of its own name.
+    expect(fs.rename(file.id, file.name.toUpperCase()).name).toBe(
+      file.name.toUpperCase(),
+    );
+  });
+
   test('copies folders recursively, naming same-folder copies "Copy of"', () => {
     const { folder, file } = createTestFolder();
     fs.createFile(folder.id, "second.txt");

@@ -445,6 +445,9 @@ const mountTaskManager = (context, { window: win }) => {
   const alignment = (padding) =>
     padding ? ` class="right" style="padding-right: ${padding}px"` : "";
   const renderList = (list, key, columns, rows) => {
+    // A column header with the keys gets them back after the rebuild.
+    const header = document.activeElement.closest("[data-tm-sort]");
+    const headerKeys = list.contains(header) ? header.dataset.tmSort : null;
     list.style.setProperty(
       "--tm-columns",
       columns.map(([, width]) => `${width}px`).join(" "),
@@ -465,6 +468,8 @@ const mountTaskManager = (context, { window: win }) => {
             .join("")}</div>`,
       )
       .join("")}`;
+    if (headerKeys !== null)
+      list.querySelector(`[data-tm-sort="${headerKeys}"]`).focus();
   };
   const iconHtml = (task) =>
     context.createGameIconElement(task.gameId, "tm-icon").outerHTML;

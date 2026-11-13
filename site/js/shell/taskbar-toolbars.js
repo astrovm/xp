@@ -535,6 +535,15 @@ const renderTaskbarToolbars = () => {
   toolbarObserver?.disconnect();
   const settings = getTaskbarSettings(),
     host = document.getElementById("taskbar-toolbars");
+  // A toolbar control with the keys keeps them, else Start takes them.
+  const giveKeysBack = holdKeys(document.body, (keys) => {
+    const toolbar = keys.closest(".taskbar-toolbar");
+    if (!toolbar) return null;
+    const control = keys.dataset.shortcut
+      ? `[data-shortcut="${CSS.escape(keys.dataset.shortcut)}"]`
+      : `.${keys.classList[0]}`;
+    return `.taskbar-toolbar[data-toolbar-id="${CSS.escape(toolbar.dataset.toolbarId)}"] ${control}`;
+  });
   host.replaceChildren();
   document
     .querySelectorAll(".taskbar-toolbar.floating")
@@ -676,6 +685,7 @@ const renderTaskbarToolbars = () => {
     } else host.append(toolbar);
   }
   host.hidden = !host.children.length;
+  giveKeysBack(document.getElementById("start-button"));
   const fit = () =>
     document.querySelectorAll(".taskbar-toolbar").forEach(fitToolbarItems);
   requestAnimationFrame(fit);

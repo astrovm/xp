@@ -160,6 +160,52 @@
 
   // ---- Core primitive ----
 
+  // XP's balloon tip under a text box. It closes on the box's next key,
+  // when the box loses the keys, or after 10 seconds.
+  const showBalloon = (anchor, lines) => {
+    document.querySelector(".xp-balloon")?.close();
+    const balloon = document.createElement("div");
+    balloon.className = "xp-balloon";
+    balloon.setAttribute("role", "tooltip");
+    lines.forEach((line) => {
+      const row = document.createElement("div");
+      row.textContent = line;
+      balloon.append(row);
+    });
+    document.body.append(balloon);
+    const rect = anchor.getBoundingClientRect();
+    balloon.style.left = `${Math.round(rect.left)}px`;
+    balloon.style.top = `${Math.round(rect.bottom) + 10}px`;
+    const timer = setTimeout(() => balloon.close(), 10000);
+    balloon.close = () => {
+      clearTimeout(timer);
+      balloon.remove();
+      anchor.removeEventListener("keydown", balloon.close);
+      anchor.removeEventListener("blur", balloon.close);
+    };
+    anchor.addEventListener("keydown", balloon.close);
+    anchor.addEventListener("blur", balloon.close);
+    return balloon;
+  };
+
+  // A file name box takes no character that Windows refuses in a name.
+  // Like XP's rename box, it drops the character and shows a balloon.
+  const guardFileName = (input) => {
+    const invalid = new RegExp(fs().INVALID_NAME_CHARACTERS.source, "g");
+    input.addEventListener("input", () => {
+      const { value, selectionStart } = input;
+      const clean = value.replace(invalid, "");
+      if (clean === value) return;
+      const caret = value.slice(0, selectionStart).replace(invalid, "").length;
+      input.value = clean;
+      input.setSelectionRange(caret, caret);
+      showBalloon(input, [
+        "A file name cannot contain any of the following characters:",
+        '\\ / : * ? " < > |',
+      ]);
+    });
+  };
+
   // Builds a modal dialog with XP window chrome. Options:
   //   title    - title bar text
   //   wide     - use the wider dialog variant (file dialogs)
@@ -1716,6 +1762,16 @@
         withDefaultExtension(name, defaultExtension, activeFilter),
       onAccept: ({ folderId, name }) => {
         if (!name) return false;
+        // XP's Save As takes any text in the box, and checks it on Save.
+        if (fs().INVALID_NAME_CHARACTERS.test(name)) {
+          message({
+            title,
+            text: `${name}\nThe above file name is invalid.`,
+            icon: "warning",
+            buttons: BUTTON_SETS.ok,
+          });
+          return false;
+        }
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,
@@ -1746,6 +1802,8 @@
     isPictureFolder,
     createDialog,
     takeKeys,
+    showBalloon,
+    guardFileName,
     addWhatsThisHelp,
     createDialogButton,
     addButtonRow,

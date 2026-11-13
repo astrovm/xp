@@ -151,8 +151,10 @@ export const createCanvasEngine = ({ canvas, frame, onChange, onPosition }) => {
     });
     textarea.addEventListener("keydown", (event) => {
       // Ctrl+Esc and Alt+Esc belong to the shell and keep the text.
+      // Esc drops the text, and the picture takes the keys back.
       if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
         textarea.remove();
+        canvas.focus({ preventScroll: true });
       }
       if (event.ctrlKey && event.key === "Enter") textarea.blur();
     });
@@ -235,6 +237,9 @@ export const createCanvasEngine = ({ canvas, frame, onChange, onPosition }) => {
       return;
     }
     if (tool === "text") {
+      // The press must not give the keys back to the picture, or the new
+      // text box loses them at once and closes.
+      event.preventDefault();
       beginText(start);
       return;
     }

@@ -557,9 +557,18 @@
     }
     const validName = validateName(newName);
     if (node.name === validName) return node;
-    node.name = node.parent
-      ? dedupeName(node.parent, validName, false, id)
-      : validName;
+    // Like XP, a rename never takes the name of another item in its folder.
+    if (
+      node.parent &&
+      dedupeName(node.parent, validName, false, id) !== validName
+    ) {
+      const error = new Error(
+        `Cannot rename ${node.name}: A file with the name you specified already exists. Specify a different file name.`,
+      );
+      error.code = "name-exists";
+      throw error;
+    }
+    node.name = validName;
     if (node.type === "file") {
       node.ext = extractExtension(node.name);
     }
@@ -1015,6 +1024,7 @@
     isProtected,
     getSize,
     validateName,
+    INVALID_NAME_CHARACTERS,
     extractExtension,
     createFolder: mutate(createFolder),
     createFile: mutate(createFile),

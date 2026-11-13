@@ -478,3 +478,47 @@ test("uninstalling a game that is not open only removes it from the library", as
     h.win.querySelector(".internet-games-installed-status").textContent,
   ).toBe("No games installed.");
 });
+
+test("Installed games keep the keys on a button that the list draws again", async () => {
+  const h = await setup();
+  h.setResults([
+    { uuid: "a", title: "Alpha", compatible: true },
+    { uuid: "b", title: "Beta", compatible: true },
+  ]);
+  await h.search("games");
+  for (const button of [
+    ...h.win.querySelectorAll(".internet-games-results button"),
+  ]) {
+    button.click();
+    await flushShell();
+    await flushShell();
+  }
+  const tab = h.win.querySelector('[data-internet-tab="installed"]');
+  tab.click();
+  const button = (title, label) =>
+    [
+      ...([
+        ...h.win.querySelectorAll(
+          ".internet-games-installed .internet-game-card",
+        ),
+      ]
+        .find((card) => card.querySelector("h2").textContent === title)
+        ?.querySelectorAll("button") || []),
+    ].find((entry) => entry.textContent === label) || null;
+  const play = button("Beta", "Play");
+  play.focus();
+  h.emit();
+  await flushShell();
+  await flushShell();
+  expect(play.isConnected).toBeFalse();
+  expect(h.s.document.activeElement === button("Beta", "Play")).toBeTrue();
+
+  // A game that is gone gives the keys to the Installed tab.
+  const uninstall = button("Beta", "Uninstall");
+  uninstall.focus();
+  uninstall.click();
+  await flushShell();
+  await h.answer("Yes");
+  expect(button("Beta", "Play")).toBeNull();
+  expect(h.s.document.activeElement === tab).toBeTrue();
+});

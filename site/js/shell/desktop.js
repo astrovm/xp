@@ -485,6 +485,13 @@ const buildDesktopIcons = () => {
   // The rebuild removes an open rename box, so its blur must not rename.
   const renameBox = container.querySelector(".desktop-rename");
   const reopen = renameBox?.dropRename() ? renameBox : null;
+  // The icon with the keys gets them back after the rebuild, like XP. An
+  // icon that is gone leaves the keys on the desktop.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) =>
+      `.desktop-icon[data-desktop-id="${CSS.escape(keys.closest(".desktop-icon").dataset.desktopId)}"]`,
+  );
   container.replaceChildren();
   container.tabIndex = 0;
   // System places stay available even though regular desktop files are
@@ -608,7 +615,8 @@ const buildDesktopIcons = () => {
       }
     });
     icon.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
+      // Alt+Enter shows Properties, from the shell's keys.
+      if (event.key === "Enter" && !event.altKey) {
         event.preventDefault();
         openDesktopItem(id);
       }
@@ -617,6 +625,7 @@ const buildDesktopIcons = () => {
     container.appendChild(icon);
   });
 
+  giveKeysBack(container);
   if (reopen) reopenDesktopRename(reopen);
   renderTaskbarToolbars();
   if (!wasBuilt) wireDesktopSelectionRectangle();
@@ -669,6 +678,7 @@ const beginDesktopRename = (id) => {
   input.dataset.desktopId = id;
   input.dataset.originalName = node.name;
   label.replaceWith(input);
+  XPDialogs.guardFileName(input);
   input.focus();
   input.select();
   let finished = false;
@@ -690,9 +700,20 @@ const beginDesktopRename = (id) => {
       try {
         await fileOps.rename(id, input.value);
       } catch (error) {
-        // Like Explorer, a name Windows refuses shows an error.
+        // Like XP, a name Windows refuses shows an error, and the box opens
+        // again with that name.
         refreshDesktop();
         await alertRenameError(error);
+        // An icon that went away while the error showed takes no box.
+        if (
+          !document.querySelector(
+            `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+          )
+        )
+          return;
+        const again = beginDesktopRename(id);
+        again.value = input.value;
+        again.select();
         return;
       }
     }

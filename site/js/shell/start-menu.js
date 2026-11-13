@@ -801,6 +801,11 @@ const buildPinnedPrograms = () => {
   ]);
   if (pinnedKey === renderedPinnedKey && container.isConnected) return;
   renderedPinnedKey = pinnedKey;
+  // A program with the keys keeps them, else All Programs takes them.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) => `[data-pinned-game="${CSS.escape(keys.dataset.pinnedGame)}"]`,
+  );
   container.innerHTML = "";
   container.classList.toggle("sm-small-icons", !options.largeIcons);
 
@@ -818,7 +823,7 @@ const buildPinnedPrograms = () => {
     programsImage.alt = "";
     programsIcon.appendChild(programsImage);
     allProgramsButton.prepend(programsIcon);
-    return;
+    return giveKeysBack(allProgramsButton);
   }
   allProgramsLabel.textContent = "All Programs";
 
@@ -830,6 +835,7 @@ const buildPinnedPrograms = () => {
     "sm-game-icon",
   );
   internetGames.classList.add("sm-pinned");
+  internetGames.dataset.pinnedGame = "__internet-games";
   const internetText = document.createElement("span");
   internetText.className = "sm-pinned-text";
   const internetTitle = document.createElement("span");
@@ -851,9 +857,12 @@ const buildPinnedPrograms = () => {
     container.appendChild(pinnedSeparator);
   }
 
-  pinned.forEach((gameId) =>
-    container.appendChild(createMenuGameItem(gameId, gameStats)),
-  );
+  pinned.forEach((gameId) => {
+    const item = createMenuGameItem(gameId, gameStats);
+    item.dataset.pinnedGame = gameId;
+    container.appendChild(item);
+  });
+  giveKeysBack(allProgramsButton);
 };
 
 let startFlyoutTimer = null;
@@ -1095,6 +1104,8 @@ const openProgramSubmenu = (definitions, anchor, depth) => {
   // positionStartFlyout would otherwise clamp to the top-left corner.
   if (!anchor.isConnected) return;
   const host = document.getElementById("start-menu-flyouts");
+  // Keys in a menu that closes go back to the item that opens the new one.
+  const giveKeysBack = holdKeys(host);
   [...host.querySelectorAll(".start-program-flyout")]
     .slice(depth)
     .forEach((panel) => panel.remove());
@@ -1117,6 +1128,7 @@ const openProgramSubmenu = (definitions, anchor, depth) => {
   host.hidden = false;
   positionStartFlyout(panel, anchor);
   wireStartFlyoutKeyboard(panel, anchor);
+  giveKeysBack(anchor);
   panel.addEventListener("pointerenter", () => clearTimeout(startFlyoutTimer));
   panel.addEventListener("pointerleave", () => {
     startFlyoutTimer = setTimeout(closeAllPrograms, 420);
@@ -1127,10 +1139,16 @@ const openAllPrograms = (focusFirst = false) => {
   clearTimeout(startFlyoutTimer);
   const host = document.getElementById("start-menu-flyouts");
   const button = document.getElementById("all-programs-button");
+  // A program with the keys keeps them, else All Programs takes them.
+  const giveKeysBack = holdKeys(
+    host,
+    (keys) => `[data-program-id="${CSS.escape(keys.dataset.programId || "")}"]`,
+  );
   host.replaceChildren();
   host.hidden = false;
   button.classList.add("active");
   openProgramSubmenu(getAllProgramsTree(), button, 0);
+  giveKeysBack(button);
   if (focusFirst) host.querySelector(".start-program-flyout button")?.focus();
 };
 

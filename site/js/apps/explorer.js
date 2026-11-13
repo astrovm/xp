@@ -318,6 +318,7 @@ const findBundledGameByTitle = (title) => {
 const createInternetGameCard = (game, win, { installed = false } = {}) => {
   const card = document.createElement("article");
   card.className = "internet-game-card";
+  card.dataset.uuid = game.uuid;
 
   const artwork = document.createElement("div");
   artwork.className = "internet-game-artwork";
@@ -353,6 +354,7 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
 
   if (installed) {
     action.textContent = "Play";
+    action.dataset.cardAction = "play";
     action.addEventListener("click", () =>
       openGameWindow(`flashpoint:${game.uuid}`),
     );
@@ -360,6 +362,7 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
     remove.type = "button";
     remove.className = "xp-btn";
     remove.textContent = "Uninstall";
+    remove.dataset.cardAction = "uninstall";
     remove.addEventListener("click", async () => {
       const confirmed = await XPDialogs.confirm(
         `Remove ${game.title || "this game"} from this computer?`,
@@ -442,6 +445,12 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
 const renderInstalledInternetGames = (win) => {
   const container = win.el.querySelector(".internet-games-installed");
   const status = win.el.querySelector(".internet-games-installed-status");
+  // A button with the keys keeps them, else the Installed tab takes them.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) =>
+      `[data-uuid="${CSS.escape(keys.closest("[data-uuid]").dataset.uuid)}"] [data-card-action="${keys.dataset.cardAction}"]`,
+  );
   container.replaceChildren();
   const records = gameLibrary
     ? [...installedGameIds]
@@ -457,6 +466,7 @@ const renderInstalledInternetGames = (win) => {
       createInternetGameCard(record, win, { installed: true }),
     ),
   );
+  giveKeysBack(win.el.querySelector('[data-internet-tab="installed"]'));
 };
 
 const wireInternetGames = (win) => {
@@ -1125,6 +1135,7 @@ const startExplorerRename = (win, nodeId) => {
   input.value = node.name;
   input.dataset.originalName = node.name;
   label.replaceWith(input);
+  XPDialogs.guardFileName(input);
   input.focus();
   input.setSelectionRange(
     0,
@@ -1148,20 +1159,29 @@ const startExplorerRename = (win, nodeId) => {
     try {
       await fileOps.rename(nodeId, input.value);
     } catch (error) {
+      // A window that is closing drops the rename and shows nothing.
+      if (win.closing) return;
+      // Like XP, the error shows, and the box opens again with the name.
       await alertRenameError(error);
+      // A window that closed, or an item that went away, gets no box.
+      const shown = win.el.querySelector(
+        `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
+      );
+      if (win.closing || !shown) return;
+      const again = startExplorerRename(win, nodeId);
+      again.value = input.value;
+      again.select();
     }
   };
-  // The box keeps its own keys from Explorer. Alt keys, the Windows key and
-  // Ctrl+Esc still reach the shell, like XP.
+  // The box keeps its own keys from Explorer. The shell's window keys still
+  // reach the shell, like XP.
   input.addEventListener("keydown", (event) => {
-    const shellKey =
-      event.altKey ||
-      event.key === "Meta" ||
-      (event.ctrlKey && event.key === "Escape");
-    if (shellKey) return;
+    if (isShellWindowKey(event)) return;
     event.stopPropagation();
-    if (event.key === "Enter") finish(true, true);
-    if (event.key === "Escape") finish(false, true);
+    if (event.key !== "Enter" && event.key !== "Escape") return;
+    // The key ends here, so it cannot also press a button in an error box.
+    event.preventDefault();
+    finish(event.key === "Enter", true);
   });
   // A blur that keeps the box focused is a switch to another app or tab:
   // the item keeps the focus for when the user comes back.
@@ -1186,11 +1206,18 @@ const renderExplorerTaskPane = (win) => {
     : isBin
       ? "Recycle Bin Tasks"
       : "File and Folder Tasks";
+  // A task with the keys keeps them, else the list takes them.
+  const list = win.el.querySelector(".explorer-items");
+  const giveKeysBack = holdKeys(
+    body,
+    (keys) => `[data-task="${CSS.escape(keys.dataset.task)}"]`,
+  );
   body.replaceChildren();
 
   const addTask = (label, icon, action) => {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.task = label;
     const image = document.createElement("img");
     image.src = XP_ICON_PATHS[icon];
     image.alt = "";
@@ -1213,7 +1240,7 @@ const renderExplorerTaskPane = (win) => {
       openControlPanel,
     );
     addTask("Change a setting", "ControlPanel.png", openControlPanel);
-    return;
+    return giveKeysBack(list);
   }
 
   const selected = selectedExplorerNodes(win);
@@ -1250,7 +1277,7 @@ const renderExplorerTaskPane = (win) => {
         restore(binItems),
       );
     section.hidden = !body.children.length;
-    return;
+    return giveKeysBack(list);
   }
 
   // XP's selection tasks; only the ones the simulation can carry out.
@@ -1289,6 +1316,7 @@ const renderExplorerTaskPane = (win) => {
     });
   }
   section.hidden = !body.children.length;
+  giveKeysBack(list);
 };
 
 // XP's "Other Places" list depends on the folder being shown. My Network
@@ -1337,6 +1365,11 @@ const renderExplorerOtherPlaces = (win) => {
         .filter((id) => id !== folder.parent && id !== current)
         .map(place),
     ];
+  // A place with the keys keeps them, else the list takes them.
+  const giveKeysBack = holdKeys(
+    body,
+    (keys) => `[data-place="${CSS.escape(keys.dataset.place)}"]`,
+  );
   body.replaceChildren();
   places.forEach(([id, node]) => {
     const button = document.createElement("button");
@@ -1371,6 +1404,7 @@ const renderExplorerOtherPlaces = (win) => {
     button.append(image, text);
     body.appendChild(button);
   });
+  giveKeysBack(win.el.querySelector(".explorer-items"));
 };
 
 // XP's Details section names the selection, or the open folder when nothing
@@ -1416,6 +1450,11 @@ const renderExplorerSelection = (win) => {
 const renderExplorerTree = (win) => {
   const tree = win.el.querySelector(".explorer-tree");
   if (!tree) return;
+  // A folder with the keys keeps them, else the open folder takes them.
+  const giveKeysBack = holdKeys(
+    tree,
+    (keys) => `[data-node-id="${CSS.escape(keys.dataset.nodeId)}"]`,
+  );
   tree.replaceChildren();
   const expanded =
     win.expandedFolders ||
@@ -1458,6 +1497,7 @@ const renderExplorerTree = (win) => {
   };
   addNode(fs.MY_COMPUTER);
   addNode(fs.RECYCLE_BIN);
+  giveKeysBack(tree.querySelector(".explorer-tree-item.active") || tree);
 };
 
 const openExplorerContextMenu = (win, clientX, clientY) => {
@@ -1869,7 +1909,8 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("dblclick", () => openExplorerNode(win, node));
     item.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+      // Alt+Enter shows Properties, from the shell's keys.
+      if (e.key === "Enter" && !e.altKey) {
         e.preventDefault();
         openExplorerNode(win, node);
       }

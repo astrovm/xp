@@ -683,3 +683,28 @@ test("Task Manager's Update Speed submenu works from the keys and the pointer", 
     "low",
   );
 });
+
+test("a Task Manager column header keeps the keys when the list is drawn again", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  tab(tm, "processes");
+  await settle();
+  const header = (index) =>
+    tm.querySelector(`.tm-processes [data-tm-sort="${index}"]`);
+  const name = header(0);
+  name.focus();
+  name.click();
+  await settle();
+  expect(name.isConnected).toBeFalse();
+  expect(s.document.activeElement === header(0)).toBeTrue();
+  // The same after the list updates on its own.
+  await s.advanceTime(2000);
+  expect(s.document.activeElement === header(0)).toBeTrue();
+  // The list itself keeps the keys.
+  tm.querySelector(".tm-processes").focus();
+  header(1).click();
+  await settle();
+  expect(
+    s.document.activeElement === tm.querySelector(".tm-processes"),
+  ).toBeTrue();
+});

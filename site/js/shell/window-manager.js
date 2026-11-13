@@ -12,6 +12,34 @@ let soundGameId = null;
 const audibleGameId = () =>
   focusedGameId ||
   (openWindows.get(soundGameId)?.minimized === false ? soundGameId : null);
+// The window keys that the shell runs from anywhere, text boxes included,
+// like XP: Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, the Windows key and Ctrl+Esc.
+const isShellWindowKey = (event) =>
+  event.key === "Meta" ||
+  (event.ctrlKey && event.key === "Escape") ||
+  (event.altKey && ["Tab", "Escape", "F4", " "].includes(event.key));
+// Call before a redraw that can remove or move the control with the keys.
+// Call the function it returns after the redraw. It gives the keys to the
+// same control again, or to its new copy, found with the selector from
+// selectorOf. If that control is gone or cannot take the keys, such as a
+// disabled button, the fallback takes them. With no fallback, the shell
+// gives them to the active window or the desktop.
+const holdKeys = (container, selectorOf = () => "") => {
+  const keys = document.activeElement;
+  const selector =
+    keys !== container && container.contains(keys) ? selectorOf(keys) : null;
+  return (fallback) => {
+    if (selector === null || document.activeElement === keys) return;
+    const same = keys.isConnected
+      ? keys
+      : selector
+        ? container.querySelector(selector)
+        : null;
+    same?.focus({ preventScroll: true });
+    if (document.activeElement !== same)
+      fallback?.focus({ preventScroll: true });
+  };
+};
 let zIndexCounter = 100;
 let cascadeCount = 0;
 
@@ -935,10 +963,13 @@ document.addEventListener(
 );
 // A click into a game's iframe fires no focusin in the page. So when the
 // page loses the focus to an iframe, its window records it.
+// Its window also becomes the active window, like a press on it.
 window.addEventListener("blur", () => {
   const frame = document.activeElement;
   const el = frame?.tagName === "IFRAME" && frame.closest(".xp-window");
-  if (el) el.lastFocusedElement = frame;
+  if (!el) return;
+  el.lastFocusedElement = frame;
+  activateWindowOf(frame);
 });
 
 // The window gives the focus to the control that had it last, else to its
@@ -1223,6 +1254,9 @@ const minimizeWindow = (gameId, { animate = false } = {}) => {
     focusedGameId = null;
     focusTopWindow();
   } else {
+    // The window that has the sound while the desktop has the keys goes
+    // quiet.
+    applyFocusVolumes();
     renderTaskButtons();
   }
 };
@@ -1232,6 +1266,8 @@ const restoreWindow = (gameId, { animate = false } = {}) => {
   if (!win || !win.minimized) return;
 
   win.minimized = false;
+  // The window that had the sound gets it back.
+  applyFocusVolumes();
   // A hidden window cannot take the focus, so the active window takes it
   // when it shows.
   const show = () => {
@@ -1387,6 +1423,8 @@ const closeGameWindow = (gameId, { skipBeforeClose = false } = {}) => {
   persistWindowPlacement(win);
   // Chrome sends no blur when it removes the control with the keys. The
   // control loses them first, like XP, so a rename box keeps its new name.
+  // A rename that fails then shows no error for a window that is closing.
+  win.closing = true;
   if (win.el.contains(document.activeElement)) document.activeElement.blur();
   win.mountedApplication?.unmount?.();
   win.el.remove();
@@ -1702,7 +1740,9 @@ const giveKeysToActiveWindow = () => {
   const win = openWindows.get(focusedGameId);
   if (win && !win.minimized) {
     focusWindowContent(win);
-    if (win.el.contains(document.activeElement)) return;
+    // A window that an animation still hides takes the keys when it shows.
+    // The desktop never takes them from a window that is about to show.
+    if (win.el.contains(document.activeElement) || win.windowAnimation) return;
   }
   document.getElementById("desktop-icons").focus({ preventScroll: true });
 };
@@ -1782,15 +1822,16 @@ document.addEventListener(
 // A window that takes the keys becomes the active window, like XP, also
 // when no press put them there: Tab, a script or a control that gives them
 // back. A minimized window takes no keys.
+const activateWindowOf = (element) => {
+  const win = openWindows.get(
+    element.closest(".xp-window[data-game]")?.dataset.game,
+  );
+  if (win && win.gameId !== focusedGameId && !win.minimized)
+    activateWindow(win);
+};
 document.addEventListener(
   "focusin",
-  (event) => {
-    const win = openWindows.get(
-      event.target.closest(".xp-window[data-game]")?.dataset.game,
-    );
-    if (win && win.gameId !== focusedGameId && !win.minimized)
-      activateWindow(win);
-  },
+  (event) => activateWindowOf(event.target),
   true,
 );
 

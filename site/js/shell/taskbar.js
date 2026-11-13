@@ -188,6 +188,7 @@ const renderTaskButtons = () => {
     if (win.groupedWindows) {
       const button = document.createElement("button");
       button.className = "task-button task-button-grouped";
+      button.dataset.group = gameId;
       const groupIcon = document.createElement("img");
       groupIcon.src = "assets/xp/icons/NewFolder.png";
       groupIcon.alt = "";
@@ -312,6 +313,7 @@ const renderTaskButtons = () => {
   if (hidden.length) {
     const overflow = document.createElement("button");
     overflow.type = "button";
+    overflow.dataset.group = "overflow";
     const hiddenNeedsAttention = hidden.some(([, win]) => win.needsAttention);
     overflow.className =
       "task-button task-button-grouped" +
@@ -378,8 +380,17 @@ const renderTaskButtons = () => {
   if (
     current.length !== nodes.length ||
     nodes.some((node, index) => current[index] !== node)
-  )
+  ) {
+    // A task button with the keys keeps them, also when it moves or its
+    // group gets a new button.
+    const giveKeysBack = holdKeys(container, (keys) =>
+      keys.dataset.group
+        ? `[data-group="${CSS.escape(keys.dataset.group)}"]`
+        : "",
+    );
     container.replaceChildren(...nodes);
+    giveKeysBack();
+  }
   for (const [gameId, cached] of taskButtonCache) {
     if (openWindows.get(gameId) !== cached.win) taskButtonCache.delete(gameId);
   }

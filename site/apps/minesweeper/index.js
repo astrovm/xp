@@ -336,6 +336,8 @@ const mountMinesweeper = (context, instance) => {
     setCounter(mineCounter, level.mines);
     setCounter(timeCounter, 0);
     setFace("normal");
+    // A cell with the keys gives them to the same cell of the new game.
+    const keysIndex = [...board.children].indexOf(document.activeElement);
     board.replaceChildren();
     board.style.gridTemplateColumns = `repeat(${level.columns}, 16px)`;
     root.classList.toggle("monochrome", !color);
@@ -358,6 +360,8 @@ const mountMinesweeper = (context, instance) => {
       });
       board.appendChild(cell);
     }
+    if (keysIndex >= 0)
+      (board.children[keysIndex] || board.lastElementChild).focus();
     resizeWindow();
     updateMenuChecks();
     saveSettings();

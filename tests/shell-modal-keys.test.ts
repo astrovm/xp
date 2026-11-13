@@ -358,11 +358,26 @@ test("the window that was active keeps its sound while the desktop has the keys"
   slide(50);
   expect(player.volume).toBe(volume);
 
-  // A minimized window is silent.
+  // A minimized window is silent at once, with no other change of volume.
   win.querySelector(".minimize-btn").click();
   await settle();
-  slide(50);
   expect(player.volume).toBe(0);
+
+  // Its task button restores it as the active window, with its sound.
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800, configurable: true },
+  );
+  s.window.dispatchEvent(new s.window.Event("resize"));
+  s.document.getElementById("desktop-icons").focus();
+  await settle();
+  s.document
+    .querySelector('.task-button[data-game="big-truck-adventures"]')
+    .click();
+  await settle();
+  expect(win.classList.contains("active")).toBeTrue();
+  expect(player.volume).toBe(volume);
 });
 
 test("a window that takes the keys becomes the active window, with no press", async () => {
@@ -498,4 +513,160 @@ test("the Date and Time calendar keeps the keys on its day", async () => {
   day("12").click();
   expect(s.document.activeElement === day("12")).toBeTrue();
   expect(day("12").classList.contains("selected")).toBeTrue();
+});
+
+// Chrome gives no keys to a control that is hidden. Happy DOM does, so the
+// test makes it act like Chrome. Happy DOM shares its element classes with
+// later tests, so the change ends with the test.
+const restoreFocus = [];
+afterEach(() => restoreFocus.splice(0).forEach((restore) => restore()));
+const hiddenTakesNoKeys = (s) => {
+  const prototype = s.window.HTMLElement.prototype;
+  const focus = prototype.focus;
+  prototype.focus = function (options) {
+    if (this.closest('[hidden], [style*="display: none"]')) return;
+    focus.call(this, options);
+  };
+  restoreFocus.push(() => (prototype.focus = focus));
+};
+
+test("Alt+Enter shows Properties, never opens the item, and commits a rename box", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const active = () => s.document.activeElement;
+  const dialogTitle = () =>
+    s.document.querySelector(".xp-dialog")?.getAttribute("aria-label");
+  const closeDialog = async () => {
+    key(s, active(), "Escape");
+    await settle();
+  };
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Alpha");
+  const win = await openDocuments(s);
+  const title = () => win.querySelector(".title-text").textContent;
+  const item = () =>
+    win.querySelector(`.explorer-item[data-node-id="${folder.id}"]`);
+
+  // On a selected item, Properties shows, and the folder stays shut.
+  item().click();
+  item().focus();
+  key(s, item(), "Enter", { altKey: true });
+  await settle();
+  expect(dialogTitle()).toBe("Alpha Properties");
+  expect(title()).toBe("My Documents");
+  await closeDialog();
+
+  // In a rename box, Alt+Enter commits the name like Enter.
+  item().dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  win.querySelector('.explorer-context-menu [data-command="rename"]').click();
+  await settle();
+  const input = win.querySelector(".explorer-rename");
+  input.value = "Beta";
+  key(s, input, "Enter", { altKey: true });
+  await settle();
+  expect(fs.getNode(folder.id).name).toBe("Beta");
+  expect(title()).toBe("My Documents");
+  expect(dialogTitle()).toBeUndefined();
+
+  // On the desktop: a file, the Recycle Bin, My Computer and the desktop.
+  const note = fs.createFile(fs.DESKTOP, "note.txt", { content: "" });
+  await settle();
+  const press = async (target) => {
+    target.focus();
+    key(s, target, "Enter", { altKey: true });
+    await settle();
+  };
+  desktopIcon(s, note.id).click();
+  await press(desktopIcon(s, note.id));
+  expect(dialogTitle()).toBe("note.txt Properties");
+  expect(s.document.querySelector('.xp-window[data-game="__notepad"]')).toBe(
+    null,
+  );
+  await closeDialog();
+  desktopIcon(s, "__recycle-bin").click();
+  await press(desktopIcon(s, "__recycle-bin"));
+  expect(dialogTitle()).toBe("Recycle Bin Properties");
+  await closeDialog();
+  desktopIcon(s, "__my-computer").click();
+  await press(desktopIcon(s, "__my-computer"));
+  expect(dialogTitle()).toBe("My Computer Properties");
+  await closeDialog();
+  // Two selected files have no single Properties.
+  const other = fs.createFile(fs.DESKTOP, "other.txt", { content: "" });
+  await settle();
+  desktopIcon(s, note.id).classList.add("selected");
+  desktopIcon(s, other.id).classList.add("selected");
+  await press(desktopIcon(s, other.id));
+  expect(dialogTitle()).toBeUndefined();
+  await press(s.document.getElementById("desktop-icons"));
+  expect(
+    s.document.querySelector('.xp-window[data-game="__display-properties"]'),
+  ).not.toBeNull();
+});
+
+test("a fallback for the keys never takes the active state from a window that is about to show", async () => {
+  const s = await login(await loadShell({ windowAnimations: true }));
+  hiddenTakesNoKeys(s);
+  const win = await openDocuments(s);
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800, configurable: true },
+  );
+  s.window.dispatchEvent(new s.window.Event("resize"));
+  await settle();
+  win.querySelector(".minimize-btn").click();
+  await s.advanceTime(1000);
+  expect(win.style.display).toBe("none");
+
+  // The task button restores the window. While its caption slides, the
+  // keys leave the taskbar to nothing, as when a menu closes.
+  const start = s.document.getElementById("start-button");
+  start.focus();
+  s.document.querySelector('.task-button[data-game="__my-documents"]').click();
+  expect(win.style.display).toBe("none");
+  loseKeys(s, start);
+  await settle();
+  expect(win.classList.contains("active")).toBeTrue();
+
+  // The window takes the keys when it shows.
+  await s.advanceTime(1000);
+  expect(win.style.display).toBe("flex");
+  expect(win.classList.contains("active")).toBeTrue();
+  expect(win.contains(s.document.activeElement)).toBeTrue();
+});
+
+test("a press into a game's frame makes its window active", async () => {
+  const s = await login(await loadShell());
+  const docs = await openDocuments(s);
+  clickStartAction(s, "pictures");
+  await settle();
+  const pictures = s.document.querySelector(
+    '.xp-window[data-game="__my-pictures"]',
+  );
+  expect(pictures.classList.contains("active")).toBeTrue();
+  const frame = s.document.createElement("iframe");
+  docs.querySelector(".explorer-items").append(frame);
+
+  // The page sees only its own blur, with the frame as the active element.
+  const pressFrame = async () => {
+    Object.defineProperty(s.document, "activeElement", {
+      get: () => frame,
+      configurable: true,
+    });
+    s.window.dispatchEvent(new s.window.Event("blur"));
+    delete s.document.activeElement;
+    await settle();
+  };
+  await pressFrame();
+  expect(docs.classList.contains("active")).toBeTrue();
+  expect(pictures.classList.contains("active")).toBeFalse();
+
+  // The same after the desktop took the keys.
+  s.document.getElementById("desktop-icons").focus();
+  await settle();
+  expect(docs.classList.contains("active")).toBeFalse();
+  await pressFrame();
+  expect(docs.classList.contains("active")).toBeTrue();
 });

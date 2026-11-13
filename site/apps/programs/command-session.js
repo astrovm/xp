@@ -326,7 +326,14 @@ export class CommandSession {
       return { output: "The syntax of the command is incorrect." };
     const id = this.resolve(args[0]);
     if (!id) return { output: "The system cannot find the file specified." };
-    this.context.fileOps.rename(id, args.slice(1).join(" "));
+    try {
+      this.context.fileOps.rename(id, args.slice(1).join(" "));
+    } catch (error) {
+      if (error.code !== "name-exists") throw error;
+      return {
+        output: "A duplicate file name exists, or the file cannot be found.",
+      };
+    }
     return { output: "" };
   }
 

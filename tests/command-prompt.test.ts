@@ -252,6 +252,15 @@ describe("Command Prompt session", () => {
     expect(run("ren new.txt other.txt")).toBe("rename refused");
   });
 
+  test("ren refuses the name of another file with XP's message", () => {
+    fs.createFile(session.cwd, "first.txt");
+    fs.createFile(session.cwd, "second.txt");
+    expect(run("ren first.txt second.txt")).toBe(
+      "A duplicate file name exists, or the file cannot be found.",
+    );
+    expect(fs.findChild(session.cwd, "first.txt")).toBeTruthy();
+  });
+
   test("start opens folders and files through their registered handlers", () => {
     const opened = [];
     fs.registerFolderHandler((node) => opened.push(node.name));

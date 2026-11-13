@@ -230,7 +230,17 @@ test("selection can move, copy, cut, paste transparently and clear", () => {
 test("text commits on keyboard confirmation and can be canceled", () => {
   const h = setup();
   h.engine.setTool("text");
-  h.pointer("pointerdown", 1, 2);
+  // The press keeps the keys in the new box, so the browser cannot move
+  // them to the picture.
+  const press = new w.PointerEvent("pointerdown", {
+    clientX: 1,
+    clientY: 2,
+    button: 0,
+    pointerId: 1,
+    cancelable: true,
+  });
+  h.canvas.dispatchEvent(press);
+  expect(press.defaultPrevented).toBeTrue();
   let editor = h.frame.querySelector("textarea");
   editor.value = "one\ntwo";
   editor.dispatchEvent(
@@ -251,8 +261,11 @@ test("text commits on keyboard confirmation and can be canceled", () => {
     new w.KeyboardEvent("keydown", { key: "Escape", altKey: true }),
   );
   expect(editor.isConnected).toBeTrue();
+  h.canvas.tabIndex = 0;
   editor.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
   expect(h.frame.querySelector("textarea")).toBeNull();
+  // Esc gives the keys back to the picture.
+  expect(w.document.activeElement === h.canvas).toBeTrue();
   h.pointer("pointerdown", 1, 1);
   h.frame.querySelector("textarea").blur();
   expect(h.frame.querySelector("textarea")).toBeNull();

@@ -2041,6 +2041,48 @@ html[data-xp-appearance="classic"] .dlg-file-name-arrow {
     sans-serif;
 }
 
+/* XP's balloon tip, with its tail at the top left, under a text box. */
+.xp-balloon {
+  position: fixed;
+  z-index: 9900;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid #000;
+  border-radius: 7px;
+  background: #ffffe1;
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.35);
+  color: #000;
+  font:
+    11px Tahoma,
+    "Segoe UI",
+    sans-serif;
+}
+
+.xp-balloon > div + div {
+  padding-left: 24px;
+}
+
+.xp-balloon::before,
+.xp-balloon::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  border: solid transparent;
+  border-width: 0 0 10px 10px;
+}
+
+.xp-balloon::before {
+  top: -10px;
+  border-bottom-color: #000;
+}
+
+.xp-balloon::after {
+  top: -8px;
+  left: 17px;
+  border-width: 0 0 9px 9px;
+  border-bottom-color: #ffffe1;
+}
+
 /* Customize Start Menu, positioned from the XP SP3 dialog at 1024×768. */
 .customize-start-menu-dialog {
   height: min(425px, calc(100vh - 8px));
