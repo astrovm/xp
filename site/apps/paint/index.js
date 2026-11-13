@@ -439,7 +439,8 @@ const mountPaint = (shell, instance) => {
         title: "Save As",
         defaultName:
           fileId && canWriteType ? fileName : fileName.replace(/\.[^.]+$/, ""),
-        startFolder: shell.myPictures,
+        // Like XP, Save As starts in the open picture's folder.
+        startFolder: (fileId && shell.folderOf(fileId)) || shell.myPictures,
         filter: SAVE_TYPES,
         defaultExtension: ".bmp",
         allFiles: false,

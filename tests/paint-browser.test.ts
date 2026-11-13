@@ -46,6 +46,7 @@ async function setup() {
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
     pictureUrl: (file) => file.content || null,
+    folderOf: (id) => (id === "other" ? "other-folder" : null),
     setTitle: (title) => titles.push(title),
     showMessage: (...args) => messages.push(args),
     close: () => messages.push(["close"]),
@@ -225,11 +226,18 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
     return null;
   };
   await h.command("save-as");
-  expect(saves.at(-1).defaultName).toBe("other.bmp");
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "other.bmp",
+    startFolder: "other-folder",
+  });
   // Browsers cannot write GIF, so Save asks for a new name and type.
   await h.mounted.openFile({ id: "anim", name: "anim.gif", content: "data" });
   await h.command("save");
-  expect(saves.at(-1).defaultName).toBe("anim");
+  // A picture whose folder is gone saves to My Pictures.
+  expect(saves.at(-1)).toMatchObject({
+    defaultName: "anim",
+    startFolder: "pictures",
+  });
 });
 test("Paint tools, palette, menu checks and keyboard controls stay synchronized", async () => {
   const h = await setup();

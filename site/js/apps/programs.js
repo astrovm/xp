@@ -57,6 +57,7 @@ const applicationContext = (win) => ({
   saveFile: (options) => XPDialogs.saveFile(options),
   myPictures: fs.MY_PICTURES,
   pictureUrl: (file) => fs.getPictureUrl(file.id),
+  folderOf: (id) => fs.getNode(id)?.parent || null,
   setFileContent: (id, content, options) => fs.setContent(id, content, options),
   createFile: (parentId, name, content) =>
     fs.createFile(parentId, name, { content }),

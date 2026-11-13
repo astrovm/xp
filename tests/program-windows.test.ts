@@ -143,6 +143,8 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(fs.getContent(file.id)).toBe("old");
   context.setFileContent(file.id, "new");
   expect(fs.getContent(file.id)).toBe("new");
+  expect(context.folderOf("sample-winter")).toBe(fs.SAMPLE_PICTURES);
+  expect(context.folderOf("missing")).toBeNull();
   // Paint reads pictures through the shell, sample pictures included.
   expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(
     "/assets/xp/sample-pictures/winter.jpg",
