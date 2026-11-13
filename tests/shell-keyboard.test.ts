@@ -107,6 +107,34 @@ test("Explorer typeahead cycles matching items and keyboard shortcuts act on the
 test("Explorer keyboard deletes recycle, permanently delete, and empty the Recycle Bin selection", async () => {
   const h = await openFixtureFolder(),
     { s, fs } = h;
+  // A failed delete shows an alert, for Delete and Shift+Delete alike.
+  const fileOps = s.window.FileOperations,
+    removeToBin = fileOps.removeToBin,
+    destroy = fs.destroy;
+  fileOps.removeToBin = async () => {
+    throw new Error("Storage is full.");
+  };
+  fs.destroy = () => {
+    throw new Error("Storage is full.");
+  };
+  try {
+    for (const shiftKey of [false, true]) {
+      h.item(h.notes.id).click();
+      h.item(h.notes.id).focus();
+      press(s, h.item(h.notes.id), "Delete", { shiftKey });
+      await answer(s, "yes");
+      await settle();
+      expect(s.document.querySelector(".xp-dialog").textContent).toContain(
+        "Storage is full.",
+      );
+      await answer(s, "ok");
+      expect(fs.getNode(h.notes.id).parent).not.toBe(fs.RECYCLE_BIN);
+    }
+  } finally {
+    fileOps.removeToBin = removeToBin;
+    fs.destroy = destroy;
+  }
+
   h.item(h.notes.id).click();
   h.item(h.notes.id).focus();
   press(s, h.item(h.notes.id), "Delete");

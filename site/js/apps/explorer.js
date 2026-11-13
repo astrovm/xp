@@ -591,11 +591,7 @@ const confirmEmptyRecycleBin = () => {
       await fileOps.emptyRecycleBin();
       return true;
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertFileOperationError(error);
     }
   });
 };
@@ -1274,11 +1270,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       if (command === "permanent") await confirmRecycleBinDelete(selected);
       close();
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertFileOperationError(error);
     }
   });
   menu.addEventListener("keydown", (event) => {

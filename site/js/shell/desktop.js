@@ -306,7 +306,12 @@ const wireDesktopIconDrag = (icon) => {
       if (desktopDragged) {
         if (dropTarget) {
           if (dropTarget.action === "recycle") {
-            await fileOps.removeToBin(eligibility.filesystemIds);
+            // A failed delete shows an alert, like the Delete key.
+            try {
+              await fileOps.removeToBin(eligibility.filesystemIds);
+            } catch (error) {
+              await alertFileOperationError(error);
+            }
           } else {
             fileOps.cut(eligibility.filesystemIds);
             await pasteIntoFolder(dropTarget.destinationId);

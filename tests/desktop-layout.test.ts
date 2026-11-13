@@ -147,6 +147,21 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect(fs.getNode(recycle.id).parent).toBe(fs.RECYCLE_BIN);
   expect(fs.getNode(recycle.id).content).toBe("recover me");
   expect(s.document.querySelectorAll(".drop-target").length).toBe(0);
+  // A failed delete shows an alert.
+  const removeToBin = s.window.FileOperations.removeToBin;
+  s.window.FileOperations.removeToBin = async () => {
+    throw new Error("Storage is full.");
+  };
+  try {
+    await drag(s, icon(folder.id), icon("__recycle-bin"));
+    await flushShell();
+    expect(
+      [...s.document.querySelectorAll(".xp-dialog")].at(-1)?.textContent,
+    ).toContain("Storage is full.");
+    expect(fs.getNode(folder.id).parent).toBe(fs.DESKTOP);
+  } finally {
+    s.window.FileOperations.removeToBin = removeToBin;
+  }
 });
 test("desktop files can be created, renamed outside the field, copied, cut, and opened through menus", async () => {
   const s = await login(await loadShell()),
