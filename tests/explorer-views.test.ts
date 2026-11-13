@@ -391,26 +391,31 @@ function stubNextPicture(
   if (!h.pictureStubs) {
     h.pictureStubs = [];
     const document = h.s.document;
-    const setSrc = Object.getOwnPropertyDescriptor(
+    const { get: getSrc, set: setSrc } = Object.getOwnPropertyDescriptor(
       h.s.window.HTMLImageElement.prototype,
       "src",
-    ).set;
+    );
     const createElement = document.createElement;
     document.createElement = function (name, ...args) {
       const element = createElement.call(this, name, ...args);
       if (name !== "img") return element;
       let waits = false;
+      // A stubbed image keeps its URL but never loads it, so happy-dom
+      // fires no event of its own.
+      let stubbedSrc = null;
       const addEventListener = element.addEventListener;
       element.addEventListener = function (type, ...rest) {
         if (type === "load") waits = true;
         return addEventListener.call(this, type, ...rest);
       };
       Object.defineProperty(element, "src", {
+        get: () => stubbedSrc ?? getSrc.call(element),
         set(value) {
           if (!waits || !h.pictureStubs.length) {
             setSrc.call(element, value);
             return;
           }
+          stubbedSrc = value;
           const stub = h.pictureStubs.shift();
           Object.defineProperties(element, {
             naturalWidth: { value: stub.width },
@@ -722,7 +727,7 @@ test("a queued rotation acts on the picture shown when the user asked for it", a
   expect(h.fs.getContent(c.id)).toBe(ART);
   // The save draws the items again, and b keeps the selection and the focus.
   expect(f.selected()).toEqual([b.id]);
-  expect(h.s.document.activeElement).toBe(h.item(f.win, b.id));
+  expect(h.s.document.activeElement === h.item(f.win, b.id)).toBeTrue();
   // A picture deleted before its turn is not rotated, shows no error, and
   // does not stop later rotations.
   const writes = [];
@@ -742,7 +747,7 @@ test("a queued rotation acts on the picture shown when the user asked for it", a
   await flushShell();
   expect(h.fs.getNode(c.id)).toBeFalsy();
   // The deleted item had the focus, so the list keeps it.
-  expect(h.s.document.activeElement).toBe(h.items(f.win));
+  expect(h.s.document.activeElement === h.items(f.win)).toBeTrue();
   release();
   await settle();
   expect(writes).toEqual([b.id]);
@@ -867,4 +872,130 @@ test("files show XP's icon for their type", async () => {
         .getAttribute("src"),
     ),
   ).toEqual(Object.values(names).map((icon) => `assets/xp/icons/${icon}`));
+});
+
+test("Explorer gives the focus back to the list after menus, renames and new renders", async () => {
+  const h = await openShell();
+  const { fs, s } = h;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Focus");
+  const [a, b, c] = ["a.txt", "b.txt", "c.txt"].map((name) =>
+    fs.createFile(folder.id, name, { content: name }),
+  );
+  await h.open(folder.id);
+  const win = h.explorer();
+  const item = (node) => h.item(win, node.id);
+  const selected = () =>
+    [...win.querySelectorAll(".explorer-item.selected")].map(
+      (entry) => entry.dataset.nodeId,
+    );
+  const key = (target, key, options = {}) =>
+    target.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", { key, bubbles: true, ...options }),
+    );
+  // A short name for an element, so a failed check prints no DOM tree.
+  const label = (element) =>
+    element?.dataset?.nodeId ||
+    element?.dataset?.command ||
+    element?.dataset?.explorerMenu ||
+    element?.className ||
+    element?.tagName;
+  const focused = () => label(s.document.activeElement);
+  const contextMenu = (node) => {
+    item(node).dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+    return win.querySelector(".explorer-context-menu");
+  };
+
+  // A right-click on a selected item keeps the whole selection, like XP.
+  item(a).click();
+  item(b).dispatchEvent(
+    new s.window.MouseEvent("click", { ctrlKey: true, bubbles: true }),
+  );
+  let menu = contextMenu(b);
+  expect(selected()).toEqual([a.id, b.id]);
+  expect(focused()).toBe("cut");
+  // Escape gives the focus back to the selection.
+  key(s.document.activeElement, "Escape");
+  expect(win.querySelector(".explorer-context-menu")).toBeNull();
+  expect(focused()).toBe(label(item(a)));
+  // A right-click on another item selects only it.
+  menu = contextMenu(c);
+  expect(selected()).toEqual([c.id]);
+  menu.querySelector('[data-command="copy"]').click();
+  await flushShell();
+  expect(focused()).toBe(label(item(c)));
+  // Rename keeps its box focused.
+  contextMenu(c).querySelector('[data-command="rename"]').click();
+  await flushShell();
+  let input = win.querySelector(".explorer-rename");
+  expect(focused()).toBe(label(input));
+
+  // A new render keeps the box, the typed text and its selection.
+  input.value = "renamed.txt";
+  input.setSelectionRange(0, 7);
+  fs.createFile(folder.id, "d.txt", { content: "d" });
+  await flushShell();
+  expect(input.isConnected).toBe(false);
+  input = win.querySelector(".explorer-rename");
+  expect(focused()).toBe(label(input));
+  expect(input.closest(".explorer-item").dataset.nodeId).toBe(c.id);
+  expect(input.value).toBe("renamed.txt");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 7]);
+  // The removed box did not commit.
+  expect(fs.getNode(c.id).name).toBe("c.txt");
+  key(input, "Enter");
+  await flushShell();
+  expect(fs.getNode(c.id).name).toBe("renamed.txt");
+  expect(focused()).toBe(label(item(c)));
+
+  // A click elsewhere commits the rename and keeps the focus there.
+  key(item(c), "F2");
+  input = win.querySelector(".explorer-rename");
+  input.value = "again.txt";
+  const address = win.querySelector(".explorer-address input");
+  address.focus();
+  await flushShell();
+  expect(fs.getNode(c.id).name).toBe("again.txt");
+  expect(focused()).toBe(label(address));
+
+  // A menu bar command gives the focus back to the list.
+  const edit = win.querySelector('[data-explorer-menu="edit"]');
+  edit.click();
+  const selectAll = win.querySelector('[data-explorer-command="select-all"]');
+  selectAll.focus();
+  selectAll.click();
+  await flushShell();
+  expect(selected()).toHaveLength(4);
+  expect(focused()).toBe(label(item(a)));
+  // Also when the click left the focus on nothing.
+  item(b).click();
+  s.document.activeElement.blur();
+  win.querySelector('[data-explorer-menu="view"]').click();
+  win.querySelector('[data-explorer-command="list"]').click();
+  await flushShell();
+  expect(focused()).toBe(label(item(b)));
+  // A command that opens a dialog keeps the focus in the dialog.
+  edit.click();
+  address.focus();
+  win.querySelector('[data-explorer-command="invert-selection"]').click();
+  await flushShell();
+  expect(focused()).toBe(label(address));
+  // The first Escape keeps the menu heading, and the second leaves the bar.
+  edit.click();
+  edit.focus();
+  key(edit, "Escape");
+  expect(focused()).toBe(label(edit));
+  key(edit, "Escape");
+  expect(focused()).toBe(label(item(a)));
+
+  // The empty space of an empty folder keeps the focus after a delete.
+  const empty = fs.createFolder(fs.MY_DOCUMENTS, "Empty");
+  const last = fs.createFile(empty.id, "last.txt", { content: "x" });
+  await h.open(empty.id);
+  const lastItem = h.item(h.explorer(), last.id);
+  lastItem.focus();
+  fs.delete(last.id);
+  await flushShell();
+  expect(focused()).toBe(label(h.items(h.explorer())));
 });

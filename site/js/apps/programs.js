@@ -247,6 +247,7 @@ const systemApplicationContext = () => ({
   renderExplorerSelection,
   setExplorerView,
   startExplorerRename,
+  focusExplorerList,
   stepExplorerFilmstrip,
   canRotatePicture,
   explorerFilmstripNode,

@@ -29,6 +29,7 @@ export const createSystemRuntime = (context) => {
     setAccessKeyText,
     setExplorerView,
     startExplorerRename,
+    focusExplorerList,
     stepExplorerFilmstrip,
     wireProjectSettings,
   } = context;
@@ -514,6 +515,18 @@ export const createSystemRuntime = (context) => {
           button.setAttribute("aria-expanded", "false"),
         );
       };
+      // After a command, the list gets the focus back, like XP, unless the
+      // command moved it, such as to a rename box or a dialog.
+      const focusListAfterMenu = () => {
+        const active = document.activeElement;
+        if (
+          active === document.body ||
+          explorerMenu.contains(active) ||
+          explorerSubmenu.contains(active) ||
+          explorerMenuOwners.includes(active)
+        )
+          focusExplorerList(win);
+      };
       const explorerSubmenus = {
         "folder-menu": [
           { label: "Search...", action: "search-current" },
@@ -786,6 +799,7 @@ export const createSystemRuntime = (context) => {
 
             if (command === "about-windows") openAboutWindows();
             hideExplorerMenus();
+            focusListAfterMenu();
             return;
           }
           const subcommandButton = event.target.closest(
@@ -807,6 +821,7 @@ export const createSystemRuntime = (context) => {
               openShellProperties(win.currentFolderId);
 
             hideExplorerMenus();
+            focusListAfterMenu();
             return;
           }
           const actionButton = event.target.closest("[data-explorer-action]");
@@ -865,7 +880,11 @@ export const createSystemRuntime = (context) => {
             (button) => button.getAttribute("aria-expanded") === "true",
           );
           hideExplorerMenus();
-          activeButton?.focus();
+          // A first Escape closes the menu and keeps its heading active. A
+          // second one leaves the menu bar, like XP.
+          if (activeButton) activeButton.focus();
+          else if (explorerMenuOwners.includes(document.activeElement))
+            focusExplorerList(win);
           return;
         }
         const heading = document.activeElement?.closest?.(

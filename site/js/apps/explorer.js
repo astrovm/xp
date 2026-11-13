@@ -1104,6 +1104,15 @@ const selectedExplorerNodes = (win) =>
     .map((item) => item.dataset.nodeId)
     .filter((id) => !!fs.getNode(id));
 
+// Gives the focus back to the list, on its selected item if it has one,
+// like XP after a menu or a dialog closes.
+const focusExplorerList = (win) => {
+  const items = win.el.querySelector(".explorer-items");
+  (items.querySelector(".explorer-item.selected") || items).focus({
+    preventScroll: true,
+  });
+};
+
 // Inline rename, like XP: the label becomes an edit box; Enter or leaving
 // it commits, and Escape cancels.
 const startExplorerRename = (win, nodeId) => {
@@ -1114,7 +1123,8 @@ const startExplorerRename = (win, nodeId) => {
   );
   // F2 reaches both the item and the shell. A second start keeps the open
   // edit box.
-  if (item.querySelector(".explorer-rename")) return;
+  const open = item.querySelector(".explorer-rename");
+  if (open) return open;
   const label = item.querySelector("b");
   const node = fs.getNode(nodeId);
   const input = document.createElement("input");
@@ -1129,11 +1139,13 @@ const startExplorerRename = (win, nodeId) => {
       : node.name.length,
   );
   let finished = false;
-  const finish = async (commit) => {
+  // Enter and Escape give the focus back to the item. A click elsewhere
+  // keeps the focus where the user put it.
+  const finish = async (commit, refocus) => {
     if (finished) return;
     finished = true;
     input.replaceWith(label);
-    item.focus();
+    if (refocus) item.focus();
     if (!commit || input.value === node.name) return;
     try {
       await fileOps.rename(nodeId, input.value);
@@ -1143,10 +1155,14 @@ const startExplorerRename = (win, nodeId) => {
   };
   input.addEventListener("keydown", (event) => {
     event.stopPropagation();
-    if (event.key === "Enter") finish(true);
-    if (event.key === "Escape") finish(false);
+    if (event.key === "Enter") finish(true, true);
+    if (event.key === "Escape") finish(false, true);
   });
-  input.addEventListener("blur", () => finish(true));
+  // A new render removes the box and opens a new one, so that is no commit.
+  input.addEventListener("blur", () => {
+    if (input.isConnected) finish(true, false);
+  });
+  return input;
 };
 
 const renderExplorerTaskPane = (win) => {
@@ -1445,7 +1461,13 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   const menu = document.createElement("div");
   menu.className = "xp-context-menu explorer-context-menu";
   menu.setAttribute("role", "menu");
-  const close = () => menu.remove();
+  // The list gets the focus back, unless a command moved it elsewhere,
+  // such as a rename box or a dialog.
+  const close = () => {
+    const hadFocus = menu.contains(document.activeElement);
+    menu.remove();
+    if (hadFocus) focusExplorerList(win);
+  };
   const add = (label, command, disabled) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1661,10 +1683,24 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     win.renderedFolderId === folder.id && itemHadFocus
       ? focusedItem.dataset.nodeId
       : null;
-  // If that item is gone, the list keeps the focus, like XP's list view.
+  // An open rename box stays open, with the text typed so far.
+  const rename =
+    focusedId && document.activeElement.classList.contains("explorer-rename")
+      ? document.activeElement
+      : null;
+  // If the focused item is gone, the list keeps the focus, like XP.
   const keepFocus = () => {
-    if (itemHadFocus && !items.contains(document.activeElement))
-      items.focus({ preventScroll: true });
+    if (!itemHadFocus) return;
+    const kept =
+      focusedId &&
+      items.querySelector(
+        `.explorer-item[data-node-id="${CSS.escape(focusedId)}"]`,
+      );
+    if (rename && kept) {
+      const input = startExplorerRename(win, focusedId);
+      input.value = rename.value;
+      input.setSelectionRange(rename.selectionStart, rename.selectionEnd);
+    } else if (!kept) focusExplorerList(win);
   };
   win.renderedFolderId = folder.id;
   items.dataset.view = view;
@@ -1825,7 +1861,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      item.click();
+      // A right-click on a selected item keeps the whole selection, like XP.
+      if (item.classList.contains("selected")) item.focus();
+      else item.click();
       openExplorerContextMenu(win, event.clientX, event.clientY);
     });
     // A deleted folder takes no drops: nothing new goes in the Recycle Bin.
