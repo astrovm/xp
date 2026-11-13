@@ -528,8 +528,15 @@ export const createSystemRuntime = (context) => {
       // The control that had the focus before the menus gets it back, like
       // XP.
       let menuReturnFocus = null;
+      // A focusin whose target already lost the focus is skipped. The
+      // window sends a press on a toolbar or title-bar button back to its
+      // control, before this listener runs.
       win.el.addEventListener("focusin", (event) => {
-        if (!inExplorerMenus(event.target)) menuReturnFocus = event.target;
+        if (
+          event.target === document.activeElement &&
+          !inExplorerMenus(event.target)
+        )
+          menuReturnFocus = event.target;
       });
       const leaveExplorerMenus = () => {
         if (menuReturnFocus?.isConnected && win.el.contains(menuReturnFocus))

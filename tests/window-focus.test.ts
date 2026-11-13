@@ -62,6 +62,14 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
     press(button, "pointerup");
     expect(focused()).toBe("explorer-items");
   }
+  // A menu command gives the focus back to the list, not to the button.
+  docs.querySelector('[data-explorer-menu="edit"]').click();
+  // Chrome focuses the menu item that the click presses.
+  const selectAll = docs.querySelector('[data-explorer-command="select-all"]');
+  selectAll.focus();
+  selectAll.click();
+  await settle();
+  expect(focused()).toBe("explorer-items");
 
   // The keyboard can still focus a toolbar button.
   const folders = docs.querySelector('[data-explorer-action="folders"]');
