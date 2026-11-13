@@ -38,6 +38,8 @@ describe("Paint", () => {
     test("uses BMP when a filename has no extension", () => {
       expect(extensionFor("untitled")).toBe("bmp");
       expect(extensionFor("photo.JPEG")).toBe("jpeg");
+      // A leading dot starts the name, as on the disk.
+      expect(extensionFor(".png")).toBe("bmp");
     });
 
     test("saves BMP and DIB files from canvas pixels", async () => {

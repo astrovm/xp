@@ -218,15 +218,18 @@ test("Paint opens valid images, rejects damaged files and respects canceled repl
   expect(h.messages.at(-1)[1]).toContain("Paint cannot read this file");
   await h.mounted.openFile({ id: "other", name: "other.bmp", content: "data" });
   expect(h.titles.at(-1)).toBe("other.bmp - Paint");
-  // Browsers cannot write GIF, so Save asks for a new name and type.
-  await h.mounted.openFile({ id: "anim", name: "anim.gif", content: "data" });
+  // Save As keeps the open picture's type when Paint can write it.
   const saves = [];
   h.context.saveFile = async (options) => {
     saves.push(options);
     return null;
   };
+  await h.command("save-as");
+  expect(saves.at(-1).defaultName).toBe("other.bmp");
+  // Browsers cannot write GIF, so Save asks for a new name and type.
+  await h.mounted.openFile({ id: "anim", name: "anim.gif", content: "data" });
   await h.command("save");
-  expect(saves).toEqual([expect.objectContaining({ defaultName: "anim" })]);
+  expect(saves.at(-1).defaultName).toBe("anim");
 });
 test("Paint tools, palette, menu checks and keyboard controls stay synchronized", async () => {
   const h = await setup();

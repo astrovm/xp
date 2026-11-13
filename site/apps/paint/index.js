@@ -426,17 +426,19 @@ const mountPaint = (shell, instance) => {
     }
   };
   const save = async (saveAs) => {
-    // Save keeps the open file's type, unless Paint cannot write it.
-    const canSaveInPlace =
-      fileId && SAVE_TYPES.includes(`.${extensionFor(fileName)}`);
+    // Save and Save As keep the open file's type, unless Paint cannot
+    // write it.
+    const canWriteType = SAVE_TYPES.includes(`.${extensionFor(fileName)}`);
+    const canSaveInPlace = fileId && canWriteType;
     let destination =
       canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
     if (!destination) {
-      // Like XP's Paint: the box shows the name without a type, and the
-      // dialog adds .bmp unless a type Paint saves is typed.
+      // The dialog adds .bmp unless a type Paint saves is typed. A new
+      // picture, or one of a type Paint cannot write, starts without one.
       destination = await shell.saveFile({
         title: "Save As",
-        defaultName: fileName.replace(/\.[^.]+$/, ""),
+        defaultName:
+          fileId && canWriteType ? fileName : fileName.replace(/\.[^.]+$/, ""),
         startFolder: shell.myPictures,
         filter: SAVE_TYPES,
         defaultExtension: ".bmp",

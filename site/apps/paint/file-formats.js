@@ -40,9 +40,10 @@ export const encodeBmp = (image) => {
   return bytes;
 };
 
+// Like the file system, a leading dot starts the name, not an extension.
 export const extensionFor = (name) => {
-  const match = name.toLowerCase().match(/\.([^.]+)$/);
-  return match?.[1] || "bmp";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "bmp";
 };
 
 export const encodeCanvas = async (canvas, name) => {
