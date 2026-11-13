@@ -518,7 +518,12 @@ export const createSystemRuntime = (context) => {
       // without taking the keys, such as Views. Escape then gives the keys
       // back to where they were, like XP.
       let menuOpenedAway = false;
+      // Keys in a menu that closes go back to their control first, so a
+      // close never leaves them on the page, like XP.
       const hideExplorerMenus = () => {
+        const active = document.activeElement;
+        if (explorerMenu.contains(active) || explorerSubmenu.contains(active))
+          leaveExplorerMenus();
         menuOpenedAway = false;
         explorerMenu.hidden = true;
         explorerSubmenu.hidden = true;
@@ -555,6 +560,9 @@ export const createSystemRuntime = (context) => {
           menuReturnFocus.focus({ preventScroll: true });
         else focusExplorerList(win);
       };
+      // A press outside the menu bar closes the menus through the shell,
+      // which uses this close, so the keys come back too.
+      explorerMenu.closeMenus = hideExplorerMenus;
       // When a menu closes for a command, the focus goes back, unless it is
       // already somewhere else.
       const focusListAfterMenu = () => {
@@ -870,10 +878,6 @@ export const createSystemRuntime = (context) => {
           // toggles its menu, like XP.
           const viewsOpen =
             viewsButton.getAttribute("aria-expanded") === "true";
-          // Keys in the menu that closes go back to their control first.
-          const active = document.activeElement;
-          if (explorerMenu.contains(active) || explorerSubmenu.contains(active))
-            leaveExplorerMenus();
           hideExplorerMenus();
           if (action === "back") explorerBack(win);
           if (action === "forward") explorerForward(win);
@@ -901,6 +905,11 @@ export const createSystemRuntime = (context) => {
         }
       });
       explorerMenu.addEventListener("pointerover", (event) => {
+        // Keys in the submenu move to the item under the pointer before the
+        // submenu closes or changes, like XP.
+        const item = event.target.closest(".game-menu-item");
+        if (item && explorerSubmenu.contains(document.activeElement))
+          item.focus();
         const parentItem = event.target.closest(".has-submenu");
         if (parentItem)
           showExplorerSubmenu(

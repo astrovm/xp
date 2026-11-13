@@ -192,6 +192,55 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   expect(menu.hidden).toBeTrue();
   expect(focused()).toBe("explorer-items");
 
+  // A title bar press, such as a drag, closes the File menu and gives the
+  // keys back to the list.
+  list.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  expect(menu.contains(s.document.activeElement)).toBeTrue();
+  press(docs.querySelector(".title-text"), "pointerdown");
+  expect(menu.hidden).toBeTrue();
+  expect(focused()).toBe("explorer-items");
+  release(docs.querySelector(".title-text"));
+
+  // A task pane press gives the keys back to the address bar, the control
+  // that had them before the menu.
+  const fileHeading = docs.querySelector('[data-explorer-menu="file"]');
+  docs.querySelector(".explorer-address input").focus();
+  fileHeading.focus();
+  key(fileHeading, "ArrowDown");
+  expect(menu.contains(s.document.activeElement)).toBeTrue();
+  press(docs.querySelector(".explorer-sidebar section"), "pointerdown");
+  expect(menu.hidden).toBeTrue();
+  expect(
+    s.document.activeElement === docs.querySelector(".explorer-address input"),
+  ).toBeTrue();
+  release(docs.querySelector(".explorer-sidebar section"));
+
+  // A hover on a main menu item takes the keys out of a submenu before it
+  // closes.
+  const viewHeading = docs.querySelector('[data-explorer-menu="view"]');
+  viewHeading.focus();
+  key(viewHeading, "ArrowDown");
+  const parentItem = menu.querySelector(".has-submenu");
+  parentItem.focus();
+  key(parentItem, "ArrowRight");
+  const submenu = docs.querySelector(".explorer-submenu");
+  expect(submenu.contains(s.document.activeElement)).toBeTrue();
+  const plainItem = menu.querySelector(".game-menu-item:not(.has-submenu)");
+  plainItem.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.hidden).toBeTrue();
+  expect(s.document.activeElement === plainItem).toBeTrue();
+  key(plainItem, "Escape");
+  key(viewHeading, "Escape");
+  list.focus();
+
   // Views opened from the address bar gives the keys back to it.
   const address = docs.querySelector(".explorer-address input");
   address.focus();

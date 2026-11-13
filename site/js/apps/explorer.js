@@ -858,7 +858,8 @@ const wireFolderDropTarget = (element, destinationId) => {
 };
 const closeExplorerMenu = (root = document) => {
   root.querySelectorAll(".explorer-menu").forEach((menu) => {
-    menu.hidden = true;
+    if (menu.closeMenus) menu.closeMenus();
+    else menu.hidden = true;
   });
   root
     .querySelectorAll(
