@@ -870,6 +870,10 @@ export const createSystemRuntime = (context) => {
           // toggles its menu, like XP.
           const viewsOpen =
             viewsButton.getAttribute("aria-expanded") === "true";
+          // Keys in the menu that closes go back to their control first.
+          const active = document.activeElement;
+          if (explorerMenu.contains(active) || explorerSubmenu.contains(active))
+            leaveExplorerMenus();
           hideExplorerMenus();
           if (action === "back") explorerBack(win);
           if (action === "forward") explorerForward(win);

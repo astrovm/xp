@@ -169,6 +169,29 @@ test("a press on a part that XP never focuses keeps the keys on the window's con
   expect(s.document.activeElement === file).toBeTrue();
   key(file, "Escape");
 
+  // A press on Views while the keys are in the File menu gives them back
+  // to the list, and Escape still closes Views.
+  list.focus();
+  list.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  const fileItem = s.document.activeElement;
+  expect(menu.contains(fileItem)).toBeTrue();
+  // In Chrome the window gives the keys back to the File item during the
+  // press. Happy DOM skips a focus call inside focusin, so the test does it.
+  press(views, "pointerdown");
+  fileItem.focus();
+  views.click();
+  expect(focused()).toBe("explorer-items");
+  expect(menu.hidden).toBeFalse();
+  key(list, "Escape");
+  expect(menu.hidden).toBeTrue();
+  expect(focused()).toBe("explorer-items");
+
   // Views opened from the address bar gives the keys back to it.
   const address = docs.querySelector(".explorer-address input");
   address.focus();
