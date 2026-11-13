@@ -310,18 +310,56 @@ test("keyboard file operation failures are reported", async () => {
 
 test("clicking elsewhere closes open application menus but not the menu being used", async () => {
   const s = await login(await loadShell());
-  const bar = s.document.createElement("div");
-  bar.className = "game-menu-bar";
-  bar.innerHTML =
-    '<button class="game-menu-button" data-game-menu="file" aria-expanded="true"></button><div class="game-menu" data-game-menu="file"></div>';
-  s.document.body.append(bar);
-  pointerDown(s, bar.querySelector(".game-menu"));
-  expect(bar.querySelector(".game-menu").hidden).toBeFalse();
+  s.window.RufflePlayer = {
+    newest: () => ({
+      createPlayer: () => {
+        const player = s.document.createElement("ruffle-player");
+        player.load = () => {};
+        player.metadata = { frameRate: 24 };
+        return player;
+      },
+    }),
+  };
+  const open = async (gameId) => {
+    s.window.history.replaceState(null, "", `#${gameId}`);
+    s.window.dispatchEvent(new s.window.HashChangeEvent("hashchange"));
+    await flushShell();
+    await flushShell();
+    return s.document.querySelector(`.xp-window[data-game="${gameId}"]`);
+  };
+  const truck = await open("big-truck-adventures");
+  const bike = await open("bike-mania");
+  const fileOf = (win) =>
+    win.querySelector('.game-menu[data-game-menu="file"]');
+  const buttonOf = (win) =>
+    win.querySelector('.game-menu-button[data-game-menu="file"]');
+  buttonOf(truck).click();
+  expect(fileOf(truck).hidden).toBeFalse();
+  // A press on the open menu, or on its own button, leaves it to the window.
+  pointerDown(s, fileOf(truck));
+  pointerDown(s, buttonOf(truck));
+  expect(fileOf(truck).hidden).toBeFalse();
+  // A press on another window's menu bar closes it and resets its button.
+  pointerDown(s, buttonOf(bike));
+  expect(fileOf(truck).hidden).toBeTrue();
+  expect(buttonOf(truck).getAttribute("aria-expanded")).toBe("false");
+  buttonOf(truck).click();
   pointerDown(s, s.document.body);
-  expect(bar.querySelector(".game-menu").hidden).toBeTrue();
-  expect(
-    bar.querySelector(".game-menu-button").getAttribute("aria-expanded"),
-  ).toBe("false");
+  expect(fileOf(truck).hidden).toBeTrue();
+
+  // A menu command gives the keys back to the window, not to the page.
+  truck.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  expect(fileOf(truck).contains(s.document.activeElement)).toBeTrue();
+  fileOf(truck).querySelector('[data-game-action="mute"]').click();
+  expect(fileOf(truck).hidden).toBeTrue();
+  expect(fileOf(truck).contains(s.document.activeElement)).toBeFalse();
+  expect(truck.contains(s.document.activeElement)).toBeTrue();
 
   s.document.getElementById("start-button").click();
   pointerDown(s, s.document.getElementById("start-menu"));

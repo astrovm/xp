@@ -224,6 +224,31 @@ test("Control Panel's menus close, show About and close the window", async () =>
   ).toBeNull();
 });
 
+test("Control Panel's Views button toggles its menu and the page keeps the keys", async () => {
+  const { s, $, toolbar, menu } = await open();
+  const views = toolbar("views");
+  // Views is disabled in Category View, so a press on it closes a menu.
+  expect(views.disabled).toBeTrue();
+  menu("file");
+  views.dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { bubbles: true }),
+  );
+  expect($(".explorer-menu").hidden).toBeTrue();
+
+  // Keys on the page go to the icons when Classic View shows them.
+  $(".control-panel-main").focus();
+  $('[data-control-panel-action="classic"]').click();
+  expect(s.document.activeElement === $(".control-panel-icons")).toBeTrue();
+
+  // A second click on Views closes its menu, like XP.
+  views.click();
+  expect($(".explorer-menu").hidden).toBeFalse();
+  expect(views.getAttribute("aria-expanded")).toBe("true");
+  views.click();
+  expect($(".explorer-menu").hidden).toBeTrue();
+  expect(views.getAttribute("aria-expanded")).toBe("false");
+});
+
 test("Control Panel's address opens what it names and keeps its page otherwise", async () => {
   const { s, $ } = await open();
   const address = $(".explorer-address input");

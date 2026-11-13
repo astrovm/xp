@@ -1824,14 +1824,22 @@ const wireWindowControls = (win) => {
   const menus = [...win.el.querySelectorAll(".game-menu")];
   const menuButtons = [...menuBar.querySelectorAll(".game-menu-button")];
 
+  // Keys in a menu that closes go back to the window's control, so a
+  // close never leaves them on the page, like XP. The frame passes them on.
   const closeGameMenus = () => {
+    const holdsKeys = menus.some((menu) =>
+      menu.contains(document.activeElement),
+    );
     menus.forEach((menu) => {
       menu.hidden = true;
     });
     menuButtons.forEach((button) =>
       button.setAttribute("aria-expanded", "false"),
     );
+    if (holdsKeys) win.el.focus({ preventScroll: true });
   };
+  // A press outside the window closes the menus through the shell.
+  menus.forEach((menu) => (menu.closeMenus = closeGameMenus));
 
   const openGameMenu = (name, focusFirstItem = false) => {
     const menu = menus.find((item) => item.dataset.gameMenu === name);

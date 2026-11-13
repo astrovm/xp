@@ -80,7 +80,7 @@ export const createControlPanel = (context) => {
         <button type="button" data-control-panel-action="search"><img src="assets/xp/explorer/toolbar-search.png" alt=""> Search</button>
         <button type="button" data-control-panel-action="folders" aria-pressed="false"><img src="assets/xp/explorer/toolbar-folders.png" alt=""> Folders</button>
         <span class="explorer-toolbar-separator" aria-hidden="true"></span>
-        <button type="button" data-control-panel-action="views" aria-label="Views" aria-haspopup="menu"><img src="assets/xp/explorer/toolbar-views.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
+        <button type="button" data-control-panel-action="views" aria-label="Views" aria-haspopup="menu" aria-expanded="false"><img src="assets/xp/explorer/toolbar-views.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
       </div>
       <form class="explorer-address"><span>Address</span><span class="explorer-address-field"><img src="${CONTROL_PANEL_ICON}" alt=""><input type="text" aria-label="Address" value="Control Panel"></span><button type="submit" aria-label="Go"><img src="assets/xp/icons/Go.png" alt=""></button></form>
       <div class="game-menu explorer-menu" role="menu" hidden></div>
@@ -186,7 +186,9 @@ export const createControlPanel = (context) => {
       drawPage();
       main.toggleAttribute("data-default-focus", pageControl() === main);
       pageControl().toggleAttribute("data-default-focus", true);
-      if (hadKeys && !win.el.contains(document.activeElement))
+      // Keys left on the page go to the icons when the page shows them.
+      const active = document.activeElement;
+      if (hadKeys && (!win.el.contains(active) || active === main))
         pageControl().focus({ preventScroll: true });
     };
     const go = (page) => {
@@ -248,7 +250,6 @@ export const createControlPanel = (context) => {
         classic = !classic;
         renderPage();
       },
-      views: () => showMenu("views", button("views")),
       open: () => selection.forEach((action) => commands[action]()),
       close: () => closeGameWindow(win.gameId),
       "select-all": () =>
@@ -335,11 +336,15 @@ export const createControlPanel = (context) => {
     };
 
     content.addEventListener("click", (event) => {
-      const menuButton = event.target.closest("[data-control-panel-menu]");
-      if (menuButton) {
+      // A menu bar button and the Views button toggle their menus, like XP.
+      const menuButton = event.target.closest(
+        '[data-control-panel-menu], [data-control-panel-action="views"]',
+      );
+      if (menuButton && !menuButton.disabled) {
         const open = menuButton.getAttribute("aria-expanded") === "true";
         closeMenu();
-        if (!open) showMenu(menuButton.dataset.controlPanelMenu, menuButton);
+        if (!open)
+          showMenu(menuButton.dataset.controlPanelMenu || "views", menuButton);
         return;
       }
       const command = event.target.closest("[data-control-panel-command]");

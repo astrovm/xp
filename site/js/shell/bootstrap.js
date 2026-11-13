@@ -233,7 +233,16 @@ window.addEventListener("hashchange", () => {
 // Close the start menu when clicking outside of it
 document.addEventListener("pointerdown", (e) => {
   if (suspended) return;
-  closeExplorerMenu(e.target);
+  // Each window closes its own menus, which also gives back the keys and
+  // resets the menu buttons. A press on a menu, or on an enabled button
+  // that opens one, leaves that window's menus to the window.
+  const menuWindow =
+    e.target
+      .closest('.game-menu, [aria-haspopup="menu"]:not(:disabled)')
+      ?.closest(".xp-window") ?? null;
+  document.querySelectorAll(".game-menu:not([hidden])").forEach((menu) => {
+    if (menu.closest(".xp-window") !== menuWindow) menu.closeMenus?.();
+  });
   if (!e.target.closest("#desktop-context-menu")) {
     closeDesktopContextMenu();
   }
@@ -262,19 +271,6 @@ document.addEventListener("pointerdown", (e) => {
     closeTrayVolumePopup();
   }
 
-  if (!e.target.closest(".game-menu-bar") && !e.target.closest(".game-menu")) {
-    // Explorer-style menus close above, through their windows.
-    document
-      .querySelectorAll(".game-menu:not([hidden]):not(.explorer-menu)")
-      .forEach((menu) => {
-        menu.hidden = true;
-        menu.parentElement
-          ?.querySelector(
-            `.game-menu-button[data-game-menu="${menu.dataset.gameMenu}"]`,
-          )
-          ?.setAttribute("aria-expanded", "false");
-      });
-  }
   const startMenu = document.getElementById("start-menu");
   if (startMenu.hidden) return;
   if (
