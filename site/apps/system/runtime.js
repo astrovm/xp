@@ -5,6 +5,7 @@ export const createSystemRuntime = (context) => {
     XPDialogs,
     closeGameWindow,
     confirmRecycleDelete,
+    confirmPermanentDelete,
     explorerBack,
     explorerForward,
     fileOps,
@@ -544,9 +545,12 @@ export const createSystemRuntime = (context) => {
                 win.currentFolderId === fs.MY_COMPUTER
                   ? "rename-current"
                   : "rename",
+              // Items in the Recycle Bin keep their names until restored.
               disabled:
                 win.currentFolderId !== fs.MY_COMPUTER &&
-                (selected.length !== 1 || protectedSelection),
+                (selected.length !== 1 ||
+                  protectedSelection ||
+                  win.currentFolderId === fs.RECYCLE_BIN),
             },
             { label: "Properties", action: "properties-current" },
             { separator: true },
@@ -662,7 +666,12 @@ export const createSystemRuntime = (context) => {
               ![fs.RECYCLE_BIN, fs.MY_COMPUTER].includes(win.currentFolderId)
             )
               pasteIntoFolder(win.currentFolderId);
-            if (command === "delete") confirmRecycleDelete(selected);
+            // In the Recycle Bin, Delete removes items for good, like the
+            // Delete key.
+            if (command === "delete")
+              await (win.currentFolderId === fs.RECYCLE_BIN
+                ? confirmPermanentDelete(selected)
+                : confirmRecycleDelete(selected));
             if (command === "delete-current" || command === "rename-current")
               XPDialogs.alert(
                 `Cannot ${command === "delete-current" ? "delete" : "rename"} My Computer.`,

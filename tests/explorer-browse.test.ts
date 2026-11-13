@@ -558,9 +558,12 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   h.item(h.nested.id).dispatchEvent(new h.s.window.MouseEvent("dblclick"));
   await h.action("back");
   expect(h.address().value).toBe(fs.getPath(h.folder.id));
-  // With no later folder left, Forward stays where it is.
+  // With no later folder left, Forward is disabled.
+  const forward = h.win.querySelector('[data-explorer-action="forward"]');
+  expect(forward.disabled).toBeFalse();
   fs.destroy(h.nested.id);
   await settle();
+  expect(forward.disabled).toBeTrue();
   await h.action("forward");
   expect(h.address().value).toBe(fs.getPath(h.folder.id));
 
@@ -579,10 +582,21 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   // Forward skips the deleted folder the same way, and keeps the history.
   await h.action("forward");
   expect(h.address().value).toBe(fs.getPath(other.id));
+  // Back also skips the folder that is already open.
+  fs.restore(h.folder.id);
+  await settle();
+  for (const id of [h.folder.id, other.id]) {
+    h.address().value = fs.getPath(id);
+    await h.action("go");
+  }
+  fs.remove(h.folder.id);
+  await settle();
+  await h.action("back");
+  expect(h.address().value).toBe("My Documents");
   // The address bar does not open a folder in the Recycle Bin.
   h.address().value = `Recycle Bin\\${fs.getNode(h.folder.id).name}`;
   await h.action("go");
-  expect(h.address().value).toBe(fs.getPath(other.id));
+  expect(h.address().value).toBe(fs.getPath(fs.MY_DOCUMENTS));
 });
 
 test("Explorer items support Ctrl multi-select and drag only what is selected", async () => {

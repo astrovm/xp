@@ -350,3 +350,23 @@ test("Explorer never browses into the Recycle Bin's folders", async () => {
   await settle();
   expect(names(open)).not.toContain("Inner");
 });
+
+test("the Recycle Bin's File menu deletes for good and never renames", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "old.txt");
+  fs.remove(file.id);
+  const bin = await openFolder(s, fs.RECYCLE_BIN);
+  bin.querySelector(`.explorer-item[data-node-id="${file.id}"]`).click();
+  const command = (name) =>
+    bin.querySelector(`.explorer-menu [data-explorer-command="${name}"]`);
+  bin.querySelector('[data-explorer-menu="file"]').click();
+  expect(command("rename").disabled).toBeTrue();
+  command("delete").click();
+  await settle();
+  const dialog = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(dialog.textContent).toContain("permanently delete this item");
+  dialog.querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(!!fs.getNode(file.id)).toBeFalse();
+});

@@ -836,20 +836,30 @@ const navigateExplorer = (win, folderId, { history = true } = {}) => {
   return true;
 };
 
-// Back and Forward skip folders that were deleted since. Back is disabled
-// at the first entry, which is always an existing protected folder. When no
-// later folder still exists, Forward stays where it is.
-const stepExplorerHistory = (win, step) => {
-  const from = win.historyIndex;
+// Back and Forward skip folders that were deleted since, and the folder
+// that is already open. The index is -1 when no such folder is left, and
+// the button is then disabled.
+const explorerHistoryTarget = (win, step) => {
   for (
-    let index = from + step;
+    let index = win.historyIndex + step;
     index >= 0 && index < win.history.length;
     index += step
   ) {
-    win.historyIndex = index;
-    if (navigateExplorer(win, win.history[index], { history: false })) return;
+    const id = win.history[index];
+    if (
+      id !== win.currentFolderId &&
+      fs.getNode(id)?.type === "folder" &&
+      !isDeletedNode(id)
+    )
+      return index;
   }
-  win.historyIndex = from;
+  return -1;
+};
+const stepExplorerHistory = (win, step) => {
+  const index = explorerHistoryTarget(win, step);
+  if (index === -1) return;
+  win.historyIndex = index;
+  navigateExplorer(win, win.history[index], { history: false });
 };
 const explorerBack = (win) => stepExplorerHistory(win, -1);
 const explorerForward = (win) => stepExplorerHistory(win, 1);
@@ -1411,9 +1421,9 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
             ? XP_ICON_PATHS["MyPictures.png"]
             : XP_ICON_PATHS["MyDocuments.png"];
   chrome.querySelector('[data-explorer-action="back"]').disabled =
-    win.historyIndex <= 0;
+    explorerHistoryTarget(win, -1) === -1;
   chrome.querySelector('[data-explorer-action="forward"]').disabled =
-    win.historyIndex >= win.history.length - 1;
+    explorerHistoryTarget(win, 1) === -1;
   chrome.querySelector('[data-explorer-action="up"]').disabled =
     !folder.parent &&
     ![fs.MY_COMPUTER, fs.RECYCLE_BIN].includes(win.currentFolderId);
