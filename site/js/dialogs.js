@@ -1353,6 +1353,9 @@
       const list = document.createElement("div");
       list.className = "dlg-file-list";
       list.setAttribute("role", "listbox");
+      // An empty folder's list still takes the keys, like XP, but Tab does
+      // not stop on the list itself.
+      list.tabIndex = -1;
 
       // File name is an editable drop-down of the names typed before.
       const nameInput = document.createElement("input");
@@ -1544,6 +1547,9 @@
       };
 
       const renderList = () => {
+        // The list keeps the keys when it is drawn again, like XP.
+        const keys = document.activeElement;
+        const listHadKeys = list.contains(keys);
         const folder = fs().getNode(currentFolderId);
         const view = chosenView || defaultFileView(currentFolderId);
         list.dataset.view = view;
@@ -1576,6 +1582,7 @@
             item.type = "button";
             item.className = "dlg-file-item";
             item.setAttribute("role", "option");
+            item.dataset.nodeId = child.id;
             const label = document.createElement("span");
             label.className = "dlg-file-item-name";
             label.textContent = child.name;
@@ -1613,6 +1620,17 @@
             });
             list.appendChild(item);
           });
+        // The same item gets the keys back, else the first one, else the
+        // empty list. Back or Up One Level that turns gray with the keys
+        // gives them to the list too.
+        if (!listHadKeys && !([backBtn, upBtn].includes(keys) && keys.disabled))
+          return;
+        const items = [...list.querySelectorAll(".dlg-file-item")];
+        (
+          items.find((item) => item.dataset.nodeId === keys.dataset.nodeId) ||
+          items[0] ||
+          list
+        ).focus();
       };
 
       // Accept and Cancel sit beside the file name and type fields.

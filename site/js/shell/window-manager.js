@@ -982,14 +982,21 @@ const focusWindow = (gameId) => {
     return;
   }
 
+  activateWindow(win);
+  win.mountedApplication?.focus?.();
+  focusWindowContent(win);
+};
+
+// Makes a window the active one, like XP's foreground window: on top, with
+// the active task button, the title and the sound. It does not move the keys.
+const activateWindow = (win) => {
+  const { gameId } = win;
   focusedGameId = gameId;
   soundGameId = null;
   win.needsAttention = false;
   win.lastUsed = Date.now();
   win.zIndex = ++zIndexCounter;
   win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : win.zIndex;
-  win.mountedApplication?.focus?.();
-  focusWindowContent(win);
 
   openWindows.forEach((w, id) => {
     w.el.classList.toggle("active", id === gameId);
@@ -1768,6 +1775,21 @@ document.addEventListener(
     openWindows.forEach((win) => win.el.classList.remove("active"));
     renderTaskButtons();
     updateDocumentTitle();
+  },
+  true,
+);
+
+// A window that takes the keys becomes the active window, like XP, also
+// when no press put them there: Tab, a script or a control that gives them
+// back. A minimized window takes no keys.
+document.addEventListener(
+  "focusin",
+  (event) => {
+    const win = openWindows.get(
+      event.target.closest(".xp-window[data-game]")?.dataset.game,
+    );
+    if (win && win.gameId !== focusedGameId && !win.minimized)
+      activateWindow(win);
   },
   true,
 );

@@ -1394,6 +1394,8 @@ const openDateTimeProperties = () => {
   });
 
   const renderCalendar = () => {
+    // The calendar keeps the keys when it is drawn again, on its day.
+    const calendarHadKeys = calendar.contains(document.activeElement);
     calendar.replaceChildren(
       ...DAY_LETTERS.map((letter) => {
         const head = document.createElement("span");
@@ -1420,6 +1422,7 @@ const openDateTimeProperties = () => {
       });
       calendar.appendChild(dayButton);
     }
+    if (calendarHadKeys) calendar.querySelector(".selected").focus();
   };
 
   const formatTime = (date) =>

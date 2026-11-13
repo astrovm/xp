@@ -510,13 +510,15 @@ test("Ctrl+Shift+Esc opens Task Manager, which measures CPU from late frames and
     .querySelector('.xp-window[data-game="bike-mania"]')
     .dispatchEvent(new s.window.Event("pointerdown", { bubbles: true }));
   frame(2e9);
-  await menuCommand(tm, "view", "refresh");
+  // The update timer samples while the other program stays active. A press
+  // on Task Manager's menu makes Task Manager active, like XP.
+  await s.advanceTime(2000);
   expect(
     row(tm, "processes", "SAFlashPlayer.exe").children[2].textContent,
   ).toBe("100");
   clickStartAction(s, "documents");
   await settle();
-  await menuCommand(tm, "view", "refresh");
+  await s.advanceTime(2000);
   expect(row(tm, "processes", "explorer.exe").children[2].textContent).toBe(
     "00",
   );

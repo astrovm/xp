@@ -364,3 +364,138 @@ test("the window that was active keeps its sound while the desktop has the keys"
   slide(50);
   expect(player.volume).toBe(0);
 });
+
+test("a window that takes the keys becomes the active window, with no press", async () => {
+  const s = await login(await loadShell());
+  const docs = await openDocuments(s);
+  clickStartAction(s, "pictures");
+  await settle();
+  const pictures = s.document.querySelector(
+    '.xp-window[data-game="__my-pictures"]',
+  );
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800, configurable: true },
+  );
+  s.window.dispatchEvent(new s.window.Event("resize"));
+  await settle();
+  const isActive = (win) =>
+    win.classList.contains("active") &&
+    s.document
+      .querySelector(`.task-button[data-game="${win.dataset.game}"]`)
+      .classList.contains("active") &&
+    [...s.document.querySelectorAll(".xp-window[data-game]")].every(
+      (other) => other === win || +other.style.zIndex < +win.style.zIndex,
+    );
+  expect(isActive(pictures)).toBeTrue();
+
+  // From the desktop, like Tab or a script.
+  s.document.getElementById("desktop-icons").focus();
+  await settle();
+  expect(isActive(pictures)).toBeFalse();
+  const items = docs.querySelector(".explorer-items");
+  items.focus();
+  await settle();
+  expect(isActive(docs)).toBeTrue();
+  expect(isActive(pictures)).toBeFalse();
+  // The keys stay where they went.
+  expect(s.document.activeElement === items).toBeTrue();
+  expect(s.document.title).toContain("My Documents");
+
+  // From another window too.
+  pictures.querySelector(".explorer-items").focus();
+  await settle();
+  expect(isActive(pictures)).toBeTrue();
+
+  // A minimized window takes no keys in Chrome, so it does not become active.
+  docs.querySelector(".minimize-btn").click();
+  await settle();
+  items.focus();
+  await settle();
+  expect(docs.classList.contains("active")).toBeFalse();
+});
+
+test("the Open dialog's list keeps the keys when it is drawn again", async () => {
+  const s = await login(await loadShell());
+  const active = () => s.document.activeElement;
+  const fs = s.window.VirtualFS;
+  const full = fs.createFolder(fs.MY_DOCUMENTS, "Full");
+  fs.createFile(full.id, "a.txt", { content: "" });
+  fs.createFile(full.id, "b.txt", { content: "" });
+  fs.createFolder(fs.MY_DOCUMENTS, "Empty");
+  const open = s.window.XPDialogs.openFile({ startFolder: fs.MY_DOCUMENTS });
+  await settle();
+  const dialog = s.document.querySelector(".xp-dialog");
+  const list = dialog.querySelector(".dlg-file-list");
+  const item = (name) =>
+    [...list.querySelectorAll(".dlg-file-item")].find(
+      (row) => row.textContent.trim() === name,
+    );
+  const enter = (name) => {
+    item(name).focus();
+    item(name).dispatchEvent(
+      new s.window.MouseEvent("dblclick", { bubbles: true }),
+    );
+  };
+  const tool = (action) =>
+    dialog.querySelector(`.dlg-file-tool[data-action="${action}"]`);
+
+  // A double-click on a folder: its first item gets the keys.
+  enter("Full");
+  await settle();
+  expect(active() === item("a.txt")).toBeTrue();
+
+  // The same item keeps them when the list changes in place.
+  item("b.txt").focus();
+  const type = dialog.querySelector(".dlg-file-type");
+  type.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  expect(active() === item("b.txt")).toBeTrue();
+
+  // Back turns gray with the keys: the list gets them.
+  tool("back").focus();
+  tool("back").click();
+  await settle();
+  expect(tool("back").disabled).toBeTrue();
+  expect(active() === item("Empty")).toBeTrue();
+
+  // An empty folder's list itself takes them.
+  enter("Empty");
+  await settle();
+  expect(active() === list).toBeTrue();
+
+  // Up One Level keeps them while it works, and gives them to the list when
+  // it turns gray.
+  tool("up").focus();
+  tool("up").click();
+  await settle();
+  expect(active() === tool("up")).toBeTrue();
+  while (!tool("up").disabled) tool("up").click();
+  await settle();
+  expect(list.contains(active())).toBeTrue();
+  expect(active() === list).toBeFalse();
+
+  dialog
+    .querySelector('.dlg-buttons [data-action="cancel"]')
+    .dispatchEvent(new s.window.MouseEvent("click", { bubbles: true }));
+  expect(await open).toBeNull();
+});
+
+test("the Date and Time calendar keeps the keys on its day", async () => {
+  const s = await login(await loadShell());
+  s.document
+    .getElementById("taskbar-clock")
+    .dispatchEvent(
+      new s.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+  await settle();
+  const dialog = s.document.querySelector(".datetime-dialog");
+  const day = (text) =>
+    [...dialog.querySelectorAll(".dlg-calendar-day")].find(
+      (button) => button.textContent === text,
+    );
+  day("12").focus();
+  day("12").click();
+  expect(s.document.activeElement === day("12")).toBeTrue();
+  expect(day("12").classList.contains("selected")).toBeTrue();
+});
