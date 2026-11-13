@@ -1826,7 +1826,8 @@ html:not(.keyboard-cues) .menu-accesskey {
   .explorer-details-row
   > .explorer-item-label {
   min-width: 0;
-  padding-left: 3px;
+  /* XP starts the name highlight at the icon's right edge. */
+  padding: 0 4px 0 0;
 }
 .explorer-items[data-view="details"] .explorer-item .explorer-item-icon,
 .explorer-items[data-view="details"] .explorer-item .explorer-item-icon img {
@@ -1836,8 +1837,10 @@ html:not(.keyboard-cues) .menu-accesskey {
 .explorer-items[data-view="details"] .explorer-item-label small {
   display: none;
 }
+/* XP highlights only the text of the name. */
 .explorer-items[data-view="details"] .explorer-item-label b {
   display: inline-block;
+  align-self: flex-start;
   max-width: 100%;
   box-sizing: border-box;
   vertical-align: top;
