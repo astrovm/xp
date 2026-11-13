@@ -273,7 +273,7 @@ export const createSystemRuntime = (context) => {
                     <div class="explorer-menu-bar" role="menubar"><button>File</button><button>Edit</button><button>View</button><button>Favorites</button><button>Tools</button><button>Help</button></div>
                     <div class="explorer-brand" aria-hidden="true"><img src="assets/xp/WindowsFlag.png" alt=""></div>
                 </div>
-                <div class="explorer-toolbar">
+                <div class="explorer-toolbar" data-mouse-keeps-focus>
                     <button disabled><img src="assets/xp/explorer/toolbar-back.png" alt=""> Back <span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
                     <button disabled aria-label="Forward"><img src="assets/xp/explorer/toolbar-forward.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
                     <button disabled aria-label="Up"><img src="assets/xp/explorer/toolbar-up.png" alt=""></button>
@@ -367,6 +367,10 @@ export const createSystemRuntime = (context) => {
         "Details",
       );
 
+      // XP's task pane takes no focus from the mouse. The Folders tree does.
+      [tasksSection, placesSection, detailsSection].forEach(
+        (section) => (section.dataset.mouseKeepsFocus = ""),
+      );
       sidebar.append(tasksSection, placesSection, detailsSection);
       const treeSection = document.createElement("section");
       treeSection.className = "explorer-tree-section";
@@ -465,7 +469,7 @@ export const createSystemRuntime = (context) => {
             <div class="explorer-menu-bar" role="menubar"><button data-explorer-menu="file">File</button><button data-explorer-menu="edit">Edit</button><button data-explorer-menu="view">View</button><button data-explorer-menu="help">Help</button></div>
             <div class="explorer-brand" aria-hidden="true"><img src="assets/xp/WindowsFlag.png" alt=""></div>
         </div>
-        <div class="explorer-toolbar">
+        <div class="explorer-toolbar" data-mouse-keeps-focus>
             <button data-explorer-action="back"><img src="assets/xp/explorer/toolbar-back.png" alt=""> Back <span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
             <button data-explorer-action="forward" aria-label="Forward"><img src="assets/xp/explorer/toolbar-forward.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
             <button data-explorer-action="up" aria-label="Up"><img src="assets/xp/explorer/toolbar-up.png" alt=""></button>
@@ -898,7 +902,12 @@ export const createSystemRuntime = (context) => {
       };
       // The access keys work from anywhere in the window, also the list.
       win.el.addEventListener("keydown", (event) => {
-        if (event.altKey && !chrome.contains(event.target))
+        // A context menu keeps its own keys.
+        if (
+          event.altKey &&
+          !chrome.contains(event.target) &&
+          !event.target.closest(".explorer-context-menu")
+        )
           openExplorerMenuByAccessKey(event);
       });
       chrome.addEventListener("keydown", (event) => {

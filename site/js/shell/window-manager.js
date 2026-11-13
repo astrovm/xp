@@ -452,14 +452,25 @@ const createWindowElement = (gameId) => {
   win.dataset.game = gameId;
   // The frame takes the focus when the window has nothing else to focus.
   win.tabIndex = -1;
-  // The window remembers its focused control, to give it back when the
-  // window becomes active again, like XP.
   win.addEventListener("focusin", (event) => {
-    win.lastFocusedElement = event.target;
+    const target = event.target;
+    // XP never gives the keys to the frame, or by mouse to the title bar, a
+    // toolbar or a task pane. The window's control keeps them.
+    if (
+      target === win ||
+      (pointerHeld && target.closest("[data-mouse-keeps-focus]"))
+    ) {
+      focusWindowControl(win);
+      return;
+    }
+    // The window remembers its focused control, to give it back when the
+    // window becomes active again, like XP.
+    win.lastFocusedElement = target;
   });
 
   const titleBar = document.createElement("div");
   titleBar.className = "title-bar";
+  titleBar.dataset.mouseKeepsFocus = "";
 
   const titleIcon = createGameIconElement(gameId, "title-icon");
 
@@ -697,6 +708,8 @@ const mountRuffleSWF = (gameId, win) => {
   const ruffle = window.RufflePlayer.newest();
   const player = ruffle.createPlayer();
   player.id = `player-${gameId}`;
+  // The game gets the keys when its window becomes active.
+  player.dataset.defaultFocus = "";
   win.content.appendChild(player);
   win.player = player;
 
@@ -878,6 +891,8 @@ const loadIframe = (gameId, win) => {
   player.allow = "fullscreen";
   player.src = bundledGameRoot(gameId, "iframe");
   player.id = `player-${gameId}`;
+  // The game gets the keys when its window becomes active.
+  player.dataset.defaultFocus = "";
   win.content.appendChild(player);
   win.player = player;
 
@@ -891,17 +906,42 @@ const loadIframe = (gameId, win) => {
   );
 };
 
+// A press is held between pointerdown and pointerup. The focus that a press
+// gives is the mouse's, not the keyboard's. A key also ends it, because a
+// pointerup in an iframe never reaches the page.
+let pointerHeld = false;
+document.addEventListener("pointerdown", () => (pointerHeld = true), true);
+["pointerup", "pointercancel", "keydown"].forEach((type) =>
+  document.addEventListener(type, () => (pointerHeld = false), true),
+);
+// A click into a game's iframe fires no focusin in the page. So when the
+// page loses the focus to an iframe, its window records it.
+window.addEventListener("blur", () => {
+  const frame = document.activeElement;
+  const el = frame?.tagName === "IFRAME" && frame.closest(".xp-window");
+  if (el) el.lastFocusedElement = frame;
+});
+
+// The window gives the focus to the control that had it last, else to its
+// default control. A control that cannot take the focus, such as a disabled
+// or hidden one, is skipped. It returns false if no control took it.
+const focusWindowControl = (el) => {
+  const last = el.lastFocusedElement;
+  return [
+    last?.isConnected && el.contains(last) ? last : null,
+    el.querySelector("[data-default-focus]"),
+  ].some((target) => {
+    if (!target || target.disabled || target.closest("[hidden]")) return false;
+    target.focus({ preventScroll: true });
+    return document.activeElement === target;
+  });
+};
+
 // The keys go to the active window, like XP. If the focus is outside it, the
-// window focuses the control that had the focus last, else its default
-// control, else its frame.
+// window focuses its control, else its frame.
 const focusWindowContent = (win) => {
   if (win.el.contains(document.activeElement)) return;
-  const last = win.el.lastFocusedElement;
-  const target =
-    last?.isConnected && win.el.contains(last) && !last.closest("[hidden]")
-      ? last
-      : win.el.querySelector("[data-default-focus]") || win.el;
-  target.focus({ preventScroll: true });
+  if (!focusWindowControl(win.el)) win.el.focus({ preventScroll: true });
 };
 
 const focusWindow = (gameId) => {
@@ -1165,8 +1205,12 @@ const restoreWindow = (gameId, { animate = false } = {}) => {
   if (!win || !win.minimized) return;
 
   win.minimized = false;
+  // A hidden window cannot take the focus, so the active window takes it
+  // when it shows.
   const show = () => {
-    if (!win.minimized) win.el.style.display = "flex";
+    if (win.minimized) return;
+    win.el.style.display = "flex";
+    if (focusedGameId === gameId) focusWindowContent(win);
   };
   if (animate && animationsEnabled()) {
     // The restored window is about to be the active one.

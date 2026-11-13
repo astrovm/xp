@@ -248,6 +248,8 @@ const mountPaint = (shell, instance) => {
   canvas.className = "paint-canvas";
   canvas.setAttribute("aria-label", "Drawing canvas");
   canvas.tabIndex = 0;
+  // The canvas gets the keys when the window becomes active.
+  canvas.dataset.defaultFocus = "";
   canvas.getContext("2d").fillStyle = "#ffffff";
   canvas.getContext("2d").fillRect(0, 0, canvas.width, canvas.height);
   let fileId = null;

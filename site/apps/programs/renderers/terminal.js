@@ -5,7 +5,7 @@ export const renderTerminal = (context, program, programId) => {
   const content = createProgramRoot(program);
   const session = new CommandSession(context);
   context.setTitle("C:\\WINDOWS\\system32\\cmd.exe");
-  content.innerHTML = `<div class="xp-terminal-screen" role="application" aria-label="Command Prompt"><pre class="xp-terminal-output" aria-live="polite"></pre><label class="xp-terminal-prompt"><span></span><input aria-label="Command" autocomplete="off" autocapitalize="off" spellcheck="false"></label></div>`;
+  content.innerHTML = `<div class="xp-terminal-screen" role="application" aria-label="Command Prompt"><pre class="xp-terminal-output" aria-live="polite"></pre><label class="xp-terminal-prompt"><span></span><input data-default-focus aria-label="Command" autocomplete="off" autocapitalize="off" spellcheck="false"></label></div>`;
   const output = content.querySelector(".xp-terminal-output");
   const screen = content.querySelector(".xp-terminal-screen");
   const prompt = content.querySelector(".xp-terminal-prompt span");

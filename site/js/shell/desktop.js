@@ -482,6 +482,9 @@ const buildDesktopIcons = () => {
 
   const container = document.getElementById("desktop-icons");
   container.hidden = getDesktopLayoutSettings().showIcons === false;
+  // The rebuild removes an open rename box, so its blur must not rename.
+  const renameBox = container.querySelector(".desktop-rename");
+  const reopen = renameBox?.dropRename() ? renameBox : null;
   container.replaceChildren();
   container.tabIndex = 0;
   // System places stay available even though regular desktop files are
@@ -614,6 +617,7 @@ const buildDesktopIcons = () => {
     container.appendChild(icon);
   });
 
+  if (reopen) reopenDesktopRename(reopen);
   renderTaskbarToolbars();
   if (!wasBuilt) wireDesktopSelectionRectangle();
   if (!wasBuilt) wireFolderDropTarget(container, fs.DESKTOP);
@@ -654,10 +658,20 @@ const beginDesktopRename = (id) => {
   const input = document.createElement("input");
   input.className = "desktop-rename";
   input.value = node.name;
+  input.dataset.desktopId = id;
+  input.dataset.originalName = node.name;
   label.replaceWith(input);
   input.focus();
   input.select();
   let finished = false;
+  // A rebuild of the icons drops the box without a rename. It returns true
+  // if the box was still open.
+  input.dropRename = () => {
+    const open = !finished;
+    finished = true;
+    document.removeEventListener("pointerdown", onOutsidePointerDown, true);
+    return open;
+  };
   async function finish(save) {
     if (finished) return;
     finished = true;
@@ -686,6 +700,7 @@ const beginDesktopRename = (id) => {
   });
   input.addEventListener("blur", () => finish(true), { once: true });
   document.addEventListener("pointerdown", onOutsidePointerDown, true);
+  return input;
 };
 
 const beginSystemDesktopRename = (id) => {
@@ -696,10 +711,18 @@ const beginSystemDesktopRename = (id) => {
   const input = document.createElement("input");
   input.className = "desktop-rename";
   input.value = label.textContent;
+  input.dataset.desktopId = id;
+  input.dataset.originalName = label.textContent;
+  input.dataset.system = "";
   label.replaceWith(input);
   input.focus();
   input.select();
   let finished = false;
+  input.dropRename = () => {
+    const open = !finished;
+    finished = true;
+    return open;
+  };
   const finish = (save) => {
     if (finished) return;
     finished = true;
@@ -716,6 +739,24 @@ const beginSystemDesktopRename = (id) => {
     finish(event.key === "Enter");
   });
   input.addEventListener("blur", () => finish(true), { once: true });
+  return input;
+};
+
+// A rebuild of the icons keeps an open rename box, with the text typed so
+// far, like Explorer. A box with no change yet shows the current name.
+const reopenDesktopRename = (old) => {
+  const id = old.dataset.desktopId;
+  const icon = document.querySelector(
+    `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+  );
+  if (!icon) return;
+  const begin =
+    "system" in old.dataset ? beginSystemDesktopRename : beginDesktopRename;
+  const input = begin(id);
+  if (old.value !== old.dataset.originalName) {
+    input.value = old.value;
+    input.setSelectionRange(old.selectionStart, old.selectionEnd);
+  }
 };
 
 const addDesktopMenuItem = (

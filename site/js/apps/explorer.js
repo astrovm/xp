@@ -1624,7 +1624,7 @@ const openExplorerNode = (win, node) => {
   try {
     fs.open(node.id);
   } catch (error) {
-    console.error(error);
+    alertFileOperationError(error);
   }
 };
 
@@ -1699,12 +1699,13 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     win.renderedFolderId === folder.id && itemHadFocus
       ? focusedItem.dataset.nodeId
       : null;
-  // An open rename box stays open, with the text typed so far.
+  // The render removes any open rename box, so its blur must not rename the
+  // file, also when the folder changes. In the same folder, the box opens
+  // again with the text typed so far.
+  const renameBox = items.querySelector(".explorer-rename");
+  renameBox?.dropRename();
   const rename =
-    focusedId && document.activeElement.classList.contains("explorer-rename")
-      ? document.activeElement
-      : null;
-  rename?.dropRename();
+    focusedId && renameBox === document.activeElement ? renameBox : null;
   // If the focused item is gone, the list keeps the focus, like XP.
   const keepFocus = () => {
     if (!itemHadFocus) return;

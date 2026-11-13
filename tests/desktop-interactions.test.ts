@@ -246,3 +246,67 @@ describe("desktop", () => {
     ).toBeFalse();
   });
 });
+
+test("a desktop rebuild keeps an open rename box without renaming", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "keep.txt", { content: "" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const icon = (id) =>
+    s.document.querySelector(`.desktop-icon[data-desktop-id="${id}"]`);
+  const rename = (id) => {
+    icon(id).dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+    s.document
+      .querySelector(
+        `#desktop-context-menu [data-action="${
+          id === "__my-computer" ? "rename-my-computer" : "rename"
+        }"]`,
+      )
+      .click();
+    return s.document.querySelector(".desktop-rename");
+  };
+  // A change from another window rebuilds the icons.
+  const rebuild = async () => {
+    fs.createFile(fs.DESKTOP, `other${Math.random()}.txt`, { content: "" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  let input = rename(file.id);
+  input.value = "typed.txt";
+  input.setSelectionRange(0, 5);
+  await rebuild();
+  // Chrome fires blur on the box that the rebuild removed.
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  expect(fs.getNode(file.id).name).toBe("keep.txt");
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.dataset.desktopId).toBe(file.id);
+  expect(input.value).toBe("typed.txt");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5]);
+  // A box with no change shows the name that another window gave.
+  input.value = input.dataset.originalName;
+  fs.rename(file.id, "other.txt");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.value).toBe("other.txt");
+  // A file that is gone takes its box with it.
+  fs.delete(file.id);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(s.document.querySelector(".desktop-rename")).toBeNull();
+  expect(fs.getNode(file.id).name).toBe("other.txt");
+
+  // The same for My Computer, whose name is a setting.
+  input = rename("__my-computer");
+  input.value = "Computer";
+  await rebuild();
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.dataset.desktopId).toBe("__my-computer");
+  expect(input.value).toBe("Computer");
+  input.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(icon("__my-computer").textContent).toBe("Computer");
+});

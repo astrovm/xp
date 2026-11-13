@@ -397,15 +397,10 @@ test("Explorer shows game icons, descriptions, and survives failing file handler
   ).toBeTruthy();
   expect(h.item(withIcon.id).textContent).toContain("Game");
   expect(h.item(plain.id).querySelector("small").textContent).toBe("File");
-  const errors = [];
-  const originalError = s.window.console.error;
-  s.window.console.error = (error) => errors.push(error);
-  try {
-    h.item(boom.id).dispatchEvent(new s.window.MouseEvent("dblclick"));
-  } finally {
-    s.window.console.error = originalError;
-  }
-  expect(errors[0].message).toBe("handler failed");
+  // A file that fails to open shows an error, like the context menu.
+  h.item(boom.id).dispatchEvent(new s.window.MouseEvent("dblclick"));
+  await settle();
+  expect(dialogText(s)).toContain("handler failed");
 });
 
 test("Explorer returns to My Computer when its folder is deleted and opens Recycle Bin shortcuts", async () => {

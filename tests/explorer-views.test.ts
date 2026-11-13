@@ -989,6 +989,25 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   expect(fs.getNode(c.id).name).toBe("renamed.txt");
   expect(focused()).toBe(label(item(c)));
 
+  // Escape undoes the rename, also with Chrome's blur when the box goes.
+  key(item(c), "F2");
+  input = win.querySelector(".explorer-rename");
+  input.value = "escaped.txt";
+  key(input, "Escape");
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  await flushShell();
+  expect(fs.getNode(c.id).name).toBe("renamed.txt");
+  expect(focused()).toBe(label(item(c)));
+  // Alt and a letter in a context menu do not open a menu bar menu.
+  contextMenu(c);
+  key(s.document.activeElement, "e", { altKey: true });
+  expect(
+    win
+      .querySelector('[data-explorer-menu="edit"]')
+      .getAttribute("aria-expanded"),
+  ).not.toBe("true");
+  key(s.document.activeElement, "Escape");
+
   // A switch to another app commits, and the item gets the focus back.
   key(item(c), "F2");
   input = win.querySelector(".explorer-rename");
@@ -1091,4 +1110,28 @@ test("Explorer gives the focus back to the list after menus, renames and new ren
   fs.delete(last.id);
   await flushShell();
   expect(focused()).toBe(label(h.items(h.explorer())));
+});
+
+test("a render that leaves the folder drops an open rename without renaming", async () => {
+  const h = await openShell();
+  const { fs, s } = h;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Gone");
+  const file = fs.createFile(folder.id, "keep.txt", { content: "" });
+  await h.open(folder.id);
+  const win = h.explorer();
+  const item = h.item(win, file.id);
+  item.focus();
+  item.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+  );
+  const input = win.querySelector(".explorer-rename");
+  input.value = "typed.txt";
+  // Another window deletes the folder, so Explorer shows My Computer.
+  fs.delete(folder.id);
+  await flushShell();
+  // Chrome fires blur on the box that the render removed.
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  await flushShell();
+  expect(fs.getNode(file.id).name).toBe("keep.txt");
+  expect(win.querySelector(".explorer-rename")).toBeNull();
 });

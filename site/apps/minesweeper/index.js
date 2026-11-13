@@ -157,6 +157,8 @@ const mountMinesweeper = (context, instance) => {
   const root = document.createElement("div");
   root.className = "xp-native-program xp-minesweeper";
   root.tabIndex = 0;
+  // The board gets the keys when the window becomes active.
+  root.dataset.defaultFocus = "";
   const menuBar = document.createElement("div");
   menuBar.className = "minesweeper-menu-bar";
   const content = document.createElement("section");

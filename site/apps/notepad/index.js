@@ -12,6 +12,8 @@ const mountNotepad = (context, instance) => {
   menuBar.className = "notepad-menu-bar";
   menuBar.setAttribute("role", "menubar");
   const editor = document.createElement("textarea");
+  // The text gets the keys when the window becomes active.
+  editor.dataset.defaultFocus = "";
   editor.className = "notepad-editor";
   editor.setAttribute("aria-label", "Notepad document");
   editor.spellcheck = false;
