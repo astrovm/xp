@@ -14,26 +14,38 @@ const SHARDS = 4;
 // run's counters.
 await rm(rawCoverageDirectory, { recursive: true, force: true });
 
-// A signal sent only to this process also stops the step that runs now, so
-// no shard keeps writing counters after the run ends.
+// A signal to this process also stops the step that runs now. The run ends
+// only after that step has ended, so neither the shard nor the tools its
+// tests started (such as the dev server) write counters after the run ends.
+// `bun test` stops the tools of its workers when it stops.
 let current: Subprocess | undefined;
+let stopping = false;
 for (const [signal, number] of [
   ["SIGINT", 2],
   ["SIGTERM", 15],
 ] as const) {
-  process.on(signal, () => {
-    current?.kill(signal);
+  process.on(signal, async () => {
+    if (stopping) return;
+    stopping = true;
+    if (current && current.exitCode === null && current.signalCode === null) {
+      current.kill(signal);
+      await Promise.race([current.exited, Bun.sleep(10_000)]);
+    }
     process.exit(128 + number);
   });
 }
 
 // The steps use the same Bun binary as this script, not the one on PATH.
+// After a signal, no new step starts, and the run waits for the handler to
+// exit.
 const run = async (arguments_: string[], env = process.env) => {
+  if (stopping) return new Promise<number>(() => {});
   current = Bun.spawn([process.execPath, ...arguments_], {
     env,
     stdio: ["inherit", "inherit", "inherit"],
   });
-  return current.exited;
+  const code = await current.exited;
+  return stopping ? new Promise<number>(() => {}) : code;
 };
 
 // Every shard runs, so one report shows all failures.
