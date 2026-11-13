@@ -297,21 +297,35 @@ test("a protected selection keeps only the folder task", async () => {
   ).toBeTrue();
 });
 
-test("folders in the Recycle Bin take no new items", async () => {
+test("Explorer never browses into the Recycle Bin's folders", async () => {
   const s = await login(await loadShell());
   const fs = s.window.VirtualFS;
   const folder = fs.createFolder(fs.DESKTOP, "Old");
   fs.createFolder(folder.id, "Inner");
+  const open = await openFolder(s, folder.id);
   fs.remove(folder.id);
-  // A deleted folder is not a drop target in the Recycle Bin window.
+  await settle();
+  // A window showing a folder that goes to the Recycle Bin moves to My
+  // Computer.
+  expect(names(open)).toContain("Local Disk (C:)");
   const bin = await openFolder(s, fs.RECYCLE_BIN);
   const item = bin.querySelector(`.explorer-item[data-node-id="${folder.id}"]`);
+  // A deleted folder takes no drops.
   expect(item.dataset.dropDestinationId).toBeUndefined();
-  // Inside a deleted folder, Explorer offers no Make a new folder task,
-  // and its subfolders take no drops.
-  const inside = await openFolder(s, folder.id);
-  expect(tasks(inside)).not.toContain("Make a new folder");
+  // Like XP, opening a deleted folder shows its Properties.
+  item.dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  await settle();
   expect(
-    inside.querySelector(".explorer-item").dataset.dropDestinationId,
-  ).toBeUndefined();
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("Old Properties");
+  expect(names(bin)).toEqual(["Old"]);
+  // The Folders tree lists no deleted folders.
+  const row = bin.querySelector(
+    `.explorer-tree-item[data-node-id="${fs.RECYCLE_BIN}"]`,
+  );
+  expect(row.textContent).toBe("  Recycle Bin");
+  // Opening it by its id does not browse into it either.
+  fs.open(folder.id);
+  await settle();
+  expect(names(open)).not.toContain("Inner");
 });

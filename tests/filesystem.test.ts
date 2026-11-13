@@ -198,6 +198,18 @@ describe("virtual filesystem", () => {
     expect(fs.getChildren(fs.RECYCLE_BIN).length).toBe(0);
   });
 
+  test("forgets the deleted name of an item copied or moved out of the Recycle Bin", () => {
+    const file = fs.createFile(fs.DESKTOP, "a.txt");
+    fs.remove(file.id);
+    expect(fs.getNode(file.id).originalName).toBe("a.txt");
+    const copy = fs.copy(file.id, fs.MY_DOCUMENTS);
+    expect(copy.originalName).toBeNull();
+    expect(copy.originalParent).toBeNull();
+    fs.move(file.id, fs.MY_DOCUMENTS);
+    expect(fs.getNode(file.id).originalName).toBeNull();
+    expect(fs.getNode(file.id).originalParent).toBeNull();
+  });
+
   test("empties the Recycle Bin recursively", () => {
     const { folder, file } = createTestFolder();
 

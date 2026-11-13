@@ -816,9 +816,14 @@ const systemFolderShortcuts = {
 const explorerDisplayName = (node) =>
   node.id === fs.SHARED_DOCUMENTS ? "Shared Documents" : node.name;
 
+// An item in the Recycle Bin, not the bin itself. Like XP, Explorer never
+// browses into a deleted folder.
+const isDeletedNode = (id) => id !== fs.RECYCLE_BIN && fs.isInRecycleBin(id);
+
 const navigateExplorer = (win, folderId, { history = true } = {}) => {
   const folder = fs.getNode(folderId);
-  if (!folder || folder.type !== "folder") return false;
+  if (!folder || folder.type !== "folder" || isDeletedNode(folderId))
+    return false;
   if (history) {
     const entries = win.history.slice(0, win.historyIndex + 1);
     if (entries.at(-1) !== folderId) entries.push(folderId);
@@ -989,19 +994,17 @@ const renderExplorerTaskPane = (win) => {
       confirmRecycleDelete(editable),
     );
   } else if (
-    // Nothing new goes in a folder inside the Recycle Bin.
-    !fs.isInRecycleBin(win.currentFolderId) &&
-    (!fs.getNode(win.currentFolderId).protected ||
-      [
-        fs.MY_DOCUMENTS,
-        fs.MY_PICTURES,
-        fs.MY_MUSIC,
-        fs.SHARED_DOCUMENTS,
-        fs.DESKTOP,
-        fs.DRIVE_C,
-        fs.DRIVE_D,
-        fs.DRIVE_F,
-      ].includes(win.currentFolderId))
+    !fs.getNode(win.currentFolderId).protected ||
+    [
+      fs.MY_DOCUMENTS,
+      fs.MY_PICTURES,
+      fs.MY_MUSIC,
+      fs.SHARED_DOCUMENTS,
+      fs.DESKTOP,
+      fs.DRIVE_C,
+      fs.DRIVE_D,
+      fs.DRIVE_F,
+    ].includes(win.currentFolderId)
   ) {
     addTask(
       "Make a new folder",
@@ -1154,9 +1157,10 @@ const renderExplorerTree = (win) => {
     row.className = "explorer-tree-item";
     row.dataset.nodeId = id;
     row.style.paddingLeft = `${6 + depth * 14}px`;
-    const hasFolders = fs
-      .getChildren(id)
-      .some((child) => child.type === "folder");
+    // The tree lists no deleted folders under the Recycle Bin.
+    const hasFolders =
+      id !== fs.RECYCLE_BIN &&
+      fs.getChildren(id).some((child) => child.type === "folder");
     row.textContent = `${hasFolders ? (expanded.has(id) ? "− " : "+ ") : "  "}${node.name}`;
     row.classList.toggle("active", id === win.currentFolderId);
     row.addEventListener("click", () => {
@@ -1334,6 +1338,11 @@ const explorerItemDescription = (node) => {
 };
 
 const openExplorerNode = (win, node) => {
+  // XP opens Properties for an item in the Recycle Bin.
+  if (isDeletedNode(node.id)) {
+    XPDialogs.properties(node.id);
+    return;
+  }
   if (node.type === "folder") {
     navigateExplorer(win, node.id);
     return;
@@ -1638,7 +1647,10 @@ const setupExplorerFilesystemSync = () =>
   fs.subscribe(() => {
     openWindows.forEach((win) => {
       if (win.type !== "system" || !win.currentFolderId) return;
-      if (!fs.getNode(win.currentFolderId))
+      if (
+        !fs.getNode(win.currentFolderId) ||
+        isDeletedNode(win.currentFolderId)
+      )
         win.currentFolderId = fs.MY_COMPUTER;
       renderExplorerItems(win);
     });

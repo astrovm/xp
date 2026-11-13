@@ -573,6 +573,10 @@
     detach(node);
     node.name = dedupeName(targetParentId, node.name);
     node.parent = targetParentId;
+    // An item moved out of the Recycle Bin forgets where it was deleted
+    // from, like a restored one.
+    node.originalParent = null;
+    node.originalName = null;
     target.children.push(id);
     touch(id);
     touch(targetParentId);
@@ -599,6 +603,9 @@
         created: timestamp,
         modified: timestamp,
         protected: false,
+        // A copy is a new item, never one waiting in the Recycle Bin.
+        originalParent: null,
+        originalName: null,
       };
       nodes[clone.id] = clone;
       nodes[parentId].children.push(clone.id);
