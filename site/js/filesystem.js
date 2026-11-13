@@ -233,7 +233,7 @@
     seedFolders.forEach((seedNode) => {
       const existing = nodes[seedNode.id];
       if (existing) {
-        // Every field but the dates and the children comes from the seed.
+        // Each seed field except the dates and the children comes back.
         // A stored app, for example, would give the folder another icon.
         Object.assign(existing, {
           type: "folder",
