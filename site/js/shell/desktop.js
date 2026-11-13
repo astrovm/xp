@@ -650,6 +650,12 @@ const refreshDesktop = () => {
   buildDesktopIcons();
 };
 
+// The rebuilt icon of a rename takes the keys.
+const focusDesktopIcon = (id) =>
+  document
+    .querySelector(`.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`)
+    .focus({ preventScroll: true });
+
 const beginDesktopRename = (id) => {
   const icon = document.querySelector(
     `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
@@ -674,7 +680,9 @@ const beginDesktopRename = (id) => {
     document.removeEventListener("pointerdown", onOutsidePointerDown, true);
     return open;
   };
-  async function finish(save) {
+  // Enter and Escape leave the keys on the icon, like XP. A rename that
+  // ends because the keys left keeps them where they went.
+  async function finish(save, keepKeys = false) {
     if (finished) return;
     finished = true;
     document.removeEventListener("pointerdown", onOutsidePointerDown, true);
@@ -689,6 +697,7 @@ const beginDesktopRename = (id) => {
       }
     }
     refreshDesktop();
+    if (keepKeys) focusDesktopIcon(id);
   }
   function onOutsidePointerDown(event) {
     if (!input.contains(event.target)) finish(true);
@@ -697,7 +706,7 @@ const beginDesktopRename = (id) => {
     if (event.key === "Enter" || event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      finish(event.key === "Enter");
+      finish(event.key === "Enter", true);
     }
   });
   input.addEventListener("blur", () => finish(true), { once: true });
@@ -725,7 +734,7 @@ const beginSystemDesktopRename = (id) => {
     finished = true;
     return open;
   };
-  const finish = (save) => {
+  const finish = (save, keepKeys = false) => {
     if (finished) return;
     finished = true;
     const name = input.value.trim();
@@ -733,12 +742,13 @@ const beginSystemDesktopRename = (id) => {
       saveDesktopSystemNames({ ...getDesktopSystemNames(), [id]: name });
     }
     refreshDesktop();
+    if (keepKeys) focusDesktopIcon(id);
   };
   input.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
-    finish(event.key === "Enter");
+    finish(event.key === "Enter", true);
   });
   input.addEventListener("blur", () => finish(true), { once: true });
   return input;

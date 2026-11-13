@@ -137,6 +137,24 @@
       (item) => !item.disabled && item.offsetParent !== null,
     );
 
+  // An open modal dialog keeps the keys, like XP: they go to its control
+  // that had them last, its default button or its first control, never to
+  // a window behind it. It returns false when no modal dialog is open.
+  const takeKeys = () => {
+    const dialog = dialogStack.findLast((entry) => entry.modal);
+    if (!dialog) return false;
+    [
+      dialog.lastFocused,
+      dialog.defaultButton,
+      ...focusableItems(dialog.el),
+    ].some((target) => {
+      if (!target?.isConnected || target.disabled) return false;
+      target.focus();
+      return document.activeElement === target;
+    });
+    return true;
+  };
+
   // Registered only while a dialog is open, so the stack is never empty here.
   const handleGlobalKeydown = (e) => dialogStack.at(-1).onKeydown(e);
 
@@ -249,13 +267,16 @@
     el.append(titleBar, body);
     overlay.appendChild(el);
     if (help) addWhatsThisHelp(el, body);
+    el.addEventListener("focusin", (event) => {
+      dialog.lastFocused = event.target;
+    });
 
     let resultCallback = null;
 
     // The keys go back to the control that had them. A control that is
     // gone or hidden, like the item of a closed menu, cannot take them.
-    // Then the dialog under this one, the active window or the desktop gets
-    // them, like XP. They never stay on the page.
+    // Then a modal dialog, a dialog under this one, the active window or
+    // the desktop gets them, like XP. They never stay on the page.
     const giveKeysBack = () => {
       if (
         previouslyFocused !== document.body &&
@@ -265,6 +286,7 @@
         previouslyFocused.focus();
         if (document.activeElement === previouslyFocused) return;
       }
+      if (takeKeys()) return;
       (
         dialogStack.at(-1)?.defaultButton ||
         document.querySelector(".xp-window.active:not(.xp-dialog)") ||
@@ -275,6 +297,8 @@
     const dialog = {
       el,
       body,
+      modal,
+      lastFocused: null,
       defaultButton: null,
       accessKeys: new Map(),
       onResult(callback) {
@@ -1703,6 +1727,7 @@
     formatKilobytes,
     isPictureFolder,
     createDialog,
+    takeKeys,
     addWhatsThisHelp,
     createDialogButton,
     addButtonRow,

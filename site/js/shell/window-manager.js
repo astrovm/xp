@@ -6,6 +6,12 @@
 
 const openWindows = new Map();
 let focusedGameId = null;
+// The window that plays its sound while the desktop or the taskbar has the
+// keys: the window that was active before them, like XP.
+let soundGameId = null;
+const audibleGameId = () =>
+  focusedGameId ||
+  (openWindows.get(soundGameId)?.minimized === false ? soundGameId : null);
 let zIndexCounter = 100;
 let cascadeCount = 0;
 
@@ -319,7 +325,7 @@ const updateDocumentTitle = () => {
 
 const applyFocusVolumes = () => {
   openWindows.forEach((win, gameId) => {
-    const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+    const volume = gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
     setPlayerVolume(win.player, win.type, volume);
   });
 };
@@ -716,7 +722,7 @@ const mountRuffleSWF = (gameId, win) => {
   win.player = player;
 
   const applyVolume = () => {
-    const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+    const volume = gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
     setPlayerVolume(player, "swf", volume);
   };
   player.addEventListener("loadedmetadata", applyVolume, { once: true });
@@ -742,7 +748,7 @@ const mountRuffleSWF = (gameId, win) => {
     openUrlMode: "confirm",
     showSwfDownload: true,
     ...(frameRate === null ? {} : { frameRate }),
-    volume: gameId === focusedGameId ? normalizeGameVolume(gameId) : 0,
+    volume: gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0,
     allowScriptAccess: false,
     autoplay: "on",
     unmuteOverlay: "hidden",
@@ -901,7 +907,8 @@ const loadIframe = (gameId, win) => {
   player.addEventListener(
     "load",
     () => {
-      const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+      const volume =
+        gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
       setPlayerVolume(player, "iframe", volume);
     },
     { once: true },
@@ -976,6 +983,7 @@ const focusWindow = (gameId) => {
   }
 
   focusedGameId = gameId;
+  soundGameId = null;
   win.needsAttention = false;
   win.lastUsed = Date.now();
   win.zIndex = ++zIndexCounter;
@@ -1370,6 +1378,9 @@ const closeGameWindow = (gameId, { skipBeforeClose = false } = {}) => {
   // A closed window drops its caption without changing.
   win.windowAnimation?.cancel();
   persistWindowPlacement(win);
+  // Chrome sends no blur when it removes the control with the keys. The
+  // control loses them first, like XP, so a rename box keeps its new name.
+  if (win.el.contains(document.activeElement)) document.activeElement.blur();
   win.mountedApplication?.unmount?.();
   win.el.remove();
   openWindows.delete(gameId);
@@ -1667,8 +1678,20 @@ const keysTaken = (target) => {
   target.focus({ preventScroll: true });
   return document.activeElement === target;
 };
-// The keys go to the active window, like XP, or else to the desktop.
+// An open modal dialog keeps the keys, like XP. It returns true when one
+// is open.
+const giveKeysToModal = () => {
+  const systemDialog = document.querySelector(
+    ".system-dialog-overlay:not([hidden])",
+  );
+  if (!systemDialog) return XPDialogs.takeKeys();
+  systemDialog.querySelector("[data-default-focus]").focus();
+  return true;
+};
+// The keys go to an open modal dialog, else to the active window, like XP,
+// or else to the desktop.
 const giveKeysToActiveWindow = () => {
+  if (giveKeysToModal()) return;
   const win = openWindows.get(focusedGameId);
   if (win && !win.minimized) {
     focusWindowContent(win);
@@ -1726,6 +1749,25 @@ document.addEventListener(
       if (document.activeElement === document.body && document.hasFocus())
         giveKeysToActiveWindow();
     });
+  },
+  true,
+);
+
+// The desktop and the taskbar are no windows. When they take the keys, no
+// window is active, like XP. The last active window keeps its sound.
+document.addEventListener(
+  "focusin",
+  (event) => {
+    if (
+      !focusedGameId ||
+      !(event.target.closest("#desktop-icons") || event.target.id === "taskbar")
+    )
+      return;
+    soundGameId = focusedGameId;
+    focusedGameId = null;
+    openWindows.forEach((win) => win.el.classList.remove("active"));
+    renderTaskButtons();
+    updateDocumentTitle();
   },
   true,
 );

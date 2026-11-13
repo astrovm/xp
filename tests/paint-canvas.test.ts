@@ -243,6 +243,14 @@ test("text commits on keyboard confirmation and can be canceled", () => {
   expect(h.frame.querySelector("textarea")).toBeNull();
   h.pointer("pointerdown", 1, 1);
   editor = h.frame.querySelector("textarea");
+  // Ctrl+Esc and Alt+Esc belong to the shell and keep the text.
+  editor.dispatchEvent(
+    new w.KeyboardEvent("keydown", { key: "Escape", ctrlKey: true }),
+  );
+  editor.dispatchEvent(
+    new w.KeyboardEvent("keydown", { key: "Escape", altKey: true }),
+  );
+  expect(editor.isConnected).toBeTrue();
   editor.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
   expect(h.frame.querySelector("textarea")).toBeNull();
   h.pointer("pointerdown", 1, 1);

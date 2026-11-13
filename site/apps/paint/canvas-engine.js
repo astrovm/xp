@@ -150,7 +150,10 @@ export const createCanvasEngine = ({ canvas, frame, onChange, onPosition }) => {
       once: true,
     });
     textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") textarea.remove();
+      // Ctrl+Esc and Alt+Esc belong to the shell and keep the text.
+      if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
+        textarea.remove();
+      }
       if (event.ctrlKey && event.key === "Enter") textarea.blur();
     });
     frame.appendChild(textarea);

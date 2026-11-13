@@ -1151,7 +1151,14 @@ const startExplorerRename = (win, nodeId) => {
       await alertRenameError(error);
     }
   };
+  // The box keeps its own keys from Explorer. Alt keys, the Windows key and
+  // Ctrl+Esc still reach the shell, like XP.
   input.addEventListener("keydown", (event) => {
+    const shellKey =
+      event.altKey ||
+      event.key === "Meta" ||
+      (event.ctrlKey && event.key === "Escape");
+    if (shellKey) return;
     event.stopPropagation();
     if (event.key === "Enter") finish(true, true);
     if (event.key === "Escape") finish(false, true);

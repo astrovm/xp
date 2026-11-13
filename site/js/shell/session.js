@@ -99,20 +99,36 @@ const setSuspended = (value) => {
   }
 };
 
+// The control that had the keys before a system dialog opened.
+let systemDialogReturnFocus = null;
+
+// A closed system dialog gives the keys back, like XP.
 const hideSystemDialogs = () => {
-  document.getElementById("logoff-dialog").hidden = true;
-  document.getElementById("shutdown-dialog").hidden = true;
+  const dialogs = ["logoff-dialog", "shutdown-dialog"].map((id) =>
+    document.getElementById(id),
+  );
+  const hadKeys = dialogs.some((dialog) =>
+    dialog.contains(document.activeElement),
+  );
+  dialogs.forEach((dialog) => (dialog.hidden = true));
+  const target = systemDialogReturnFocus;
+  systemDialogReturnFocus = null;
+  if (hadKeys && !keysTaken(target)) giveKeysToActiveWindow();
 };
 
-const showLogoffDialog = () => {
+// A system dialog takes the keys on its default button, like XP. A rename
+// in progress loses them and so ends with its new name.
+const showSystemDialog = (id) => {
   closeStartMenu();
-  document.getElementById("logoff-dialog").hidden = false;
+  const dialog = document.getElementById(id);
+  systemDialogReturnFocus = document.activeElement;
+  dialog.hidden = false;
+  dialog.querySelector("[data-default-focus]").focus();
 };
 
-const showShutdownDialog = () => {
-  closeStartMenu();
-  document.getElementById("shutdown-dialog").hidden = false;
-};
+const showLogoffDialog = () => showSystemDialog("logoff-dialog");
+
+const showShutdownDialog = () => showSystemDialog("shutdown-dialog");
 
 const muteAllWindows = () => {
   openWindows.forEach((win) => setPlayerVolume(win.player, win.type, 0));
@@ -462,6 +478,22 @@ const setupScreenFlow = () => {
     showShutdownDialog();
   });
 
+  // Tab and Shift+Tab stay in a system dialog, and Esc cancels it, like XP.
+  document.querySelectorAll(".system-dialog-overlay").forEach((overlay) => {
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        hideSystemDialogs();
+        return;
+      }
+      if (event.key !== "Tab" || event.altKey) return;
+      event.preventDefault();
+      const buttons = [...overlay.querySelectorAll("button")];
+      const step = event.shiftKey ? -1 : 1;
+      const index = buttons.indexOf(document.activeElement);
+      buttons[(index + step + buttons.length) % buttons.length].focus();
+    });
+  });
   document
     .getElementById("logoff-cancel")
     .addEventListener("click", hideSystemDialogs);
