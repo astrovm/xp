@@ -52,9 +52,41 @@
     return () => listeners.delete(listener);
   };
 
+  // Each cut or copy gets a new token. A paste changes the clipboard only
+  // while the clipboard still holds the cut that it pastes.
+  let clipboardToken = 0;
+  const newClipboard = (mode, ids) => ({
+    mode,
+    ids,
+    token: ++clipboardToken,
+    // Items cut or copied from the Recycle Bin stay on the clipboard there.
+    fromBin: ids.filter((id) => fs.isInRecycleBin(id)),
+  });
+  const setClipboardIds = (ids) => {
+    clipboard = ids.length ? { ...clipboard, ids } : null;
+    notify({ type: "clipboard", mode: clipboard?.mode || null });
+  };
+
+  // The clipboard forgets items that were destroyed, and items that went to
+  // the Recycle Bin after the cut or copy. This runs only after a change was
+  // saved, so a failed delete keeps the clipboard. It covers every way to
+  // delete: the Delete key, a drag to the bin, uninstall and other tabs.
+  const pruneClipboard = () => {
+    if (!clipboard) return;
+    const remaining = clipboard.ids.filter(
+      (id) =>
+        !!fs.getNode(id) &&
+        (!fs.isInRecycleBin(id) || clipboard.fromBin.includes(id)),
+    );
+    if (remaining.length !== clipboard.ids.length) setClipboardIds(remaining);
+  };
+
   // A filesystem mutation can come from any shell surface. Forward those
   // changes so views using this service stay synchronized as well.
-  fs.subscribe(() => notify({ type: "filesystem-change" }));
+  fs.subscribe(() => {
+    pruneClipboard();
+    notify({ type: "filesystem-change" });
+  });
 
   const requireFolder = (id) => {
     const node = fs.getNode(id);
@@ -123,7 +155,7 @@
   };
 
   const setClipboard = (mode, ids) => {
-    clipboard = { mode, ids: getTopLevelIds(ids) };
+    clipboard = newClipboard(mode, getTopLevelIds(ids));
     notify({ type: "clipboard", mode });
     return snapshotClipboard();
   };
@@ -140,7 +172,7 @@
         );
       }
     });
-    clipboard = { mode: "cut", ids: topLevelIds };
+    clipboard = newClipboard("cut", topLevelIds);
     notify({ type: "clipboard", mode: "cut" });
     return snapshotClipboard();
   };
@@ -232,13 +264,14 @@
       decisions.push({ conflict, decision });
     }
     // Items already moved leave a cut clipboard; the rest can be retried.
+    // A new cut or copy made during the paste stays on the clipboard.
+    const pastesClipboard = () =>
+      mode === "cut" && usesClipboard && clipboard?.token === source.token;
     const keepUnmovedOnClipboard = (index) => {
-      if (mode !== "cut" || !usesClipboard) return;
-      const remaining = ids
-        .slice(index)
-        .filter((remainingId) => !!fs.getNode(remainingId));
-      clipboard = remaining.length ? { mode: "cut", ids: remaining } : null;
-      notify({ type: "clipboard", mode: clipboard?.mode || null });
+      if (!pastesClipboard()) return;
+      setClipboardIds(
+        ids.slice(index).filter((remainingId) => !!fs.getNode(remainingId)),
+      );
     };
     const results = [];
     for (const [index, id] of ids.entries()) {
@@ -283,10 +316,7 @@
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    if (mode === "cut" && usesClipboard) {
-      clipboard = null;
-      notify({ type: "clipboard", mode: null });
-    }
+    if (pastesClipboard()) setClipboardIds([]);
     notify({
       type: "paste",
       mode,
@@ -306,14 +336,12 @@
   };
   const rename = (id, name) => fs.rename(id, name);
 
-  // Items deleted or dragged away leave a cut clipboard, so a later Paste
-  // never moves them again.
+  // Items dragged away leave a cut clipboard, so a later Paste never moves
+  // them again.
   const forgetCutItems = (ids) => {
     if (clipboard?.mode !== "cut") return;
     const remaining = clipboard.ids.filter((id) => !ids.includes(id));
-    if (remaining.length === clipboard.ids.length) return;
-    clipboard = remaining.length ? { mode: "cut", ids: remaining } : null;
-    notify({ type: "clipboard", mode: clipboard?.mode || null });
+    if (remaining.length !== clipboard.ids.length) setClipboardIds(remaining);
   };
 
   const removeToBin = (ids) => {
@@ -327,7 +355,6 @@
       }
     });
     topLevelIds.forEach((id) => fs.remove(id));
-    forgetCutItems(topLevelIds);
     return topLevelIds;
   };
 

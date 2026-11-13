@@ -261,6 +261,58 @@ describe("file operations", () => {
     expect(operations.canPaste(conflictSource.id)).toBe(false);
   });
 
+  test("forgets clipboard items however they are deleted", () => {
+    const { source, nested, note, destination } = createClipboardFixture();
+    const other = fs.createFile(destination.id, "other.txt");
+    // Shift+Delete destroys the item without the Recycle Bin.
+    operations.copy([note.id, other.id]);
+    fs.destroy(other.id);
+    expect(operations.getClipboard()).toEqual({
+      mode: "copy",
+      ids: [note.id],
+    });
+    expect(operations.canPaste(destination.id)).toBe(true);
+    // An item inside a deleted folder goes to the bin with it.
+    operations.cut([nested.id]);
+    fs.remove(source.id);
+    expect(operations.getClipboard()).toBeNull();
+    expect(operations.canPaste(destination.id)).toBe(false);
+  });
+
+  test("keeps items cut in the Recycle Bin, so Paste takes them out", () => {
+    const { note, destination } = createClipboardFixture();
+    operations.removeToBin([note.id]);
+    operations.cut([note.id]);
+    fs.createFile(destination.id, "unrelated.txt");
+    expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [note.id] });
+    // Emptying the bin destroys it, so it leaves the clipboard.
+    operations.emptyRecycleBin();
+    expect(operations.getClipboard()).toBeNull();
+    const kept = fs.createFile(destination.id, "kept.txt");
+    operations.removeToBin([kept.id]);
+    operations.cut([kept.id]);
+    operations.paste(destination.id);
+    expect(fs.getNode(kept.id).parent).toBe(destination.id);
+    expect(fs.isInRecycleBin(kept.id)).toBe(false);
+  });
+
+  test("keeps a cut or copy made while a paste runs", async () => {
+    const { conflictSource, conflictTarget } = createConflictFixture();
+    const file = fs.createFile(conflictSource.id, "moving.txt");
+    const later = fs.createFile(conflictSource.id, "later.txt");
+    operations.cut([file.id]);
+    const paste = operations.pasteWithConflicts(conflictTarget.id, () => {
+      return "rename";
+    });
+    operations.copy([later.id]);
+    await paste;
+    expect(fs.getNode(file.id).parent).toBe(conflictTarget.id);
+    expect(operations.getClipboard()).toEqual({
+      mode: "copy",
+      ids: [later.id],
+    });
+  });
+
   test("cancels a conflicting paste atomically and keeps the cut clipboard", async () => {
     const { conflictSource, conflictFile, conflictTarget } =
       createConflictFixture();

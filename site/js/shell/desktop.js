@@ -10,6 +10,9 @@ const DESKTOP_ICON_METRICS = Object.freeze({
 });
 let desktopDragged = false;
 let desktopSelectionAnchor = null;
+// Icons dropped on a folder or the Recycle Bin stay hidden until the move
+// ends, also when the Desktop redraws after each moved item.
+const movingDesktopIds = new Set();
 
 const getDesktopIconMetrics = (container) =>
   container.clientWidth <= 480
@@ -307,7 +310,10 @@ const wireDesktopIconDrag = (icon) => {
           // The icons hide while the items move. Items that move away leave
           // the Desktop when it redraws. After a failure or Cancel, the
           // icons come back at their places.
-          selected.forEach(({ item }) => (item.style.visibility = "hidden"));
+          selected.forEach(({ item }) => {
+            movingDesktopIds.add(item.dataset.desktopId);
+            item.style.visibility = "hidden";
+          });
           let failure = null;
           if (dropTarget.action === "recycle") {
             try {
@@ -324,7 +330,10 @@ const wireDesktopIconDrag = (icon) => {
             });
           }
           returnIcons();
-          selected.forEach(({ item }) => (item.style.visibility = ""));
+          movingDesktopIds.clear();
+          container.querySelectorAll(".desktop-icon").forEach((item) => {
+            item.style.visibility = "";
+          });
           // A failed delete shows an alert, like the Delete key.
           if (failure) await alertFileOperationError(failure);
         } else if (getDesktopLayoutSettings().autoArrange) {
@@ -519,6 +528,7 @@ const buildDesktopIcons = () => {
       });
     });
     icon.dataset.desktopId = id;
+    if (movingDesktopIds.has(id)) icon.style.visibility = "hidden";
     if (system) icon.dataset.systemId = id;
     if (node?.type === "folder") icon.dataset.dropDestinationId = node.id;
     if (id === "__recycle-bin") icon.dataset.dropAction = "recycle";

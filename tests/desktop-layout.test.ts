@@ -164,6 +164,40 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect([icon(clash.id).style.left, icon(clash.id).style.top]).toEqual(start);
   expect(icon(clash.id).style.visibility).toBe("");
   expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
+  // Icons still waiting to move stay hidden when the Desktop redraws after
+  // the first moved item.
+  const first = fs.createFile(fs.DESKTOP, "first.txt");
+  const second = fs.createFile(fs.DESKTOP, "second.txt");
+  await flushShell();
+  s.document
+    .querySelectorAll(".desktop-icon")
+    .forEach((item) =>
+      item.classList.toggle(
+        "selected",
+        [first.id, second.id].includes(item.dataset.desktopId),
+      ),
+    );
+  const pasteWithConflicts = ops.pasteWithConflicts;
+  let waiting = null;
+  ops.pasteWithConflicts = async (destinationId) => {
+    await fs.move(first.id, destinationId);
+    await flushShell();
+    waiting = icon(second.id).style.visibility;
+    await fs.move(second.id, destinationId);
+    return { cancelled: false, results: [] };
+  };
+  try {
+    await drag(s, icon(first.id), icon(folder.id));
+  } finally {
+    ops.pasteWithConflicts = pasteWithConflicts;
+  }
+  expect(waiting).toBe("hidden");
+  expect(fs.getNode(second.id).parent).toBe(folder.id);
+  expect(
+    [...s.document.querySelectorAll(".desktop-icon")].every(
+      (item) => item.style.visibility === "",
+    ),
+  ).toBeTrue();
   await drag(s, icon(recycle.id), icon("__recycle-bin"));
   expect(fs.getNode(recycle.id).parent).toBe(fs.RECYCLE_BIN);
   expect(fs.getNode(recycle.id).content).toBe("recover me");

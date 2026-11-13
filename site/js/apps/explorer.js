@@ -787,12 +787,22 @@ const importDroppedFiles = async (destinationId, dataTransfer) => {
     state.progress.close();
   }
 };
+// The items an Explorer drag carries. A folder never shows as a drop target
+// for itself or for a folder inside it.
+let explorerDragIds = [];
 const wireFolderDropTarget = (element, destinationId) => {
   element.dataset.dropDestinationId = destinationId;
   element.addEventListener("dragover", (event) => {
     const internal = event.dataTransfer?.types?.includes(
       "application/x-astro-vfs-ids",
     );
+    if (
+      internal &&
+      explorerDragIds.some(
+        (id) => id === destinationId || fs.isDescendantOf(id, destinationId),
+      )
+    )
+      return;
     if (
       internal ||
       fileOps.canPaste(destinationId) ||
@@ -1566,11 +1576,15 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("dragstart", (event) => {
       const ids = selectedExplorerNodes(win);
+      explorerDragIds = ids.includes(node.id) ? ids : [node.id];
       event.dataTransfer.setData(
         "application/x-astro-vfs-ids",
-        JSON.stringify(ids.includes(node.id) ? ids : [node.id]),
+        JSON.stringify(explorerDragIds),
       );
       event.dataTransfer.effectAllowed = "move";
+    });
+    item.addEventListener("dragend", () => {
+      explorerDragIds = [];
     });
     item.addEventListener("dblclick", () => openExplorerNode(win, node));
     item.addEventListener("keydown", (e) => {

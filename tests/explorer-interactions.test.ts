@@ -146,6 +146,17 @@ test("Explorer drag and drop moves internal files and imports external file cont
   expect(target.classList.contains("drop-target")).toBeTrue();
   target.dispatchEvent(drag("dragleave"));
   expect(target.classList.contains("drop-target")).toBeFalse();
+  // A folder never shows as a drop target for itself.
+  h.item(h.child.id).click();
+  target.dispatchEvent(drag("dragstart"));
+  const overSelf = drag("dragover");
+  target.dispatchEvent(overSelf);
+  expect(overSelf.defaultPrevented).toBeFalse();
+  expect(target.classList.contains("drop-target")).toBeFalse();
+  target.dispatchEvent(drag("dragend"));
+  target.dispatchEvent(drag("dragover"));
+  expect(target.classList.contains("drop-target")).toBeTrue();
+  target.dispatchEvent(drag("dragleave"));
   // A folder dropped on itself stays where it is, with no message.
   transfer.setData("application/x-astro-vfs-ids", JSON.stringify([h.child.id]));
   target.dispatchEvent(drag("drop"));
