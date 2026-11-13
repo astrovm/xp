@@ -9936,6 +9936,19 @@
       "member": "SHELL32.DL_",
       "expandedName": "shell32.dll",
       "resourceType": 2,
+      "resourceId": 216,
+      "output": "site/assets/xp/explorer/toolbar-views-small.png",
+      "crop": {
+        "left": 512,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "member": "SHELL32.DL_",
+      "expandedName": "shell32.dll",
+      "resourceType": 2,
       "resourceId": 214,
       "output": "site/assets/xp/explorer/toolbar-folders.png",
       "crop": {

@@ -227,7 +227,9 @@ test("secondary display dialogs cancel with Escape and ignore clicks between con
   // icons, and an enabled Background Files type list.
   expect(browse.classList.contains("xp-file-dialog")).toBeTrue();
   const lookIn = browse.querySelector(".dlg-file-folder");
-  expect(lookIn.selectedOptions[0].textContent).toBe("My Pictures");
+  expect(lookIn.querySelector(".dlg-file-folder-value").textContent).toBe(
+    "My Pictures",
+  );
   expect(
     [...browse.querySelectorAll(".dlg-file-tool img")].map((img) =>
       img.getAttribute("src"),
@@ -236,12 +238,15 @@ test("secondary display dialogs cancel with Escape and ignore clicks between con
     "assets/xp/icons/Back.png",
     "assets/xp/icons/Up.png",
     "assets/xp/icons/NewFolder.png",
+    "assets/xp/explorer/toolbar-views-small.png",
   ]);
+  // My Pictures opens in Thumbnails, like XP.
+  expect(browse.querySelector(".dlg-file-list").dataset.view).toBe(
+    "thumbnails",
+  );
   const type = browse.querySelector(".dlg-file-type");
   expect(type.disabled).toBeFalse();
-  expect(type.selectedOptions[0].textContent).toBe(
-    "Background Files (*.png;*.jpg;*.jpeg;*.gif;*.webp)",
-  );
+  expect(type.selectedOptions[0].textContent).toBe("Background Files");
   expect(browse.querySelector(".help-btn")).not.toBeNull();
   let picked = 0;
   const image = q("#display-image");

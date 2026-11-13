@@ -1459,7 +1459,9 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 }
 
 /* Open / Save As dialogs */
-/* Open and Save As, positioned from XP's common file dialog at 96 DPI. */
+/* Open and Save As, positioned from XP's common file dialog at 96 DPI. The
+   list, fields and buttons keep their distance from the bottom and right
+   edges, so the size grip makes the list grow, like XP. */
 .xp-file-dialog {
   width: min(558px, calc(100vw - 16px));
 }
@@ -1487,7 +1489,7 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 }
 
 .dlg-file-folder-field > span,
-.dlg-file-fields span {
+.dlg-file-fields label > span {
   white-space: nowrap;
 }
 
@@ -1496,9 +1498,111 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
   text-align: right;
 }
 
+/* Look in: a drop-down list whose rows carry the folder's icon. */
 .dlg-file-folder {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
   width: 259px;
   height: 22px;
+  padding: 0 19px 0 3px;
+  border: 1px solid #7f9db9;
+  background: #fff;
+  color: #000;
+  font: inherit;
+  text-align: left;
+}
+
+html:not([data-xp-appearance="classic"]) .dlg-file-folder {
+  background:
+    var(--ctl-combobuttonglyph-normal) right 4px center / 10px 7px no-repeat,
+    var(--ctl-combobutton-normal) right 0 top 0 / 17px 100% no-repeat,
+    #fff;
+}
+
+html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
+  background:
+    var(--ctl-combobuttonglyph-hot) right 4px center / 10px 7px no-repeat,
+    var(--ctl-combobutton-hot) right 0 top 0 / 17px 100% no-repeat,
+    #fff;
+}
+
+.dlg-file-folder-value,
+.dlg-file-folder-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.dlg-file-folder-value {
+  overflow: hidden;
+}
+
+/* A focused drop-down list highlights its text instead of drawing a focus
+   rectangle. */
+.dlg-file-folder:focus {
+  outline: 0;
+}
+
+.dlg-file-folder:focus .dlg-file-folder-name {
+  background: var(--sys-highlight, #316ac5);
+  color: var(--sys-highlight-text, #fff);
+}
+
+.dlg-file-folder-name {
+  overflow: hidden;
+  padding: 0 1px;
+  text-overflow: ellipsis;
+}
+
+.dlg-file-folder .dlg-node-icon,
+.dlg-file-folder .dlg-node-icon img,
+.dlg-file-folder-option .dlg-node-icon,
+.dlg-file-folder-option .dlg-node-icon img {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* Drop-down lists and the Views menu open over the dialog. */
+.dlg-file-folder-list,
+.dlg-file-name-list {
+  position: absolute;
+  z-index: 10;
+  box-sizing: border-box;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #000;
+  background: #fff;
+}
+
+.dlg-file-folder-list {
+  top: 25px;
+  left: 97px;
+  width: 259px;
+}
+
+.dlg-file-folder-option {
+  height: 18px;
+  padding-right: 4px;
+}
+
+.dlg-file-folder-option.selected,
+.dlg-file-name-option.selected {
+  background: var(--sys-highlight, #316ac5);
+  color: var(--sys-highlight-text, #fff);
+}
+
+.dlg-file-views-menu {
+  top: 26px;
+  left: 445px;
+  z-index: 10;
+}
+
+.dlg-file-views-menu .context-check {
+  font-size: 18px;
 }
 
 .dlg-file-tool {
@@ -1510,7 +1614,8 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
   background: none;
 }
 
-.dlg-file-tool:hover:not(:disabled) {
+.dlg-file-tool:hover:not(:disabled),
+.dlg-file-tool[aria-expanded="true"] {
   border-color: #cecec3;
   background: #fff;
 }
@@ -1525,16 +1630,33 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
   vertical-align: middle;
 }
 
+/* Views draws a small drop-down arrow after its icon. */
+.dlg-file-tool[data-action="views"] {
+  position: relative;
+  width: 31px;
+  padding-right: 7px;
+}
+
+.dlg-file-tool[data-action="views"]::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  margin-top: -1px;
+  border-top: 3px solid #000;
+  border-right: 3px solid transparent;
+  border-left: 3px solid transparent;
+}
+
 .dlg-file-places {
   position: absolute;
   top: 33px;
+  bottom: 12px;
   left: 5px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   box-sizing: border-box;
   width: 84px;
-  height: 339px;
   padding: 2px 0;
   border: 1px solid #a5a497;
   background: var(--xp-beige);
@@ -1545,12 +1667,13 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  height: 68px;
+  height: 66px;
   margin: 0 2px;
-  padding: 6px 2px 0;
+  padding: 4px 2px 0;
   border: 1px solid transparent;
   background: none;
   font: inherit;
+  line-height: 12px;
   text-align: center;
 }
 
@@ -1568,16 +1691,12 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 .dlg-file-list {
   position: absolute;
   top: 33px;
+  right: 6px;
+  bottom: 68px;
   left: 96px;
-  display: flex;
-  flex-direction: column;
-  flex-wrap: wrap;
-  align-content: flex-start;
   box-sizing: border-box;
-  width: 450px;
-  height: 283px;
   padding: 2px;
-  overflow-x: auto;
+  overflow: auto;
   border: 1px solid #7f9db9;
   background: #fff;
 }
@@ -1586,11 +1705,10 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 17px;
-  max-width: 220px;
   padding: 0 2px;
   border: 0;
   background: none;
+  color: #000;
   font: inherit;
   text-align: left;
   white-space: nowrap;
@@ -1598,19 +1716,165 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 
 .dlg-file-item .dlg-node-icon,
 .dlg-file-item .dlg-node-icon img {
+  flex: none;
   width: 16px;
   height: 16px;
-  flex: none;
 }
 
-.dlg-file-item.selected {
-  background: #316ac5;
-  color: #fff;
+.dlg-file-item.selected .dlg-file-item-name {
+  background: var(--sys-highlight, #316ac5);
+  color: var(--sys-highlight-text, #fff);
+}
+
+.dlg-file-item-detail {
+  color: #000;
+}
+
+/* List: small icons in columns that flow left to right. */
+.dlg-file-list[data-view="list"] {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow-y: hidden;
+}
+
+.dlg-file-list[data-view="list"] .dlg-file-item {
+  height: 17px;
+  max-width: 220px;
+}
+
+/* Icons and Thumbnails: rows of labeled icons that wrap. */
+.dlg-file-list[data-view="icons"],
+.dlg-file-list[data-view="thumbnails"],
+.dlg-file-list[data-view="tiles"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  overflow-x: hidden;
+}
+
+.dlg-file-list[data-view="icons"] .dlg-file-item,
+.dlg-file-list[data-view="thumbnails"] .dlg-file-item {
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px;
+  text-align: center;
+  white-space: normal;
+}
+
+.dlg-file-list[data-view="icons"] .dlg-file-item {
+  width: 75px;
+  margin: 0 2px 10px;
+}
+
+.dlg-file-list[data-view="icons"] .dlg-node-icon,
+.dlg-file-list[data-view="icons"] .dlg-node-icon img {
+  width: 32px;
+  height: 32px;
+}
+
+.dlg-file-list[data-view="thumbnails"] .dlg-file-item {
+  width: 112px;
+  margin: 8px 4px 2px;
+}
+
+.dlg-file-list[data-view="thumbnails"] .dlg-node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100px;
+  height: 100px;
+  border: 1px solid #d0d0bf;
+  background: #fff;
+}
+
+.dlg-file-list[data-view="thumbnails"] .dlg-file-item.selected .dlg-node-icon {
+  border: 2px solid var(--sys-highlight, #316ac5);
+}
+
+.dlg-file-list[data-view="thumbnails"] .dlg-node-icon img {
+  width: 48px;
+  height: 48px;
+}
+
+/* Tiles: a large icon beside the name, type and size. */
+.dlg-file-list[data-view="tiles"] .dlg-file-item {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-content: center;
+  align-items: center;
+  width: 210px;
+  height: 56px;
+  margin: 2px 4px;
+  overflow: hidden;
+}
+
+.dlg-file-list[data-view="tiles"] .dlg-node-icon {
+  grid-row: span 3;
+}
+
+.dlg-file-list[data-view="tiles"] .dlg-node-icon,
+.dlg-file-list[data-view="tiles"] .dlg-node-icon img {
+  width: 48px;
+  height: 48px;
+}
+
+.dlg-file-list[data-view="tiles"] .dlg-file-item-detail {
+  color: #808080;
+}
+
+/* Details: a header row and one row per item. */
+.dlg-file-list[data-view="details"] {
+  padding: 0;
+}
+
+.dlg-file-header,
+.dlg-file-list[data-view="details"] .dlg-file-item {
+  display: grid;
+  grid-template-columns: 18px 152px 70px 110px minmax(110px, 1fr);
+  align-items: center;
+  min-width: 100%;
+}
+
+.dlg-file-header {
+  position: sticky;
+  top: 0;
+  height: 18px;
+  border-bottom: 1px solid #d6d2c2;
+  background: #ebeadb;
+}
+
+.dlg-file-header > span {
+  padding: 0 5px;
+  border-right: 1px solid #d6d2c2;
+}
+
+.dlg-file-header > span:first-child {
+  grid-column: span 2;
+}
+
+.dlg-file-list[data-view="details"] .dlg-file-item {
+  width: 100%;
+  height: 17px;
+  padding: 0 2px;
+}
+
+.dlg-file-list[data-view="details"] .dlg-file-item > span {
+  overflow: hidden;
+  padding: 0 3px;
+  text-overflow: ellipsis;
+}
+
+.dlg-file-list[data-view="details"] .dlg-file-item > :nth-child(3) {
+  text-align: right;
 }
 
 .dlg-file-fields {
   position: absolute;
-  top: 326px;
+  right: 115px;
+  bottom: 9px;
   left: 98px;
   display: grid;
   gap: 5px;
@@ -1619,20 +1883,107 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 .dlg-file-name-row,
 .dlg-file-type-row {
   display: grid;
-  grid-template-columns: 94px 245px;
+  grid-template-columns: 94px 1fr;
   align-items: center;
 }
 
 .dlg-file-fields .xp-input,
 .dlg-file-type {
   box-sizing: border-box;
+  width: 100%;
   height: 22px;
+}
+
+/* File name is an editable drop-down: a text box with the Luna button. */
+.dlg-file-name-box {
+  position: relative;
+  display: block;
+}
+
+.dlg-file-name-box .xp-input {
+  padding-right: 20px;
+}
+
+.dlg-file-name-arrow {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 17px;
+  padding: 0;
+  border: 0;
+}
+
+html:not([data-xp-appearance="classic"]) .dlg-file-name-arrow {
+  background:
+    var(--ctl-combobuttonglyph-normal) center / 10px 7px no-repeat,
+    var(--ctl-combobutton-normal) 0 0 / 100% 100% no-repeat;
+}
+
+html:not([data-xp-appearance="classic"]) .dlg-file-name-arrow:hover {
+  background:
+    var(--ctl-combobuttonglyph-hot) center / 10px 7px no-repeat,
+    var(--ctl-combobutton-hot) 0 0 / 100% 100% no-repeat;
+}
+
+/* Windows Classic: sunken combo boxes with a raised 3D drop-down button
+   and a black arrow. */
+html[data-xp-appearance="classic"] .dlg-file-folder,
+html[data-xp-appearance="classic"] .dlg-file-name-box .xp-input {
+  border: 2px solid;
+  border-color: #808080 #fff #fff #808080;
+  box-shadow: inset 1px 1px #404040;
+}
+
+html[data-xp-appearance="classic"] .dlg-file-folder {
+  position: relative;
+}
+
+html[data-xp-appearance="classic"] .dlg-file-folder::after,
+html[data-xp-appearance="classic"] .dlg-file-name-arrow {
+  border: 1px solid;
+  border-color: var(--xp-beige) #404040 #404040 var(--xp-beige);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='4' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h7v1H0zM1 1h5v1H1zM2 2h3v1H2zM3 3h1v1H3z'/%3E%3C/svg%3E")
+    center / 7px 4px no-repeat var(--xp-beige);
+  box-shadow:
+    inset 1px 1px #fff,
+    inset -1px -1px #808080;
+}
+
+html[data-xp-appearance="classic"] .dlg-file-folder::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  box-sizing: border-box;
+}
+
+html[data-xp-appearance="classic"] .dlg-file-name-arrow {
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  width: 16px;
+}
+
+.dlg-file-name-list {
+  top: calc(100% - 36px);
+  right: 115px;
+  left: 192px;
+  max-height: 120px;
+}
+
+.dlg-file-name-option {
+  height: 16px;
+  padding: 0 3px;
+  white-space: nowrap;
 }
 
 .dlg-file-buttons {
   position: absolute;
-  top: 325px;
-  left: 472px;
+  right: 5px;
+  bottom: 9px;
   display: grid;
   gap: 4px;
   padding: 0;
@@ -1640,6 +1991,17 @@ html:not([data-xp-appearance="classic"]) .datetime-panel {
 
 .dlg-file-buttons .xp-btn {
   width: 75px;
+}
+
+.dlg-file-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 13px;
+  height: 13px;
+  background: var(--sb-size-grip) right bottom no-repeat;
+  cursor: se-resize;
+  touch-action: none;
 }
 
 /* "What's This?" help, armed from a dialog's ? button. */

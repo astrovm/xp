@@ -32,6 +32,8 @@
     MY_DOCUMENTS: "my-documents",
     MY_PICTURES: "my-pictures",
     MY_MUSIC: "my-music",
+    RECENT: "recent",
+    MY_NETWORK_PLACES: "my-network-places",
     RECYCLE_BIN: "recycle-bin",
   };
 
@@ -117,7 +119,7 @@
   const seedNodes = () => {
     const timestamp = now();
     const seeded = {};
-    const folder = (id, name, parent) => {
+    const folder = (id, name, parent, hidden = false) => {
       seeded[id] = {
         id,
         name,
@@ -133,6 +135,7 @@
         app: null,
         originalParent: null,
         originalName: null,
+        hidden,
       };
     };
 
@@ -156,6 +159,11 @@
     folder(WELL_KNOWN.MY_DOCUMENTS, "My Documents", WELL_KNOWN.USER_PROFILE);
     folder(WELL_KNOWN.MY_PICTURES, "My Pictures", WELL_KNOWN.MY_DOCUMENTS);
     folder(WELL_KNOWN.MY_MUSIC, "My Music", WELL_KNOWN.MY_DOCUMENTS);
+    // XP keeps recent documents in the profile's hidden Recent folder,
+    // which the file dialogs show as My Recent Documents. My Network Places
+    // is a shell folder of its own, like the Recycle Bin.
+    folder(WELL_KNOWN.RECENT, "Recent", WELL_KNOWN.USER_PROFILE, true);
+    folder(WELL_KNOWN.MY_NETWORK_PLACES, "My Network Places", null);
     folder(WELL_KNOWN.RECYCLE_BIN, "Recycle Bin", null);
 
     Object.values(seeded).forEach((node) => {
@@ -172,21 +180,27 @@
     const seeded = seedNodes();
     Object.values(seeded).forEach((seedNode) => {
       const existing = nodes[seedNode.id];
-      if (!existing) {
-        nodes[seedNode.id] = seedNode;
-        const parent = nodes[seedNode.parent];
-        if (parent && !parent.children.includes(seedNode.id)) {
-          parent.children.push(seedNode.id);
+      if (existing) {
+        existing.type = "folder";
+        existing.name = seedNode.name;
+        existing.protected = true;
+        existing.hidden = seedNode.hidden;
+        existing.parent = seedNode.parent;
+        existing.children = Array.isArray(existing.children)
+          ? existing.children.filter((childId) => nodes[childId])
+          : [];
+      } else nodes[seedNode.id] = seedNode;
+      const parent = nodes[seedNode.parent];
+      if (parent && !parent.children.includes(seedNode.id)) {
+        // A folder the user made with a system folder's name moves aside,
+        // because names in a folder must stay unique.
+        const clash = findChild(parent.id, seedNode.name);
+        parent.children.push(seedNode.id);
+        if (clash) {
+          clash.name = dedupeName(parent.id, clash.name);
+          clash.modified = now();
         }
-        return;
       }
-      existing.type = "folder";
-      existing.name = seedNode.name;
-      existing.protected = true;
-      existing.parent = seedNode.parent;
-      existing.children = Array.isArray(existing.children)
-        ? existing.children.filter((childId) => nodes[childId])
-        : [];
     });
   };
 
@@ -261,13 +275,16 @@
   const getParent = (id) =>
     nodes[id] ? nodes[nodes[id].parent] || null : null;
 
-  const getChildren = (id) =>
+  // Hidden folders, like XP's Recent, open by id but stay out of listings.
+  // Names still count them, so nothing else can take a hidden name.
+  const allChildren = (id) =>
     nodes[id]
       ? nodes[id].children.map((childId) => nodes[childId]).filter(Boolean)
       : [];
+  const getChildren = (id) => allChildren(id).filter((node) => !node.hidden);
 
   const findChild = (parentId, name) =>
-    getChildren(parentId).find(
+    allChildren(parentId).find(
       (child) => child.name.toLowerCase() === String(name).toLowerCase(),
     ) || null;
 
@@ -359,7 +376,7 @@
     exceptId = null,
   ) => {
     const names = new Set(
-      getChildren(parentId)
+      allChildren(parentId)
         .filter((child) => child.id !== exceptId)
         .map((child) => child.name.toLowerCase()),
     );
@@ -711,14 +728,20 @@
         );
       transaction.onerror = () => {};
     });
-  const refresh = async () => {
+  const readStored = async () => {
     const transaction = database.transaction("nodes", "readonly");
     const done = transactionDone(transaction);
     const [records] = await Promise.all([
       requestValue(transaction.objectStore("nodes").getAll()),
       done,
     ]);
-    nodes = Object.fromEntries(records.map((node) => [node.id, node]));
+    return Object.fromEntries(records.map((node) => [node.id, node]));
+  };
+  // Reloads the stored nodes. The system folders are healed in memory too,
+  // in case storing them failed.
+  const refresh = async () => {
+    nodes = await readStored();
+    healSeed();
     notify();
   };
   const channel =
@@ -739,7 +762,9 @@
         opening.result.createObjectStore("meta");
       };
       database = await requestValue(opening);
+      let closed = false;
       database.onversionchange = () => {
+        closed = true;
         writable = false;
         database.close();
       };
@@ -756,8 +781,22 @@
         }
       };
       await done;
-      await refresh();
-      writable = true;
+      // Seed folders added or changed since the data was stored are written
+      // back, so every tab finds them. If that write fails, this tab still
+      // heals its own copy.
+      nodes = await readStored();
+      try {
+        // A retry heals the stored nodes again, not this tab's healed copy,
+        // so it still writes what storage lacks.
+        await commitChanges(healSeed, 3, async () => {
+          nodes = await readStored();
+        });
+      } catch (error) {
+        console.error("VirtualFS: failed to store system folders:", error);
+        healSeed();
+      }
+      notify();
+      writable = !closed;
       // Keep the legacy snapshot as a recovery backup. It is never written again.
     })().catch((error) => {
       initializationError = error;
@@ -776,67 +815,72 @@
       });
     });
   }
+  // Runs mutate on a copy of the nodes and writes only the nodes it
+  // changed. A node another tab changed first makes it start over, up to
+  // remainingRetries times.
+  const commitChanges = async (mutate, remainingRetries, reload = refresh) => {
+    const before = nodes;
+    nodes = cloneNodes(before);
+    let result, candidate;
+    batchDepth++;
+    try {
+      result = mutate();
+      candidate = nodes;
+    } finally {
+      batchDepth--;
+      nodes = before;
+    }
+    const changed = [
+      ...new Set([...Object.keys(before), ...Object.keys(candidate)]),
+    ].filter((id) => !sameNode(before[id], candidate[id]));
+    if (!changed.length) return result;
+    const write = database.transaction("nodes", "readwrite");
+    const done = transactionDone(write);
+    const store = write.objectStore("nodes");
+    let conflict = false;
+    for (const id of changed) {
+      const read = store.get(id);
+      read.onsuccess = () => {
+        if ((read.result?.revision || 0) !== (before[id]?.revision || 0)) {
+          conflict = true;
+          write.abort();
+          return;
+        }
+        if (candidate[id]) {
+          candidate[id].revision = (before[id]?.revision || 0) + 1;
+          store.put(candidate[id]);
+        } else store.delete(id);
+      };
+    }
+    try {
+      await done;
+    } catch (error) {
+      await reload();
+      if (conflict && remainingRetries > 0)
+        return commitChanges(mutate, remainingRetries - 1, reload);
+      if (conflict)
+        throw new Error(
+          "These files changed in another tab. Check them and try again.",
+          { cause: error },
+        );
+      if (error.name === "QuotaExceededError")
+        throw new Error("Storage is full. Free up space and try again.", {
+          cause: error,
+        });
+      throw error;
+    }
+    nodes = candidate;
+    notify();
+    channel?.postMessage("changed");
+    return result;
+  };
   const transaction = (mutate, { retry = 0 } = {}) => {
     if (batchDepth || memoryOnly) return mutate();
-    const commit = async (remainingRetries) => {
+    return enqueue(async () => {
       await ready;
       if (!writable) throw initializationError || new Error(readOnlyMessage);
-      const before = nodes;
-      nodes = cloneNodes(before);
-      let result, candidate;
-      batchDepth++;
-      try {
-        result = mutate();
-        candidate = nodes;
-      } finally {
-        batchDepth--;
-        nodes = before;
-      }
-      const changed = [
-        ...new Set([...Object.keys(before), ...Object.keys(candidate)]),
-      ].filter((id) => !sameNode(before[id], candidate[id]));
-      if (!changed.length) return result;
-      const write = database.transaction("nodes", "readwrite");
-      const done = transactionDone(write);
-      const store = write.objectStore("nodes");
-      let conflict = false;
-      for (const id of changed) {
-        const read = store.get(id);
-        read.onsuccess = () => {
-          if ((read.result?.revision || 0) !== (before[id]?.revision || 0)) {
-            conflict = true;
-            write.abort();
-            return;
-          }
-          if (candidate[id]) {
-            candidate[id].revision = (before[id]?.revision || 0) + 1;
-            store.put(candidate[id]);
-          } else store.delete(id);
-        };
-      }
-      try {
-        await done;
-      } catch (error) {
-        await refresh();
-        if (conflict && remainingRetries > 0)
-          return commit(remainingRetries - 1);
-        if (conflict)
-          throw new Error(
-            "These files changed in another tab. Check them and try again.",
-            { cause: error },
-          );
-        if (error.name === "QuotaExceededError")
-          throw new Error("Storage is full. Free up space and try again.", {
-            cause: error,
-          });
-        throw error;
-      }
-      nodes = candidate;
-      notify();
-      channel?.postMessage("changed");
-      return result;
-    };
-    return enqueue(() => commit(retry));
+      return commitChanges(mutate, retry);
+    });
   };
   const mutate =
     (operation) =>

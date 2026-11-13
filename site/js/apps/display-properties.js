@@ -274,7 +274,7 @@ const openWallpaperBrowseDialog = (ownerWindow, fileInput) => {
     title: "Browse",
     startFolder: window.VirtualFS.MY_PICTURES,
     filter: WALLPAPER_EXTENSIONS,
-    filterLabel: `Background Files (${WALLPAPER_EXTENSIONS.map((ext) => `*${ext}`).join(";")})`,
+    filterLabel: "Background Files",
     acceptLabel: "&Open",
     folderLabel: "Look &in:",
     onDialog: (created, controls) => {

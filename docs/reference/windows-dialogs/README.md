@@ -55,9 +55,12 @@ Measurements were taken from pixel rows and columns of both captures.
   text. The Run error is titled with the command and uses XP's wording.
 - The window menu shows Marlett-style glyphs, a bold Close with Alt+F4, and
   no separator after Size. A mouse-opened menu has no highlight.
-- Open and Save As follow XP's layout: Places bar, Look in/Save in folder
-  list, Back, Up, and Create New Folder, a column-flowing file list, and the
-  file name and file type fields beside the buttons.
+- Open and Save As follow XP's layout: a Places bar with My Recent
+  Documents, Desktop, My Documents, My Computer, and My Network, a Look
+  in/Save in drop-down folder tree, Back, Up, Create New Folder, and a Views
+  menu (Thumbnails, Tiles, Icons, List, Details), a file name combo box with
+  recent names, the file type field, and a resize grip. My Pictures opens in
+  Thumbnails view.
 - Properties and file dialogs show Explorer's icons instead of an emoji.
 
 ## Animations
@@ -91,15 +94,16 @@ Reference captures were recorded on the local XP VM with
 ## Astro XP adaptations
 
 - Windows Classic keeps its own 3D frames, controls, and scrollbars.
-- The Places bar offers Desktop, My Documents, and My Computer. My Recent
-  Documents and My Network Places are omitted because the shell has no folder
-  for them.
-- The file dialog's Views menu is omitted.
+- My Recent Documents and My Network Places are empty folders.
+- The wallpaper Browse dialog opens the browser's file picker on Open, because
+  the virtual file system keeps no picture data.
 
 ## Remaining differences
 
 - The browser cannot tell when a scrollbar has nothing to scroll, so its
   arrows keep their normal look where XP grays them out.
 - Text rasterization differs from XP, so text is about 1px off in places.
+- My Pictures has no Sample Pictures folder.
+- Thumbnails view shows each file's icon, not a preview of the picture.
 - The Date and Time clock, calendar border, and year spinner belong to the
   system utilities pass.
