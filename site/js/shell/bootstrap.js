@@ -129,6 +129,7 @@ const confirmPermanentDelete = (ids) =>
       : "Are you sure you want to permanently delete these items?",
     "Confirm File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   )
     .then(
       (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),

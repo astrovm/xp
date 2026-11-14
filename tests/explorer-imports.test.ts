@@ -299,7 +299,9 @@ test("one dropped file asks Confirm File Replace with Yes and No", async () => {
     ),
   ).toEqual(["Yes", "No"]);
   expect(dialog.textContent).toContain("3 bytes\nmodified: Today, ");
-  await h.choose("no");
+  // Unlike a message box, XP's Confirm File Replace closes with Esc as No.
+  expect(dialog.querySelector(".close-btn").disabled).toBeFalse();
+  dialog.querySelector(".close-btn").click();
   await settle(() => !h.s.document.querySelector(".xp-dialog"));
   expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("old");
 });

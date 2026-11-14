@@ -567,7 +567,13 @@ const confirmRecycleDelete = (ids) => {
             `Are you sure you want to send '${node.name}' to the Recycle Bin?`,
             "Confirm File Delete",
           ];
-  return XPDialogs.confirm(text, title, "recycle")
+  // XP's delete questions close with No on Esc or the close button.
+  return XPDialogs.confirm(
+    text,
+    title,
+    "recycle",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
+  )
     .then(async (yes) => yes && (await fileOps.removeToBin(ids)))
     .catch(alertFileOperationError);
 };
@@ -579,6 +585,7 @@ const confirmRecycleBinDelete = async (ids) => {
     "Are you sure you want to permanently delete the selected items?",
     "Confirm File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   );
   if (!yes) return;
   try {
@@ -598,6 +605,7 @@ const confirmEmptyRecycleBin = () => {
       : `Are you sure you want to delete these ${count} items?`,
     single ? "Confirm File Delete" : "Confirm Multiple File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   ).then(async (yes) => {
     try {
       if (!yes) return false;
@@ -644,7 +652,7 @@ const createReplaceQuestion = (many) => {
       icon: "warning",
       buttons: many
         ? XPDialogs.BUTTON_SETS.yesAllNoCancel
-        : XPDialogs.BUTTON_SETS.yesNo,
+        : XPDialogs.BUTTON_SETS.yesNoClosable,
     });
     replaceAll = answer === "all";
     return { yes: "replace", all: "replace", no: "skip" }[answer] || "cancel";

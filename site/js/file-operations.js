@@ -425,18 +425,12 @@
   };
   const rename = (id, name) => fs.rename(id, name);
   // Saves content in the file with that name in the folder, like the Save
-  // of an XP program. It finds the file when it writes, not when the
+  // As of an XP program. It finds the file when it writes, not when the
   // Replace question was open. So a file that moved away meanwhile keeps
   // its content, and a file that took the name meanwhile gets the new
-  // content. The file keeps the case of its name, like Windows.
-  // expectedContent checks the content of the file keepId, the file that
-  // the program has open.
-  const writeFile = (
-    parentId,
-    name,
-    content,
-    { keepId = null, expectedContent } = {},
-  ) =>
+  // content. The file keeps the case of its name, like Windows. Like XP,
+  // the Replace answer is the check: the file is written as it is now.
+  const writeFile = (parentId, name, content) =>
     fs.transaction(() => {
       assertWritableFolder(parentId);
       const existing = fs.findChild(parentId, name);
@@ -445,9 +439,7 @@
         throw new Error(
           `Cannot create the ${name} file. A folder with the name you specified already exists. Specify a different file name.`,
         );
-      return fs.setContent(existing.id, content, {
-        expectedContent: existing.id === keepId ? expectedContent : undefined,
-      });
+      return fs.setContent(existing.id, content);
     });
 
   // Items dragged away leave a cut clipboard, so a later Paste never moves

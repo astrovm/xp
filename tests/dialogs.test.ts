@@ -33,6 +33,7 @@ describe("XP dialogs", () => {
       "yesAllNoCancel",
       "yesNo",
       "yesNoCancel",
+      "yesNoClosable",
     ]);
   });
 
@@ -57,8 +58,11 @@ describe("XP dialogs", () => {
     const sets = loadDialogs().BUTTON_SETS;
     expect(sets.ok[0].isCancel).toBe(true);
     expect(sets.okCancel.find((b) => b.id === "cancel").isCancel).toBe(true);
-    expect(sets.yesNo.find((b) => b.id === "no").isCancel).toBe(true);
-    expect(sets.yesNo.find((b) => b.id === "yes").isCancel).toBeFalsy();
+    // Like XP's message box, Yes and No has no Escape target. XP's own
+    // shell questions, such as Confirm File Delete, close with Esc as No.
+    expect(sets.yesNo.some((b) => b.isCancel)).toBeFalse();
+    expect(sets.yesNoClosable.find((b) => b.id === "no").isCancel).toBe(true);
+    expect(sets.yesNoClosable.find((b) => b.id === "yes").isCancel).toBeFalsy();
     expect(sets.retryCancel.find((b) => b.id === "cancel").isCancel).toBe(true);
   });
 

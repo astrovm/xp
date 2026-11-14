@@ -163,9 +163,9 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
-  // Save As finds the file when it writes. Paint checks the content of
-  // the file it has open.
-  expect(h.writes[0][3]).toEqual({ keepId: null, expectedContent: undefined });
+  // Save As finds the file when it writes, and the Replace answer is the
+  // only check, like Notepad's.
+  expect(h.writes[0]).toHaveLength(3);
   await h.command("save");
   expect(h.writes[1][0]).toBe("saved");
   expect(h.writes[1][2]).toEqual({ expectedContent: h.writes[0][2] });
@@ -186,10 +186,9 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   await h.command("save-as");
   expect(h.writes[2][0]).toBe("pictures");
   expect(h.writes[2][1]).toBe("other.png");
-  expect(h.writes[2][3]).toEqual({
-    keepId: "saved",
-    expectedContent: h.writes[1][1],
-  });
+  // Save As onto the open picture writes it as it is now. Only Save checks
+  // that another window did not change it.
+  expect(h.writes[2]).toHaveLength(3);
   h.context.setFileContent = async () => {
     throw new Error("Document changed elsewhere");
   };

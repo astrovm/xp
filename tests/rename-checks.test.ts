@@ -50,6 +50,23 @@ const beforeInput = (s, input, init) =>
       ...init,
     }),
   );
+// Pastes text like Chrome: the paste event comes first, then beforeinput,
+// then the text goes in where the caret is. Each step can stop the rest.
+const paste = (s, input, text) => {
+  const clipboardData = new s.window.DataTransfer();
+  clipboardData.setData("text/plain", text);
+  const event = new s.window.ClipboardEvent("paste", {
+    clipboardData,
+    bubbles: true,
+    cancelable: true,
+  });
+  if (!input.dispatchEvent(event)) return false;
+  if (!beforeInput(s, input, { data: text, inputType: "insertFromPaste" }))
+    return false;
+  input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
+  input.dispatchEvent(new s.window.Event("input", { bubbles: true }));
+  return true;
+};
 const dialogs = (s) =>
   [...s.document.querySelectorAll(".xp-dialog")].map((dialog) => ({
     title: dialog.getAttribute("aria-label"),
@@ -110,24 +127,19 @@ test("a rename box drops the characters that a name cannot have and shows XP's b
 
   // Pasted text goes in without its bad characters, where the caret is.
   input.setSelectionRange(1, 1);
-  expect(
-    beforeInput(s, input, { data: "x:y", inputType: "insertFromPaste" }),
-  ).toBeFalse();
+  expect(paste(s, input, "x:y")).toBeFalse();
   expect(input.value).toBe("bxyad");
   expect([input.selectionStart, input.selectionEnd]).toEqual([3, 3]);
   // One balloon shows at a time.
   expect(s.document.querySelectorAll(".xp-balloon")).toHaveLength(1);
-  // Dropped text comes with a DataTransfer, and a deletion with no text.
-  const drop = new s.window.InputEvent("beforeinput", {
-    inputType: "insertFromDrop",
-    bubbles: true,
-    cancelable: true,
-  });
-  Object.defineProperty(drop, "dataTransfer", {
-    value: { getData: (type) => (type === "text/plain" ? "*" : "") },
-  });
-  expect(input.dispatchEvent(drop)).toBeFalse();
-  expect(input.value).toBe("bxyad");
+  // Text that the browser puts in another way, such as a spelling fix,
+  // loses its bad characters too.
+  input.setSelectionRange(0, 0);
+  expect(
+    beforeInput(s, input, { data: "q*", inputType: "insertReplacementText" }),
+  ).toBeFalse();
+  expect(input.value).toBe("qbxyad");
+  // A deletion has no text, and goes on.
   expect(
     beforeInput(s, input, { inputType: "deleteContentBackward" }),
   ).toBeTrue();
@@ -208,9 +220,7 @@ test("a rename box cleans text from an input method when it ends, and keeps ever
   compose("Alphaxyabcd");
   expect(edits).toHaveLength(2);
   // A paste uses the same edit.
-  expect(
-    beforeInput(s, input, { data: "q|", inputType: "insertFromPaste" }),
-  ).toBeFalse();
+  expect(paste(s, input, "q|")).toBeFalse();
   expect(input.value).toBe("Alphaxyabcdq");
   expect(edits.at(-1)).toEqual(["insertText", "", "q"]);
 });
@@ -434,25 +444,56 @@ test("a desktop rename box keeps the old name for an empty or device name", asyn
   ]);
 });
 
-test("a pasted line break goes away with no balloon, and a bad character still shows it", async () => {
+// Like XP, a one-line box takes only the first line of a paste. A file name
+// box also drops the bad characters of that line, and shows its balloon.
+test("a paste with line breaks keeps its first line, and a bad character in it shows the balloon", async () => {
   const s = await login(await loadShell());
   const fs = s.window.VirtualFS;
   const folder = fs.createFolder(fs.MY_DOCUMENTS, "Alpha");
   const win = await openDocuments(s);
   const input = await renameInExplorer(s, win, folder.id);
   input.value = "";
-  // The browser drops line breaks from a one-line box by itself.
-  for (const data of ["a\nb", "c\r\n", "\n"]) {
-    expect(
-      beforeInput(s, input, { data, inputType: "insertFromPaste" }),
-    ).toBeTrue();
+  for (const text of ["a\nb", "c\r\n", "\r"]) {
+    expect(paste(s, input, text)).toBeFalse();
     expect(balloon(s)).toEqual([]);
   }
-  expect(
-    beforeInput(s, input, { data: "x\ny?z", inputType: "insertFromPaste" }),
-  ).toBeFalse();
-  expect(input.value).toBe("xyz");
+  expect(input.value).toBe("ac");
+  // XP gives "ab" and the balloon for "a:b" and "c" on two lines.
+  input.value = "";
+  expect(paste(s, input, "a:b\r\nc")).toBeFalse();
+  expect(input.value).toBe("ab");
   expect(balloon(s)).toEqual(BALLOON);
+  // An empty first line takes the place of the selected text.
+  input.select();
+  expect(paste(s, input, "\nz")).toBeFalse();
+  expect(input.value).toBe("");
+  // Text with only bad characters leaves the box as it is.
+  input.value = "keep";
+  input.setSelectionRange(0, 4);
+  expect(paste(s, input, "?*\nz")).toBeFalse();
+  expect(input.value).toBe("keep");
+  // Clean text on one line is the browser's own paste.
+  input.setSelectionRange(4, 4);
+  expect(paste(s, input, "s")).toBeTrue();
+  expect(input.value).toBe("keeps");
+
+  // Every one-line box keeps the first line, also one with no check.
+  const address = win.querySelector(".explorer-address input");
+  address.value = "";
+  expect(paste(s, address, "C:\\one\ntwo")).toBeFalse();
+  expect(address.value).toBe("C:\\one");
+  // A read-only box and a box with its own paste are left alone.
+  address.readOnly = true;
+  expect(paste(s, address, "x\ny")).toBeTrue();
+  address.readOnly = false;
+  address.dataset.ownPaste = "";
+  expect(paste(s, address, "x\ny")).toBeTrue();
+  // A multi-line box takes every line.
+  const area = s.document.createElement("textarea");
+  s.document.body.append(area);
+  expect(paste(s, area, "x\ny")).toBeTrue();
+  expect(area.value).toBe("x\ny");
+  area.remove();
 });
 
 test("Ctrl+Z after an input method never brings back a refused character", async () => {

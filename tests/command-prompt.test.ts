@@ -699,6 +699,73 @@ describe("Command Prompt like cmd.exe", () => {
     );
   });
 
+  // Every check comes before the old file goes. A refused item never
+  // destroys the file that it would replace.
+  test("a refused copy or move keeps the file that it would replace", () => {
+    run("cd /d C:\\");
+    const t = folderAt("t");
+    const e = folderAt("e");
+    const keep = (name) => file(e, name, 4, "old\n");
+    // The folder goes to the Recycle Bin while the question is open.
+    let old = keep("a.txt");
+    file(t, "a.txt", 4, "new\n");
+    expect(run("move C:\\t\\a.txt C:\\e")).toBe("");
+    fs.remove(e);
+    expect(run("y")).toBe("The system cannot find the path specified.");
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    const f = folderAt("f");
+    // A protected source of MOVE.
+    old = file(f, "b.txt", 4, "old\n");
+    const locked = file(t, "b.txt", 4, "new\n");
+    fs.getNode(locked.id).protected = true;
+    expect(run("move C:\\t\\b.txt C:\\f")).toBe("");
+    expect(run("y")).toBe("Access is denied.");
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // A protected file that holds the name stays, with cmd.exe's text.
+    const held = file(f, "c.txt", 4, "old\n");
+    fs.getNode(held.id).protected = true;
+    file(t, "c.txt", 4, "new\n");
+    expect(run("copy C:\\t\\c.txt C:\\f")).toBe("");
+    expect(run("y")).toBe("Access is denied.\n        0 file(s) copied.");
+    expect(fs.getNode(held.id).content).toBe("old\n");
+    // The source goes away while the question is open.
+    old = file(f, "d.txt", 4, "old\n");
+    const gone = file(t, "d.txt", 4, "new\n");
+    expect(run("copy C:\\t\\d.txt C:\\f")).toBe("");
+    fs.destroy(gone.id);
+    expect(run("y")).toBe(
+      "The system cannot find the file specified.\n        0 file(s) copied.",
+    );
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // COPY of many files onto one name: the folder goes away, or a
+    // protected file holds the name.
+    file(t, "j1.log", 2, "1\n");
+    file(t, "j2.log", 2, "2\n");
+    const g = folderAt("g");
+    old = file(g, "out.txt", 4, "old\n");
+    expect(run("copy C:\\t\\*.log C:\\g\\out.txt")).toBe(
+      "C:\\t\\j1.log\nC:\\t\\j2.log",
+    );
+    fs.remove(g);
+    expect(run("y")).toBe(
+      "The system cannot find the path specified.\n        0 file(s) copied.",
+    );
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    const h = folderAt("h");
+    old = file(h, "out.txt", 4, "old\n");
+    fs.getNode(old.id).protected = true;
+    run("copy C:\\t\\*.log C:\\h\\out.txt");
+    expect(run("y")).toBe("Access is denied.\n        0 file(s) copied.");
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // ECHO puts no new file in a folder in the Recycle Bin.
+    run("cd /d C:\\h");
+    fs.remove(h);
+    expect(run("echo x>new.txt")).toBe(
+      "The system cannot find the path specified.",
+    );
+    expect(fs.findChild(h, "new.txt")).toBeNull();
+  });
+
   test("wildcards follow the DOS rules", () => {
     expect(matchesPattern("noext", "*.*")).toBeTrue();
     expect(matchesPattern("note.txt", "note?.txt")).toBeTrue();

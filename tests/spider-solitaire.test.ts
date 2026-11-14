@@ -517,8 +517,10 @@ test("New Game and Restart ask once a card has moved, and leaving counts a loss"
   expect(h.dialog().textContent).toContain(
     "Are you sure you want to start a new game?",
   );
-  // spider.exe's questions default to No.
+  // spider.exe's questions default to No. Like XP's message box, Yes and
+  // No has a gray close button.
   expect(h.dialog().querySelector(".xp-btn.default").dataset.action).toBe("no");
+  expect(h.dialog().querySelector(".close-btn").disabled).toBeTrue();
   await h.answer("no");
   expect(h.drawnAt(28, 73)).toBe(face("5S"));
   await h.menu("game", "restart");

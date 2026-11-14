@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import { localRules } from "./tools/lint-rules.mjs";
 
 const projectDirectory = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(
@@ -48,7 +49,7 @@ export default defineConfig(
     ],
   },
   {
-    files: ["eslint.config.mjs"],
+    files: ["eslint.config.mjs", "tools/**/*.mjs"],
     extends: [js.configs.recommended],
     languageOptions: {
       globals: globals.node,
@@ -145,9 +146,12 @@ export default defineConfig(
   },
   {
     files: ["tests/**/*.ts"],
+    plugins: { local: localRules },
     rules: {
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/no-explicit-any": "off",
+      // An expect(...) with no matcher passes and checks nothing.
+      "local/expect-needs-matcher": "error",
     },
   },
   prettier,

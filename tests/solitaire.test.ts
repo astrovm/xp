@@ -376,6 +376,8 @@ test("the winning cards bounce until done, then Deal Again? asks", async () => {
   await h.key("2", { altKey: true, shiftKey: true, code: "Digit2" });
   for (let wait = 0; wait < 40 && !h.dialog(); wait += 1) await h.settle(4);
   expect(h.dialog().textContent).toContain("Deal Again?");
+  // Like XP's message box, Yes and No has a gray close button.
+  expect(h.dialog().querySelector(".close-btn").disabled).toBeTrue();
   expect(h.help()).toBe("");
   await h.answer("no");
   // The game is over: presses do nothing.

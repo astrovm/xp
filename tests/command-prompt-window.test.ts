@@ -212,7 +212,7 @@ test("DIR /P pauses after each screen with XP's text, and Ctrl+C ends it", async
   await h.enter("dir /p /-p");
   expect(h.output.textContent.slice(start)).not.toContain(PAUSE);
   start = h.output.textContent.length;
-  await h.enter("dir /p /b f0*");
+  await h.enter("dir /p /b f00*");
   expect(h.output.textContent.slice(start)).not.toContain(PAUSE);
   expect(prompt.textContent).toBe("C:\\Documents and Settings\\astro\\Many>");
 
@@ -232,4 +232,194 @@ test("DIR /P pauses after each screen with XP's text, and Ctrl+C ends it", async
   expect(shown.slice(1, -1)).toHaveLength(9);
   expect(shown.at(-1)).toBe(PAUSE);
   expect(await key("c", { ctrlKey: true })).toBeTrue();
+});
+
+const PAUSE = "Press any key to continue . . . ";
+// Pastes text into the Command Prompt like Chrome: the paste event first.
+const paste = (h, text) => {
+  const clipboardData = new h.s.window.DataTransfer();
+  clipboardData.setData("text/plain", text);
+  const event = new h.s.window.ClipboardEvent("paste", {
+    clipboardData,
+    bubbles: true,
+    cancelable: true,
+  });
+  h.input.dispatchEvent(event);
+  return event.defaultPrevented;
+};
+const manyFiles = (
+  h,
+  count,
+  name = (index) => `f${String(index).padStart(2, "0")}.txt`,
+) => {
+  const fs = h.s.window.VirtualFS;
+  const folder = fs.createFolder(fs.USER_PROFILE, "Many");
+  for (let index = 0; index < count; index += 1)
+    fs.createFile(folder.id, name(index), { content: "x" });
+};
+
+// The XP SP3 VM: a paste types the text, and each line break runs the line
+// before it. Text after the last line break stays typed.
+test("a paste in the Command Prompt runs each line at its line break, like XP", async () => {
+  const h = await openCommandPrompt();
+  const prompt = "C:\\Documents and Settings\\astro>";
+  let start = h.output.textContent.length;
+  expect(paste(h, "echo one\r\necho two")).toBeTrue();
+  await settle();
+  expect(h.output.textContent.slice(start)).toBe(`${prompt}echo one\none\n\n`);
+  expect(h.input.value).toBe("echo two");
+  // The text goes in at the caret, and every kind of line break runs.
+  h.input.value = "ec";
+  h.input.setSelectionRange(2, 2);
+  start = h.output.textContent.length;
+  paste(h, "ho a\recho b\necho c\r\n");
+  await settle();
+  expect(h.output.textContent.slice(start)).toBe(
+    `${prompt}echo a\na\n\n${prompt}echo b\nb\n\n${prompt}echo c\nc\n\n`,
+  );
+  expect(h.input.value).toBe("");
+  // A line of a paste answers the question of a command.
+  const fs = h.s.window.VirtualFS;
+  fs.createFile(fs.USER_PROFILE, "a.txt", { content: "a" });
+  fs.createFolder(fs.USER_PROFILE, "Box");
+  await h.enter("copy a.txt Box");
+  start = h.output.textContent.length;
+  paste(h, "copy a.txt Box\ny\n");
+  await settle();
+  expect(h.output.textContent.slice(start)).toContain(
+    "Overwrite Box\\a.txt? (Yes/No/All): y\n        1 file(s) copied.",
+  );
+  // EXIT in a paste closes the window, and the rest goes away.
+  paste(h, "exit\necho late\n");
+  await settle();
+  expect(h.win.isConnected).toBeFalse();
+});
+
+test("a paste at the pause of DIR /P goes on, and the rest runs after it", async () => {
+  const h = await openCommandPrompt();
+  manyFiles(h, 30);
+  await h.enter("cd Many");
+  const start = h.output.textContent.length;
+  await h.enter("dir /p");
+  expect(h.output.textContent.endsWith(PAUSE)).toBeTrue();
+  // The pause reads one character. A Windows line break is one character.
+  paste(h, "\r\necho after\n");
+  await settle();
+  const shown = h.output.textContent.slice(start);
+  expect(shown).toContain("Dir(s)");
+  expect(shown).toContain("Many>echo after\nafter\n");
+  expect(h.input.value).toBe("");
+  // A pasted command that pauses reads the next character of the paste.
+  paste(h, "dir /p\nzecho again\n");
+  await settle();
+  expect(h.output.textContent.endsWith("Many>echo again\nagain\n\n")).toBe(
+    true,
+  );
+  // A paste with no text does nothing at a pause.
+  await h.enter("dir /p");
+  paste(h, "");
+  await settle();
+  expect(h.output.textContent.endsWith(PAUSE)).toBeTrue();
+  await h.press("x");
+  // A paste of more characters than pauses types the rest.
+  await h.enter("dir /p");
+  paste(h, "xy");
+  await settle();
+  expect(h.output.textContent.endsWith(PAUSE)).toBeFalse();
+  expect(h.input.value).toBe("y");
+});
+
+// The XP SP3 VM: DIR /P counts screen rows, not lines. A screen of 25 rows
+// shows 24 rows, then the question. A long line takes more than one row.
+test("DIR /P counts the screen rows of long lines, like the console", async () => {
+  const h = await openCommandPrompt();
+  // 80 columns of 12 pixels make a row. A line goes on to the next row at
+  // the last column.
+  const proto = h.s.window.Range.prototype;
+  const rects = proto.getClientRects;
+  proto.getClientRects = function () {
+    const length = this.startContainer.textContent.length;
+    return Array.from({ length: Math.ceil(length / 80) }, (_, row) => ({
+      top: row * 12,
+    }));
+  };
+  try {
+    // Each name takes two rows in the bare format.
+    manyFiles(
+      h,
+      20,
+      (index) => `${String(index).padStart(2, "0")}${"n".repeat(90)}.txt`,
+    );
+    await h.enter("cd Many");
+    const start = h.output.textContent.length;
+    await h.enter("dir /p /b");
+    const shown = h.output.textContent.slice(start).split("\n");
+    // 12 names of two rows fill 24 rows.
+    expect(shown.slice(1, -1)).toHaveLength(12);
+    expect(shown.at(-1)).toBe(PAUSE);
+    await h.press("x");
+    // The question row is not counted: the next page has 8 names.
+    expect(
+      h.output.textContent.slice(start).split("\n").slice(14, 22),
+    ).toHaveLength(8);
+    expect(h.output.textContent.slice(start)).not.toContain("continuing");
+  } finally {
+    proto.getClientRects = rects;
+  }
+});
+
+// The XP SP3 VM: at the pause, the modifier and lock keys do not go on. An
+// arrow or a function key goes on two times. Ctrl+C prints no ^C.
+test("the pause of DIR /P takes the keys like cmd.exe", async () => {
+  const h = await openCommandPrompt();
+  manyFiles(h, 200, (index) => `f${String(index).padStart(3, "0")}.txt`);
+  await h.enter("cd Many");
+  const key = async (name, init = {}) => {
+    const event = new h.s.window.KeyboardEvent("keydown", {
+      key: name,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    h.input.dispatchEvent(event);
+    await settle();
+    return event.defaultPrevented;
+  };
+  const pauses = () => h.output.textContent.split(PAUSE).length - 1;
+  await h.enter("dir /p");
+  expect(pauses()).toBe(1);
+  for (const name of [
+    "Shift",
+    "Control",
+    "Alt",
+    "AltGraph",
+    "CapsLock",
+    "NumLock",
+    "ScrollLock",
+    "Dead",
+    "Process",
+    "Unidentified",
+  ])
+    expect(await key(name)).toBeFalse();
+  expect(pauses()).toBe(1);
+  // Space goes on one page.
+  expect(await key(" ")).toBeTrue();
+  expect(pauses()).toBe(2);
+  // Left and F5 each go on two pages.
+  await key("ArrowLeft");
+  expect(pauses()).toBe(4);
+  await key("F5");
+  expect(pauses()).toBe(6);
+  // Ctrl+C ends the listing with no ^C.
+  await key("c", { ctrlKey: true });
+  expect(h.output.textContent.endsWith(`${PAUSE}\n\n`)).toBeTrue();
+  expect(h.output.textContent.includes("^C")).toBeFalse();
+  // A second press left over at the end of a command goes away.
+  const before = pauses();
+  await h.enter("dir /p /b f00*");
+  await h.enter("dir /p");
+  expect(pauses()).toBe(before + 1);
+  await key("End");
+  expect(pauses()).toBe(before + 3);
+  await key("c", { ctrlKey: true });
 });

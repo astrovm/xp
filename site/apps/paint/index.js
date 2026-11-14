@@ -460,8 +460,10 @@ const mountPaint = (shell, instance) => {
     try {
       const revisionToSave = editRevision;
       const content = await encodeCanvas(canvas, destination.name);
-      // Save writes the open picture. Save As finds the file again when
-      // Paint writes, after the Replace question and the encoding.
+      // Save writes the open picture, and stops if another window changed
+      // it. Save As finds the file again when Paint writes, after the
+      // Replace question and the encoding. Like Notepad's, it writes the
+      // file the user agreed to replace.
       const file = destination.inPlace
         ? await shell.setFileContent(fileId, content, {
             expectedContent: savedContent,
@@ -470,10 +472,6 @@ const mountPaint = (shell, instance) => {
             destination.parentId,
             destination.name,
             content,
-            {
-              keepId: fileId,
-              expectedContent: savedContent,
-            },
           );
       fileId = file.id;
       fileName = file.name;

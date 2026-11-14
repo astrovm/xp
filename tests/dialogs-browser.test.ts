@@ -245,9 +245,10 @@ test("keyboard handling respects text fields, missing defaults and disabled butt
   key(s, "f", { altKey: true });
   expect(await choice).toBe("first");
 
-  const unanswered = d.message({ buttons: [{ id: "only", label: "Only" }] });
+  // Like XP, a box with one button is an OK box: Esc gives that button.
+  const only = d.message({ buttons: [{ id: "only", label: "Only" }] });
   key(s, "Escape");
-  expect(await unanswered).toBeNull();
+  expect(await only).toBe("only");
   const preferred = d.message({
     text: "Pick",
     buttons: d.BUTTON_SETS.yesNo,
@@ -482,7 +483,7 @@ test("a closed dialog gives the keys back, but never to a control that cannot ta
   expect(active() === s.document.body).toBeTrue();
   await answer(d.alert("Inner"));
   expect(active() === outerDefault).toBeTrue();
-  key(s, "Escape");
+  key(s, "n");
   expect(await outer).toBeFalse();
 
   // With no dialog under it, the active window gets them.

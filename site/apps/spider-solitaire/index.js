@@ -770,9 +770,10 @@ const mountSpider = (context) => {
         draw();
         return result;
       });
+  // Like XP's message box, Yes/No has a gray close button.
   const YES_NO = [
     { id: "yes", label: "&Yes" },
-    { id: "no", label: "&No", isCancel: true },
+    { id: "no", label: "&No" },
   ];
   const YES_NO_CANCEL = [
     { id: "yes", label: "&Yes" },

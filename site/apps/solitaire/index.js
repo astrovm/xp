@@ -626,10 +626,7 @@ const mountSolitaire = (context) => {
       title: "Solitaire",
       text: "Deal Again?",
       icon: "warning",
-      buttons: [
-        { id: "yes", label: "&Yes", isDefault: true },
-        { id: "no", label: "&No", isCancel: true },
-      ],
+      buttons: dialogs.BUTTON_SETS.yesNo,
     });
     if (again === "yes") dealGame();
     else draw();

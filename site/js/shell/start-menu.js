@@ -186,6 +186,29 @@ const openRunDialog = ({ title = "Run" } = {}) => {
     if (key && !dialog.accessKeys.has(key)) dialog.accessKeys.set(key, button);
   });
   dialog.accessKeys.set("o", { disabled: false, click: () => input.focus() });
+  // Like XP, text dropped anywhere on the dialog goes at the end of the Open
+  // box, after a space. A one-line box keeps only the first line.
+  dialog.el.dataset.textDrop = "";
+  const takesDrop = (event) =>
+    event.dataTransfer?.types?.includes("text/plain") ?? false;
+  ["dragenter", "dragover"].forEach((type) =>
+    dialog.el.addEventListener(type, (event) => {
+      if (!takesDrop(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }),
+  );
+  dialog.el.addEventListener("drop", (event) => {
+    if (!takesDrop(event)) return;
+    event.preventDefault();
+    const text = event.dataTransfer
+      .getData("text/plain")
+      .split(/\r\n|\r|\n/)[0];
+    if (!text) return;
+    input.value = input.value ? `${input.value} ${text}` : text;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
   input.focus();
 };
 

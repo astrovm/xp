@@ -29,7 +29,15 @@
       { id: "ok", label: "OK", isDefault: true },
       { id: "cancel", label: "Cancel", isCancel: true },
     ],
+    // XP's Yes/No message box has a gray close button: only Yes or No
+    // closes it.
     yesNo: [
+      { id: "yes", label: "&Yes", isDefault: true },
+      { id: "no", label: "&No" },
+    ],
+    // XP's own Yes/No dialogs, such as Confirm File Delete, close with No
+    // on Esc or the close button.
+    yesNoClosable: [
       { id: "yes", label: "&Yes", isDefault: true },
       { id: "no", label: "&No", isCancel: true },
     ],
@@ -92,10 +100,37 @@
     ".png": "PNG Image",
     ".txt": "Text Document",
   };
-  // A type that XP knows by name, like "Text Document". XP asks before a
-  // rename changes the extension of a file of such a type.
+  // The extensions that have a program in a new XP SP3, as the "assoc"
+  // command lists them in an XP SP3 virtual machine. The simulation adds
+  // its own ".game".
+  const XP_REGISTERED_EXTENSIONS = new Set(
+    `323 386 aca acf acs acw ai aif aifc aiff ani aps asa ascx asf asm asmx
+    asp aspx asx au audiocd avi bat bfc bin bkf blg bmp bsc c cab cat cda
+    cdf cdx cer cgm chk chm clp cmd cnf com cpl cpp crl crt css csv ctt
+    cur cxx dat db dbg dct def der desklink dib dic diz dl_ dll doc dos
+    dot drv dsn dun dvd dvr-ms emf eml eps ex_ exe exp eyb fif fnd fnt
+    folder fon ghi gif grp gz h hhc hlp hpp hqx ht hta htc htm html htt
+    htw htx hxx icc icm ico idb idl idq iii ilk imc in_ inc inf ini ins
+    inv inx isp its ivf java jbf jfif job jod jpe jpeg jpg js jse latex
+    lib lnk local log lwv m14 m1v m3u man manifest mapimail mdb mht mhtml
+    mid midi mmf mmm mov movie mp2 mp2v mp3 mpa mpe mpeg mpg mpv2 msc msg
+    msi msp msrcincident msstyles mswmm mv mydocs ncb nfo nls nmw nsc nvr
+    nws obj oc_ ocx odc otf p10 p12 p7b p7c p7m p7r p7s pbk pch pdb pds
+    pfm pfx php3 pic pif pko pl plg pma pmc pml pmr pmw pnf png pot pps
+    ppt prf ps psd psw qds rat rc rdp reg res rle rmi rnk rpc rsp rtf sam
+    sbr sc2 scf scp scr sct sdb sed shb shs shtml shw sit snd spc spl sql
+    sr_ sst stl stm swf sy_ sym sys tar text tgz theme tif tiff tlb tsp
+    tsv ttc ttf txt udl uls url vbe vbs vbx vcf vxd wab wav wax wb2 wdp
+    webpnp wht wk4 wll wlt wm wma wmd wmdb wmf wmp wms wmv wmx wmz wpd wpg
+    wpl wri wsc wsf wsh wsz wtx wvx x xbm xix xlb xlc xls xlt xml xsl z
+    z96 zap zfsendtotarget zip game`
+      .split(/\s+/)
+      .map((extension) => `.${extension}`),
+  );
+  // A type that has a program, like ".txt" or ".mp3". XP asks before a
+  // rename changes or removes the extension of a file of such a type.
   const isKnownFileType = (ext) =>
-    Object.hasOwn(XP_FILE_TYPES, String(ext || "").toLowerCase());
+    XP_REGISTERED_EXTENSIONS.has(String(ext || "").toLowerCase());
   const describeFileType = (ext) => {
     const extension = String(ext || "").toLowerCase();
     if (!extension) return "File";
@@ -132,16 +167,37 @@
       target.tagName === "TEXTAREA" ||
       (target.tagName === "INPUT" && !NOT_TEXT_INPUTS.has(target.type)));
 
-  // The letter of an access key, such as F in Alt+F. On a Mac, Option
-  // changes the character (Option+F types "ƒ"). Outside a text box, a key
-  // that is not a plain letter or digit gives the letter of its place on
-  // the keyboard. In a text box, the key gives only its own character, so
-  // Option types that character there. A dead key (Option+E starts an
-  // accent) is never an access key.
+  // True on a Mac, an iPhone or an iPad, where Option types characters.
+  const isApplePlatform = () =>
+    /^(?:mac|iphone|ipad|ipod)/i.test(
+      navigator.userAgentData?.platform || navigator.platform,
+    );
+
+  // The letter of an access key, such as F in Alt+F.
+  // In a text box:
+  // - A dead key (Option+E on a Mac starts an accent) is never an access
+  //   key, because it types.
+  // - On a Mac, the key gives only its own character, so Option types that
+  //   character (Option+F types "ƒ").
+  // - On Windows and Linux, a key that types a character that is not a
+  //   Latin letter, such as a Greek or Russian one, gives the letter of its
+  //   place on the keyboard, like Windows: Alt+F works with each layout.
+  // Outside a text box nothing types. A key that is not a plain letter or
+  // digit, a dead key too, gives the letter or digit of its place on the
+  // keyboard. So Option works like Alt on a Mac.
   const accessKeyOf = (event) => {
-    if (event.key === "Dead") return "";
     const key = event.key.toLowerCase();
-    if (/^[a-z0-9]$/.test(key) || isEditable(event.target)) return key;
+    if (isEditable(event.target)) {
+      if (event.key === "Dead") return "";
+      const place = /^Key([A-Z])$/.exec(event.code);
+      return place &&
+        !isApplePlatform() &&
+        [...key].length === 1 &&
+        !/^[a-z]$/.test(key)
+        ? place[1].toLowerCase()
+        : key;
+    }
+    if (/^[a-z0-9]$/.test(key)) return key;
     const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
     return place ? (place[1] ?? place[2]).toLowerCase() : key;
   };
@@ -251,9 +307,7 @@
     input.setSelectionRange(start + text.length, start + text.length);
   };
 
-  // Like an XP edit box, a one-line text box keeps only the first line of
-  // pasted text. Each browser does a different thing with the line breaks,
-  // so the box puts in the first line itself.
+  // The input types that are one-line text boxes, like XP's edit boxes.
   const ONE_LINE_INPUTS = new Set([
     "text",
     "search",
@@ -262,35 +316,88 @@
     "email",
     "password",
   ]);
+  const isOneLineBox = (target) =>
+    target?.tagName === "INPUT" && ONE_LINE_INPUTS.has(target.type);
+
+  // The check of each box that refuses some characters, such as a file
+  // name box. A paste and typed text go through the same check.
+  const textChecks = new WeakMap();
+
+  // Like an XP edit box, a one-line text box keeps only the first line of
+  // pasted text. Each browser does a different thing with the line breaks,
+  // so the box puts in the first line itself. A box with a check, such as
+  // a file name box, puts in only the characters that the check keeps. A
+  // box with its own paste, such as the Command Prompt, has
+  // data-own-paste.
   document.addEventListener(
     "paste",
     (event) => {
       const input = event.target;
       if (
-        input.tagName !== "INPUT" ||
-        !ONE_LINE_INPUTS.has(input.type) ||
+        !isOneLineBox(input) ||
         input.readOnly ||
-        input.disabled
+        input.disabled ||
+        input.dataset.ownPaste !== undefined
       )
         return;
       const text = event.clipboardData?.getData("text/plain") ?? "";
       const firstLine = text.split(/\r\n|\r|\n/)[0];
-      if (firstLine === text) return;
+      const check = textChecks.get(input);
+      const kept = check ? check.keep(firstLine) : firstLine;
+      if (kept === text) return;
       event.preventDefault();
       const { selectionStart, selectionEnd } = input;
-      if (firstLine || selectionStart !== selectionEnd)
-        replaceText(input, selectionStart, selectionEnd, firstLine);
+      // An empty first line takes the place of the selected text. Text with
+      // only refused characters leaves the box as it is.
+      if (kept || (!firstLine && selectionStart !== selectionEnd))
+        replaceText(input, selectionStart, selectionEnd, kept);
+      if (kept !== firstLine) check.refuse();
     },
     true,
   );
 
+  // XP's one-line edit boxes do not select all on Ctrl+A. Multi-line boxes,
+  // such as Notepad's, keep it.
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === "a" &&
+        isOneLineBox(event.target)
+      )
+        event.preventDefault();
+    },
+    true,
+  );
+
+  // XP's edit boxes, one-line and multi-line, take no dropped text. A
+  // dropped file is left to the page. An element with data-text-drop, such
+  // as the Run dialog, takes the text itself.
+  const refusesTextDrop = (event) =>
+    !!event.dataTransfer &&
+    isEditable(event.target) &&
+    !event.target.closest("[data-text-drop]") &&
+    !event.dataTransfer.types.includes("Files");
+  ["dragenter", "dragover", "drop"].forEach((type) =>
+    document.addEventListener(
+      type,
+      (event) => {
+        if (!refusesTextDrop(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "none";
+      },
+      true,
+    ),
+  );
+
   // A file name box takes no character that Windows refuses in a name.
-  // Like XP's rename box, it drops the character and shows a balloon. Typed,
-  // pasted and dropped text never gets in. Only the first line of pasted
-  // text gets in, as in any one-line text box. Text from an input
-  // method gets in while it is composed, and the box removes the bad
-  // characters when the composition ends. Undo and Redo skip each state
-  // with a bad character, so they never bring one back.
+  // Like XP's rename box, it drops the character and shows a balloon. Typed
+  // and pasted text never gets in. Text from an input method gets in while
+  // it is composed, and the box removes the bad characters when the
+  // composition ends. Undo and Redo skip each state with a bad character,
+  // so they never bring one back.
   const guardFileName = (input) => {
     const invalid = new RegExp(fs().INVALID_NAME_CHARACTERS.source, "g");
     const hasInvalid = (text) => new RegExp(invalid.source).test(text);
@@ -299,14 +406,14 @@
         "A file name cannot contain any of the following characters:",
         '\\ / : * ? " < > |',
       ]);
+    textChecks.set(input, {
+      keep: (text) => text.replace(invalid, ""),
+      refuse: warn,
+    });
     input.addEventListener("beforeinput", (event) => {
-      if (event.isComposing) return;
-      const text =
-        event.data || event.dataTransfer?.getData("text/plain") || "";
-      const oneLine = text.replace(/[\r\n]/g, "");
-      if (!hasInvalid(oneLine)) return;
+      if (event.isComposing || !hasInvalid(event.data || "")) return;
       event.preventDefault();
-      const kept = oneLine.replace(invalid, "");
+      const kept = event.data.replace(invalid, "");
       if (kept)
         replaceText(input, input.selectionStart, input.selectionEnd, kept);
       warn();
@@ -352,6 +459,9 @@
   //   onCancel - Escape/title-close behavior (default: close with null)
   //   help     - add the title bar ? button for "What's This?" help
   //   systemMenu - false for dialogs without a close button (default: true)
+  //   closable - false for a gray close button, like XP's Yes/No message
+  //              box: the close button, Esc and Alt+F4 do nothing
+  //              (default: true)
   // Returns { el, body, close, onResult }.
   // XP's "What's This?" help: the title bar ? button arms help mode, and the
   // next click on a control shows its help text. Controls without help get
@@ -417,6 +527,7 @@
     onCancel = null,
     help = false,
     systemMenu = true,
+    closable = true,
   } = {}) => {
     const previouslyFocused = document.activeElement;
 
@@ -442,6 +553,7 @@
     closeBtn.className = "tb-btn close-btn";
     closeBtn.title = "Close";
     closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.disabled = !closable;
     closeBtn.addEventListener("click", () => dialog.cancel());
     if (systemMenu) titleButtons.appendChild(closeBtn);
     titleBar.append(titleText, titleButtons);
@@ -529,7 +641,14 @@
           // Escape leaves "What's This?" mode before it closes the dialog.
           if (el.classList.contains("whats-this"))
             el.classList.remove("whats-this");
-          else dialog.cancel();
+          else if (closable) dialog.cancel();
+          return;
+        }
+        // Alt+F4 closes the dialog like its close button. A dialog with a
+        // gray close button stays open.
+        if (e.altKey && e.key === "F4") {
+          e.preventDefault();
+          if (closable && systemMenu) dialog.cancel();
           return;
         }
         if (e.key === "Enter") {
@@ -551,16 +670,6 @@
             e.preventDefault();
             dialog.defaultButton.click();
           }
-          return;
-        }
-        // XP's one-line edit boxes do not select all on Ctrl+A.
-        if (
-          (e.ctrlKey || e.metaKey) &&
-          !e.altKey &&
-          e.key.toLowerCase() === "a" &&
-          e.target.tagName === "INPUT"
-        ) {
-          e.preventDefault();
           return;
         }
         handleAccessKey(e);
@@ -732,14 +841,16 @@
           ? definition.id === defaultButton
           : definition.isDefault,
       }));
+      // Like XP's message box, a box with no Cancel answer, such as Yes and
+      // No, has a gray close button, and Esc and Alt+F4 do nothing. A box
+      // with one button is an OK box: closing it gives that button.
+      const cancel =
+        resolvedButtons.find((b) => b.isCancel) ||
+        (resolvedButtons.length === 1 ? resolvedButtons[0] : null);
       const dialog = createDialog({
         title,
-        onCancel: () => {
-          const cancel =
-            resolvedButtons.find((b) => b.isCancel) ||
-            resolvedButtons.find((b) => b.isDefault);
-          dialog.close(cancel ? cancel.id : null);
-        },
+        closable: !!cancel,
+        onCancel: () => dialog.close(cancel.id),
       });
       dialog.onResult(resolve);
       dialog.el.classList.add("xp-message-box");
@@ -764,10 +875,15 @@
   const alert = (text, title = "Message", icon = "info") =>
     message({ title, text, icon, buttons: BUTTON_SETS.ok });
 
-  const confirm = (text, title = "Confirm", icon = "question") =>
-    message({ title, text, icon, buttons: BUTTON_SETS.yesNo }).then(
-      (result) => result === "yes",
-    );
+  // A Yes/No question. It resolves true for Yes. The buttons are a
+  // message box's by default; XP's own dialogs pass yesNoClosable.
+  const confirm = (
+    text,
+    title = "Confirm",
+    icon = "question",
+    buttons = BUTTON_SETS.yesNo,
+  ) =>
+    message({ title, text, icon, buttons }).then((result) => result === "yes");
 
   // Explorer, the Desktop and the file dialogs check a rename the same way.
   // The name that a rename box gives, like XP: spaces and periods at the end
@@ -801,8 +917,9 @@
   };
 
   // Like XP, a rename that changes or drops the extension of a file of a
-  // known type asks first. A folder, a file with no extension and a file of
-  // a type that XP does not know never ask. It resolves true to go on.
+  // type with a program, such as ".txt" or ".mp3", asks first. A folder, a
+  // file with no extension and a file of a type with no program, such as
+  // ".xyz", never ask. It resolves true to go on.
   const confirmExtensionChange = async (node, name) => {
     const extension = fs().extractExtension(node.name);
     if (
@@ -1526,9 +1643,10 @@
       const takesNewFolder = (folderId) =>
         folderId !== fs().MY_COMPUTER && !fs().isInRecycleBin(folderId);
 
-      // The rename box of a new folder in the list, like XP's. Enter or a
-      // click elsewhere gives the name. Esc keeps the old name. The rules
-      // and the texts are the rename box's in Explorer.
+      // The rename box of an item in the list, like XP's. A new folder and
+      // F2 open it. Enter or a click elsewhere gives the name. Esc keeps the
+      // old name. The rules and the texts are the rename box's in Explorer.
+      // Like XP, the File name box keeps its text.
       const renameInList = (nodeId) => {
         const item = list.querySelector(
           `.dlg-file-item[data-node-id="${CSS.escape(nodeId)}"]`,
@@ -1555,11 +1673,18 @@
           if (finished) return;
           finished = true;
           const name = commit ? renameBoxName(input.value) : null;
+          const changed = name !== null && name !== node.name;
+          // Like XP, the box keeps the new name while the question shows. No
+          // opens the box again with the old name, all selected.
+          if (changed && !(await confirmExtensionChange(node, name))) {
+            input.replaceWith(label);
+            if (dialogStack.includes(dialog) && item.isConnected)
+              renameInList(nodeId);
+            return;
+          }
           input.replaceWith(label);
           if (refocus) item.focus();
-          if (name === null || name === node.name) return;
-          // Only a new folder gets this box, and a folder's name never asks
-          // about its extension.
+          if (!changed) return;
           try {
             await fs().rename(nodeId, name);
             renderList();
@@ -2047,6 +2172,21 @@
               item.classList.add("selected");
               if (child.type === "file") nameInput.value = child.name;
             });
+            // Like XP, F2 renames the item. A drive and a system folder
+            // keep their names.
+            item.addEventListener("keydown", (event) => {
+              if (
+                event.key !== "F2" ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                child.protected
+              )
+                return;
+              event.preventDefault();
+              renameInList(child.id);
+            });
             item.addEventListener("dblclick", () => {
               if (child.type === "folder") {
                 navigate(child.id);
@@ -2169,8 +2309,9 @@
           existingId: existing ? existing.id : null,
         };
         if (!existing) return result;
+        // Like XP, the question has the dialog's own title.
         return message({
-          title: "Confirm Save As",
+          title,
           text: `${name} already exists.\nDo you want to replace it?`,
           icon: "warning",
           buttons: BUTTON_SETS.yesNo,

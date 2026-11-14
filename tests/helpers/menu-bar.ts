@@ -124,26 +124,44 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   expect(keysOn(control)).toBeTrue();
 
   // 2. On a Mac, Option changes the character of the key, or starts an
-  // accent ("Dead"). A dead key never opens a menu. Outside a text box,
-  // the place of the key on the keyboard still picks the menu. In a text
-  // box, Option types its character.
-  control.focus();
-  const code = `Key${accessKey.toUpperCase()}`;
-  await key(control, "Dead", { altKey: true, code });
-  expect(title.getAttribute("aria-expanded")).toBe("false");
-  expect(keysOn(control)).toBeTrue();
+  // accent ("Dead"). In a text box, a dead key opens no menu, and Option
+  // types its character. Outside a text box, the place of the key on the
+  // keyboard picks the menu. On Windows and Linux, a key that gives no
+  // Latin letter picks the menu by its place, also in a text box.
   // A slider, a check box or a button is not a text box.
   const typesText =
     control.tagName === "TEXTAREA" ||
     (control.tagName === "INPUT" &&
       !["range", "checkbox", "radio", "button"].includes(control.type));
-  await key(control, "©", { altKey: true, code });
-  expect(title.getAttribute("aria-expanded")).toBe(String(!typesText));
-  if (!typesText) {
-    await key(active(), "Escape");
-    await key(title, "Escape");
+  const code = `Key${accessKey.toUpperCase()}`;
+  const platform = Object.getOwnPropertyDescriptor(
+    s.window.navigator,
+    "platform",
+  );
+  const opensMenu = async (name, opens) => {
+    control.focus();
+    await key(control, name, { altKey: true, code });
+    expect(title.getAttribute("aria-expanded")).toBe(String(opens));
+    if (opens) {
+      await key(active(), "Escape");
+      await key(title, "Escape");
+    }
+    expect(keysOn(control)).toBeTrue();
+  };
+  try {
+    for (const mac of [true, false]) {
+      Object.defineProperty(s.window.navigator, "platform", {
+        configurable: true,
+        value: mac ? "MacIntel" : "Linux x86_64",
+      });
+      await opensMenu("Dead", !typesText);
+      await opensMenu("©", !(typesText && mac));
+    }
+  } finally {
+    if (platform)
+      Object.defineProperty(s.window.navigator, "platform", platform);
+    else delete s.window.navigator.platform;
   }
-  expect(keysOn(control)).toBeTrue();
 
   // 1. A click opens the menu and a second one closes it.
   await clickTitle();

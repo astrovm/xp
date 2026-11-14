@@ -394,6 +394,12 @@ export class CommandSession {
     return `Overwrite ${shown}? (Yes/No/All): `;
   }
 
+  // A folder in the Recycle Bin, such as a current folder that was
+  // deleted, takes no new files.
+  takesFiles(folderId) {
+    return !!this.fs.getNode(folderId) && !this.fs.isInRecycleBin(folderId);
+  }
+
   // COPY and MOVE take * and ?, ask before they replace a file, and look
   // at the files again after each answer, because another window can
   // change them while the question is open.
@@ -407,11 +413,7 @@ export class CommandSession {
     if (!source.items.length) return { output: NOT_FOUND };
     const typed = paths[1] ?? "";
     const target = this.destination(typed || ".");
-    // A folder in the Recycle Bin, such as a current folder that was
-    // deleted, takes no new files.
-    const takesFiles = (folderId) =>
-      !!this.fs.getNode(folderId) && !this.fs.isInRecycleBin(folderId);
-    if (!target || !takesFiles(target.folderId))
+    if (!target || !this.takesFiles(target.folderId))
       return { output: PATH_NOT_FOUND };
     if (target.single && source.many) {
       if (move)
@@ -467,22 +469,14 @@ export class CommandSession {
           if (choice === "n") continue;
           if (choice === "a") all = true;
         }
+        // Every check comes before the old file goes, so a refused item
+        // never destroys a file. The files and the folder can change
+        // while a question is open.
         if (session.fs.getNode(item.id)?.parent !== from) {
           out.push(NOT_FOUND);
           continue;
         }
-        // Whatever file holds the name now is the one that goes, like
-        // cmd.exe. A folder that holds it stops this item.
-        const current = session.fs.findChild(folderId, name);
-        if (current && current.id !== item.id) {
-          if (!isFile(current) || !isFile(item)) {
-            out.push(ACCESS_DENIED);
-            continue;
-          }
-          session.fs.destroy(current.id);
-        }
-        // The folder can go away while a question is open.
-        if (!takesFiles(folderId)) {
+        if (!session.takesFiles(folderId)) {
           out.push(PATH_NOT_FOUND);
           continue;
         }
@@ -492,6 +486,21 @@ export class CommandSession {
           out.push(ACCESS_DENIED);
           continue;
         }
+        // Whatever file holds the name now is the one that goes, like
+        // cmd.exe. A folder or a protected file that holds it stops this
+        // item.
+        const current = session.fs.findChild(folderId, name);
+        const replaced = current && current.id !== item.id ? current : null;
+        if (
+          replaced &&
+          (!isFile(replaced) ||
+            !isFile(item) ||
+            session.fs.isProtected(replaced.id))
+        ) {
+          out.push(ACCESS_DENIED);
+          continue;
+        }
+        if (replaced) session.fs.destroy(replaced.id);
         const placed = move
           ? session.fs.move(item.id, folderId)
           : session.fs.copy(item.id, folderId);
@@ -524,8 +533,13 @@ export class CommandSession {
         .filter((item) => session.fs.getNode(item.id))
         .map((item) => session.fs.getContent(item.id))
         .join("");
+      // The folder can go away while the question is open.
+      if (!session.takesFiles(target.folderId)) {
+        out.push(PATH_NOT_FOUND, "        0 file(s) copied.");
+        return;
+      }
       const current = session.fs.findChild(target.folderId, name);
-      if (current && !isFile(current)) {
+      if (current && (!isFile(current) || session.fs.isProtected(current.id))) {
         out.push(ACCESS_DENIED, "        0 file(s) copied.");
         return;
       }
@@ -986,7 +1000,11 @@ export class CommandSession {
     const destination = this.resolve(tokenize(path).join(" "), {
       parent: true,
     });
-    if (!destination)
+    // A folder in the Recycle Bin takes no new file.
+    if (
+      !destination ||
+      (!destination.node && !this.takesFiles(destination.parentId))
+    )
       return { output: "The system cannot find the path specified." };
     const content = `${text.trimEnd()}\n`;
     if (destination.node) {

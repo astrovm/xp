@@ -772,81 +772,125 @@ test("a press into a game's frame makes its window active", async () => {
 // use the place of the key on the keyboard, so Option works like Alt on
 // Windows. In a text box, Option types its character. A dead key is never
 // an access key.
-test("Option and a letter on a Mac picks the access key by its place on the keyboard", async () => {
+// The user's rules for access keys: outside a text box, a key that gives no
+// Latin letter or digit picks by its place on the keyboard. In a text box,
+// a Mac uses only the character of the key, and Windows and Linux fall back
+// to the place of a key that gives no Latin letter. A dead key opens no menu
+// only in a text box.
+test("access keys follow the place of the key, by platform and by text box", async () => {
   const s = await login(await loadShell());
   const d = s.window.XPDialogs;
-  expect(d.accessKeyOf({ key: "ƒ", code: "KeyF" })).toBe("f");
-  expect(d.accessKeyOf({ key: "¡", code: "Digit1" })).toBe("1");
-  // A dead key, in a text box and outside it.
-  expect(d.accessKeyOf({ key: "Dead", code: "KeyE" })).toBe("");
+  const nav = s.window.navigator;
+  const setPlatform = (platform, data) => {
+    Object.defineProperty(nav, "platform", {
+      configurable: true,
+      value: platform,
+    });
+    Object.defineProperty(nav, "userAgentData", {
+      configurable: true,
+      value: data,
+    });
+  };
   const text = s.document.createElement("input");
-  expect(d.accessKeyOf({ key: "Dead", code: "KeyE", target: text })).toBe("");
-  // In each kind of text box, the key gives only its own character.
   const editable = s.document.createElement("div");
   editable.contentEditable = "true";
   s.document.body.append(editable);
-  for (const target of [text, s.document.createElement("textarea"), editable]) {
-    expect(d.accessKeyOf({ key: "ƒ", code: "KeyF", target })).toBe("ƒ");
-    expect(d.accessKeyOf({ key: "f", code: "KeyF", target })).toBe("f");
-  }
-  editable.remove();
-  // A check box or a button is not a text box.
+  const textBoxes = [text, s.document.createElement("textarea"), editable];
   const check = s.document.createElement("input");
   check.type = "checkbox";
-  for (const target of [check, s.document.createElement("button")])
-    expect(d.accessKeyOf({ key: "ƒ", code: "KeyF", target })).toBe("f");
-  // A layout such as AZERTY keeps its own letters.
-  expect(d.accessKeyOf({ key: "A", code: "KeyQ" })).toBe("a");
-  expect(d.accessKeyOf({ key: "Enter", code: "Enter" })).toBe("enter");
+  const others = [undefined, check, s.document.createElement("button")];
+  const cases = [
+    // [key, code, outside a text box, in a text box on a Mac, in a text
+    // box on Windows and Linux]
+    ["ƒ", "KeyF", "f", "ƒ", "f"],
+    ["©", "KeyG", "g", "©", "g"],
+    ["¡", "Digit1", "1", "¡", "¡"],
+    ["Dead", "KeyE", "e", "", ""],
+    ["f", "KeyF", "f", "f", "f"],
+    // A layout such as AZERTY keeps its own letters.
+    ["A", "KeyQ", "a", "a", "a"],
+    ["Enter", "Enter", "enter", "enter", "enter"],
+    // A key of another script, such as Russian, gives no Latin letter.
+    ["ф", "KeyA", "a", "ф", "a"],
+  ];
+  try {
+    for (const [platform, data, mac] of [
+      ["MacIntel", undefined, true],
+      ["Linux x86_64", { platform: "macOS" }, true],
+      ["iPad", undefined, true],
+      ["Win32", undefined, false],
+      ["Linux x86_64", undefined, false],
+      ["MacIntel", { platform: "Windows" }, false],
+    ]) {
+      setPlatform(platform, data);
+      for (const [key, code, outside, macText, otherText] of cases) {
+        for (const target of others)
+          expect(d.accessKeyOf({ key, code, target })).toBe(outside);
+        for (const target of textBoxes)
+          expect(d.accessKeyOf({ key, code, target })).toBe(
+            mac ? macText : otherText,
+          );
+      }
+    }
+    editable.remove();
 
-  // The menu bar of an Explorer window.
-  const win = await openDocuments(s);
-  const items = win.querySelector(".explorer-items");
-  items.focus();
-  expect(key(s, items, "ƒ", { altKey: true, code: "KeyF" })).toBeFalse();
-  await settle();
-  expect(
-    win
-      .querySelector('[role="menubar"] [aria-expanded="true"]')
-      ?.textContent.trim(),
-  ).toBe("File");
-  key(s, s.document.activeElement, "Escape");
-  key(s, s.document.activeElement, "Escape");
-  await settle();
+    // The menu bar of an Explorer window.
+    setPlatform("MacIntel", undefined);
+    const win = await openDocuments(s);
+    const open = () =>
+      win
+        .querySelector('[role="menubar"] [aria-expanded="true"]')
+        ?.textContent.trim() ?? null;
+    const close = async () => {
+      key(s, s.document.activeElement, "Escape");
+      key(s, s.document.activeElement, "Escape");
+      await settle();
+    };
+    const items = win.querySelector(".explorer-items");
+    items.focus();
+    expect(key(s, items, "ƒ", { altKey: true, code: "KeyF" })).toBeFalse();
+    await settle();
+    expect(open()).toBe("File");
+    await close();
+    // Outside a text box, Option+E opens the E menu.
+    items.focus();
+    expect(key(s, items, "Dead", { altKey: true, code: "KeyE" })).toBeFalse();
+    await settle();
+    expect(open()).toBe("Edit");
+    await close();
 
-  // The buttons of a message box.
-  const answer = d.confirm("Go on?");
-  await settle();
-  const box = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
-  key(s, box, "¥", { altKey: true, code: "KeyY" });
-  expect(await answer).toBeTrue();
+    // The buttons of a message box.
+    const answer = d.confirm("Go on?");
+    await settle();
+    const box = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+    key(s, box, "¥", { altKey: true, code: "KeyY" });
+    expect(await answer).toBeTrue();
 
-  // In a text box, Option+E starts an accent and Option+F types "ƒ". Neither
-  // opens a menu, and the browser keeps the key.
-  const address = win.querySelector(".explorer-address input");
-  address.focus();
-  expect(key(s, address, "Dead", { altKey: true, code: "KeyE" })).toBeTrue();
-  expect(key(s, address, "ƒ", { altKey: true, code: "KeyF" })).toBeTrue();
-  await settle();
-  expect(
-    win.querySelector('[role="menubar"] [aria-expanded="true"]'),
-  ).toBeNull();
-  // Outside a text box, a dead key opens no menu either.
-  items.focus();
-  key(s, items, "Dead", { altKey: true, code: "KeyE" });
-  await settle();
-  expect(
-    win.querySelector('[role="menubar"] [aria-expanded="true"]'),
-  ).toBeNull();
-  // Alt and a plain letter in a text box still open the menu.
-  address.focus();
-  expect(key(s, address, "f", { altKey: true, code: "KeyF" })).toBeFalse();
-  await settle();
-  expect(
-    win
-      .querySelector('[role="menubar"] [aria-expanded="true"]')
-      ?.textContent.trim(),
-  ).toBe("File");
+    // On a Mac, in a text box, Option+E starts an accent and Option+F
+    // types "ƒ". Neither opens a menu, and the browser keeps the key.
+    const address = win.querySelector(".explorer-address input");
+    address.focus();
+    expect(key(s, address, "Dead", { altKey: true, code: "KeyE" })).toBeTrue();
+    expect(key(s, address, "ƒ", { altKey: true, code: "KeyF" })).toBeTrue();
+    await settle();
+    expect(open()).toBeNull();
+    // Alt and a plain letter in a text box still open the menu.
+    address.focus();
+    expect(key(s, address, "f", { altKey: true, code: "KeyF" })).toBeFalse();
+    await settle();
+    expect(open()).toBe("File");
+    await close();
+    // On Windows, AltGr+F in a text box can give another character. Its
+    // place on the keyboard opens the menu.
+    setPlatform("Win32", undefined);
+    address.focus();
+    expect(key(s, address, "ƒ", { altKey: true, code: "KeyF" })).toBeFalse();
+    await settle();
+    expect(open()).toBe("File");
+  } finally {
+    delete nav.platform;
+    delete nav.userAgentData;
+  }
 });
 
 // An input method ends its text with Enter or Esc. Those keys belong to the

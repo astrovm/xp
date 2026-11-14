@@ -1132,16 +1132,11 @@ describe("file operations", () => {
     expect(replaced.id).toBe(made.id);
     expect(fs.getNode(made.id)).toMatchObject({ name: "Doc.txt" });
     expect(fs.getContent(made.id)).toBe("two");
-    // The open file must still have the content that the program read.
-    expect(() =>
-      operations.writeFile(folder.id, "Doc.txt", "three", {
-        keepId: made.id,
-        expectedContent: "one",
-      }),
-    ).toThrow("This file changed in another window.");
-    // Another file never gets that check.
+    // Like XP's Save As, the Replace answer is the check. A file that
+    // another window changed meanwhile still gets the new content.
+    fs.setContent(made.id, "changed elsewhere");
     operations.writeFile(folder.id, "Doc.txt", "three", {
-      keepId: "other",
+      keepId: made.id,
       expectedContent: "one",
     });
     expect(fs.getContent(made.id)).toBe("three");
