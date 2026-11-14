@@ -73,17 +73,63 @@ describe("desktop", () => {
       ],
     });
     pickers[0].dispatchEvent(new s.window.Event("change"));
+    // The Copying progress box closes, then the error opens.
+    const error = () =>
+      [...s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+        dialog.textContent.includes("The file operation failed."),
+      );
+    for (let attempt = 0; attempt < 50 && !error(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(Boolean(error())).toBeTrue();
+    expect(s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
+    const fs = s.window.VirtualFS;
+    expect(fs.findChild(fs.DESKTOP, "locked.bin")).toBeNull();
+  });
+
+  // Like XP, an uploaded file with a name in use asks Confirm File
+  // Replace. It never gets a new name such as "note (2).txt".
+  test("asks Confirm File Replace for an uploaded file with a name in use", async () => {
+    const s = await login(await loadShell());
+    const fs = s.window.VirtualFS;
+    fs.createFile(fs.DESKTOP, "note.txt", { content: "old" });
+    const pickers = [];
+    const pickerClick = spyOn(
+      s.window.HTMLInputElement.prototype,
+      "click",
+    ).mockImplementation(function () {
+      pickers.push(this);
+    });
+    try {
+      openMenu(s).querySelector('[data-action="upload"]').click();
+    } finally {
+      pickerClick.mockRestore();
+    }
+    Object.defineProperty(pickers[0], "files", {
+      value: [new s.window.File(["new"], "note.txt")],
+    });
+    pickers[0].dispatchEvent(new s.window.Event("change"));
+    const question = () =>
+      [...s.document.querySelectorAll(".xp-dialog")].find(
+        (dialog) =>
+          dialog.querySelector(".title-text")?.textContent ===
+          "Confirm File Replace",
+      );
+    for (let attempt = 0; attempt < 50 && !question(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(question().textContent).toContain(
+      "This folder already contains a file named 'note.txt'.",
+    );
+    question().querySelector('[data-action="yes"]').click();
     for (
       let attempt = 0;
-      attempt < 50 && !s.document.querySelector(".xp-dialog");
+      attempt < 50 && fs.findChild(fs.DESKTOP, "note.txt").content !== "new";
       attempt++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(s.document.querySelector(".xp-dialog").textContent).toContain(
-      "The file operation failed.",
-    );
-    const fs = s.window.VirtualFS;
-    expect(fs.findChild(fs.DESKTOP, "locked.bin")).toBeNull();
+    expect(
+      fs.getChildren(fs.DESKTOP).filter((node) => /^note/.test(node.name)),
+    ).toHaveLength(1);
+    expect(fs.findChild(fs.DESKTOP, "note.txt").content).toBe("new");
   });
 
   const openMenu = (shell) => {
@@ -245,4 +291,68 @@ describe("desktop", () => {
       ),
     ).toBeFalse();
   });
+});
+
+test("a desktop rebuild keeps an open rename box without renaming", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "keep.txt", { content: "" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const icon = (id) =>
+    s.document.querySelector(`.desktop-icon[data-desktop-id="${id}"]`);
+  const rename = (id) => {
+    icon(id).dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+    s.document
+      .querySelector(
+        `#desktop-context-menu [data-action="${
+          id === "__my-computer" ? "rename-my-computer" : "rename"
+        }"]`,
+      )
+      .click();
+    return s.document.querySelector(".desktop-rename");
+  };
+  // A change from another window rebuilds the icons.
+  const rebuild = async () => {
+    fs.createFile(fs.DESKTOP, `other${Math.random()}.txt`, { content: "" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  let input = rename(file.id);
+  input.value = "typed.txt";
+  input.setSelectionRange(0, 5);
+  await rebuild();
+  // Chrome fires blur on the box that the rebuild removed.
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  expect(fs.getNode(file.id).name).toBe("keep.txt");
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.dataset.desktopId).toBe(file.id);
+  expect(input.value).toBe("typed.txt");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5]);
+  // A box with no change shows the name that another window gave.
+  input.value = input.dataset.originalName;
+  fs.rename(file.id, "other.txt");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.value).toBe("other.txt");
+  // A file that is gone takes its box with it.
+  fs.delete(file.id);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(s.document.querySelector(".desktop-rename")).toBeNull();
+  expect(fs.getNode(file.id).name).toBe("other.txt");
+
+  // The same for My Computer, whose name is a setting.
+  input = rename("__my-computer");
+  input.value = "Computer";
+  await rebuild();
+  input.dispatchEvent(new s.window.FocusEvent("blur"));
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.dataset.desktopId).toBe("__my-computer");
+  expect(input.value).toBe("Computer");
+  input.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(icon("__my-computer").textContent).toBe("Computer");
 });

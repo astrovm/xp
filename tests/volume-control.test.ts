@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 
 afterEach(cleanupShells);
 
@@ -168,4 +169,52 @@ test("Volume Control's menus hide Wave, keep Advanced Controls gray and show Abo
   expect(about.querySelector(".about-windows-icon").src).toContain(
     "volume-32.png",
   );
+});
+
+test("Volume Control's menus follow XP's menu bar rules", async () => {
+  const s = await login(await loadShell());
+  const win = await openVolumeControl(s);
+  await checkMenuBar({
+    s,
+    win,
+    control: control(win, "master", "volume"),
+    accessKey: "p",
+    settle,
+  });
+});
+
+test("Volume Control's menus give the keys to the frame when no control had them", async () => {
+  const s = await login(await loadShell());
+  const win = await openVolumeControl(s);
+  const title = win.querySelector('[data-tm-menu="options"]');
+  const slider = control(win, "master", "volume");
+  slider.focus();
+  // A menu title is not the window's control: the window keeps the slider.
+  title.focus();
+  expect(win.lastFocusedElement === slider).toBeTrue();
+  // The pointer on a gray item leaves the keys where they are.
+  slider.focus();
+  slider.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "p",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  const properties = s.document.activeElement;
+  expect(properties.dataset.command).toBe("properties");
+  win
+    .querySelector('[data-command="advanced"]')
+    .dispatchEvent(new s.window.PointerEvent("pointerover", { bubbles: true }));
+  expect(s.document.activeElement === properties).toBeTrue();
+  properties.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  expect(s.document.activeElement === title).toBeTrue();
+  // Keys that no control had go to the frame, never to the page.
+  slider.remove();
+  title.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  expect(s.document.activeElement === win).toBeTrue();
 });

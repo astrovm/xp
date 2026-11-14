@@ -2441,6 +2441,45 @@
       "pixelSha256": "86830218ae24d205ac76697e77ad279f67b15a786054b2571079cd48c6663f77"
     }
   },
+  "assets/xp/icons/BitmapImage.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "2a37c3a447068aee728189516b17277573f23110e3ffe45b35f99b284568e854",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 14,
+      "id": 2,
+      "language": 1033,
+      "frame": "32x32x32",
+      "pixelSha256": "5971ae5ffa39c0dcbc41e256ce0e41c25462c8744ecfdd485031bc18ef12e1ad"
+    }
+  },
+  "assets/xp/icons/ImageDocument.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "04daf40c367c25bd226d0965a999dcc5a250b353c4aea7620f27ff3b747870ed",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 14,
+      "id": 3,
+      "language": 1033,
+      "frame": "32x32x32",
+      "pixelSha256": "b38116176115779cb97fd6a6714fbfb000bed12506abe9d85729e7d4789ddb24"
+    }
+  },
+  "assets/xp/icons/JpegImage.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "445b0df5b543d04b87efc23a151d5b8320bfd146352b3054fd9f5ad0ed1f7866",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 14,
+      "id": 4,
+      "language": 1033,
+      "frame": "32x32x32",
+      "pixelSha256": "f3a2991a793f98a4d4179db74a5630af690d89aad8e79d87d1ef4dddac168f54"
+    }
+  },
   "assets/xp/icons/ShowDesktop.png": {
     "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
     "member": "I386/EXPLORER.EX_",
@@ -13395,6 +13434,82 @@
       "language": 1033,
       "frame": "24x24x32",
       "pixelSha256": "d732f261e1dba4a2f8c0b04def47997cf42759696664aafb06824bbe36c3b5f9"
+    }
+  },
+  "assets/xp/explorer/filmstrip-previous.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "cac184b7ab40dba9b709b4bc27a8da742d5e684a7e685b01cb0615b6f5be9bd6",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 2,
+      "id": 105,
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      },
+      "language": 1033,
+      "frame": "16x16x32",
+      "pixelSha256": "4861a3c37c7d069a4ca09296b63f1b3c3e2c97d2746b31581a5632dcea01074c"
+    }
+  },
+  "assets/xp/explorer/filmstrip-next.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "684f8668aab753e72c7a2315e4b866b685f296a8409b1ef085a4b80176aec204",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 2,
+      "id": 105,
+      "crop": {
+        "left": 16,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      },
+      "language": 1033,
+      "frame": "16x16x32",
+      "pixelSha256": "b359d681177864857fb2c737c6b99fcd7afec260e40a364d8984bdf1eece6bc4"
+    }
+  },
+  "assets/xp/explorer/filmstrip-rotate-counterclockwise.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "1d29a2ea1a4920efc96fa48391918ecf614e7f035c22c76ebde1bfa1609b9cfe",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 2,
+      "id": 105,
+      "crop": {
+        "left": 176,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      },
+      "language": 1033,
+      "frame": "16x16x32",
+      "pixelSha256": "954320f072edc91010048832232e128979a58fa5a8559b46cdbaf8f30e31cb2f"
+    }
+  },
+  "assets/xp/explorer/filmstrip-rotate-clockwise.png": {
+    "isoSha256": "fd8c8d42c1581e8767217fe800bfc0d5649c0ad20d754c927d6c763e446d1927",
+    "member": "I386/SHIMGVW.DL_",
+    "sha256": "2ebd4ce3e0229ce9495fa841e4a8a4a2ece407b128dce91aae4bc054346e23dc",
+    "resource": {
+      "parentSha256": "ea31795afdf5032c80cbbadebd81133e6c0a8aad5a7601a9c23deb53c0e3915b",
+      "type": 2,
+      "id": 105,
+      "crop": {
+        "left": 192,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      },
+      "language": 1033,
+      "frame": "16x16x32",
+      "pixelSha256": "67bf4d30798f9be342b7088640584f4fdf75fc22cc506f820ecb87ebf5e43880"
     }
   },
   "assets/xp/explorer/toolbar-views-small.png": {

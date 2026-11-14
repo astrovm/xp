@@ -115,8 +115,18 @@ test("hidden tray icons expand and collapse after inactivity", async () => {
   pointer(s, s.document.getElementById("taskbar-tray"), "pointerenter");
   pointer(s, s.document.getElementById("taskbar-tray"), "pointerleave");
   pointer(s, volume, "pointerdown");
+  // In Chrome the press gives the volume icon the keys, with no focus ring.
+  // When it hides, the arrow next to it takes them, so they never go to the
+  // page.
+  volume.focus();
+  const matches = s.window.Element.prototype.matches;
+  s.window.Element.prototype.matches = function (selector) {
+    return selector !== ":focus-visible" && matches.call(this, selector);
+  };
   await s.advanceTime(2100);
+  s.window.Element.prototype.matches = matches;
   expect(volume.hidden).toBeTrue();
+  expect(s.document.activeElement === expand).toBeTrue();
 });
 
 test("large docked toolbars and edges change the taskbar layout", async () => {
@@ -215,16 +225,25 @@ test("the New Toolbar dialog browses folders and adds the chosen one", async () 
   dialog.querySelector('[data-action="new-folder"]').click();
   await flushShell();
   expect(dialog.querySelector("input").value).toBe("New Folder");
-  dialog.querySelector("input").value = "C:\\missing";
-  dialog.querySelector('[data-action="ok"]').click();
-  await flushShell();
-  expect(
-    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
-  ).toContain("The folder could not be found.");
-  [...s.document.querySelectorAll(".xp-dialog")]
-    .at(-1)
-    .querySelector('[data-action="ok"]')
-    .click();
+  // Like XP, a missing folder and any "." or ".." in the path fail,
+  // also in a full path to a folder that is there.
+  for (const typed of [
+    "C:\\missing",
+    "..",
+    `${fs.getPath(parent.id)}\\..\\${parent.name}`,
+    `${fs.getPath(parent.id)}\\.`,
+  ]) {
+    dialog.querySelector("input").value = typed;
+    dialog.querySelector('[data-action="ok"]').click();
+    await flushShell();
+    const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+    expect(error.querySelector(".title-text").textContent).toBe("Toolbar");
+    expect(error.textContent).toContain(
+      `Cannot find '${typed}'. Make sure the path or Internet address is correct.`,
+    );
+    error.querySelector('[data-action="ok"]').click();
+    await flushShell();
+  }
   dialog.querySelector("input").value = fs.getPath(parent.id);
   dialog.querySelector('[data-action="ok"]').click();
   expect(settings(s).folders).toContain(parent.id);

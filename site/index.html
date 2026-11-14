@@ -151,7 +151,7 @@
               ><img src="assets/xp/Chess.bmp" alt="" width="48" height="48"
             /></span>
             <span class="welcome-user-details"
-              ><span class="welcome-username">astro</span
+              ><span class="welcome-username"></span
               ><span id="welcome-user-status" hidden>Logged on</span></span
             >
           </button>
@@ -216,7 +216,7 @@
             class="start-menu-avatar xp-user-tile"
             aria-hidden="true"
           ></span>
-          <span class="start-menu-user">astro</span>
+          <span class="start-menu-user"></span>
         </div>
         <div class="start-menu-body">
           <div class="start-menu-left">
@@ -244,7 +244,7 @@
     </div>
 
     <!-- Taskbar -->
-    <div id="taskbar" hidden>
+    <div id="taskbar" tabindex="-1" hidden>
       <button id="start-button" type="button" aria-label="start">
         <img src="assets/xp/WindowsFlag.png" alt="" aria-hidden="true" />
         <span>Start</span>
@@ -406,7 +406,7 @@
             ></span>
             <span>Switch User</span>
           </button>
-          <button id="logoff-confirm" type="button">
+          <button id="logoff-confirm" type="button" data-default-focus>
             <span
               class="dialog-action-icon xp-logoff-icon"
               aria-hidden="true"
@@ -435,7 +435,7 @@
             ></span>
             <span>Stand By</span>
           </button>
-          <button id="shutdown-confirm" type="button">
+          <button id="shutdown-confirm" type="button" data-default-focus>
             <span
               class="dialog-action-icon shutdown-icon xp-power-icon"
               aria-hidden="true"

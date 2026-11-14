@@ -1,7 +1,8 @@
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import { applicationMetadata } from "./metadata.js";
 
-const USER = "astro";
+const USER = globalThis.VirtualFS.USER_NAME;
 // Full paths, so the build can fingerprint them.
 const TRAY_ICONS = [
   "assets/xp/task-manager/tray-0.png",
@@ -319,9 +320,13 @@ const mountTaskManager = (context, { window: win }) => {
 
   // Processes: one per program window, the rest from the reference install.
   let nextPid = 4;
+  // A process of a window keeps that window, and part is the id that the
+  // window gives the process, so a window that opens again with the same
+  // id, or a new cmd, is a new process.
   const createProcess = (
     [image, user, memory, handles, threads],
-    windowId,
+    task = null,
+    part = 0,
   ) => ({
     pid: (nextPid += 4),
     image,
@@ -330,13 +335,15 @@ const mountTaskManager = (context, { window: win }) => {
     memory,
     handles,
     threads,
-    windowId,
+    windowId: task?.gameId ?? null,
+    task,
+    part,
     cpu: 0,
     cpuTime: 0,
   });
-  const processes = BASE_PROCESSES.map((entry) => createProcess(entry, null));
+  const processes = BASE_PROCESSES.map((entry) => createProcess(entry));
   const processImage = (task) =>
-    PROGRAM_IMAGES[task.gameId] || GAME_IMAGES[task.type];
+    PROGRAM_IMAGES[task.applicationId ?? task.gameId] || GAME_IMAGES[task.type];
   const tasks = () =>
     [...context.openWindows.values()].filter(
       (task) => task.gameId !== win.gameId,
@@ -354,26 +361,39 @@ const mountTaskManager = (context, { window: win }) => {
       );
     return Math.round(bytes / 1024);
   };
+  // A window can have more than one process: each cmd of a Command
+  // Prompt window is its own cmd.exe, like XP. The window gives the id of
+  // each one, the first one first.
+  const processIdsOf = (task) => task.mountedApplication?.processIds?.() ?? [0];
+  // True while the process runs: its window is open, and has the process.
+  const isRunning = (process) =>
+    context.openWindows.get(process.windowId) === process.task &&
+    processIdsOf(process.task).includes(process.part);
   const syncProcesses = () => {
-    const windows = new Map(
-      [...context.openWindows.values()]
-        .filter(processImage)
-        .map((task) => [task.gameId, task]),
-    );
+    const windows = [...context.openWindows.values()].filter(processImage);
     for (let index = processes.length - 1; index >= 0; index--) {
-      const { windowId } = processes[index];
-      if (windowId && !windows.has(windowId)) processes.splice(index, 1);
+      const process = processes[index];
+      if (process.task && !isRunning(process)) processes.splice(index, 1);
     }
-    windows.forEach((task, id) => {
+    windows.forEach((task) => {
       const [image, memory] = processImage(task);
-      if (!processes.some((process) => process.windowId === id))
-        processes.push(createProcess([image, USER, memory, 120, 4], id));
+      processIdsOf(task).forEach((part) => {
+        if (
+          !processes.some(
+            (process) => process.task === task && process.part === part,
+          )
+        )
+          processes.push(
+            createProcess([image, USER, memory, 120, 4], task, part),
+          );
+      });
     });
     // Programs grow with what they show; folder windows live in Explorer.
+    // The first process of a window has what the window shows.
     processes.forEach((process) => {
-      if (process.windowId)
+      if (process.task)
         process.memory =
-          process.base + footprint(windows.get(process.windowId));
+          process.base + (process.part ? 0 : footprint(process.task));
       else if (process.image === "explorer.exe")
         process.memory =
           process.base +
@@ -415,7 +435,8 @@ const mountTaskManager = (context, { window: win }) => {
     );
     (
       processes.find(
-        (process) => active && process.windowId === active.gameId,
+        (process) =>
+          active && process.windowId === active.gameId && !process.part,
       ) || processes.find((process) => process.image === "explorer.exe")
     ).cpu = cpuTotal;
     processes[0].cpu = 100 - cpuTotal;
@@ -444,6 +465,9 @@ const mountTaskManager = (context, { window: win }) => {
   const alignment = (padding) =>
     padding ? ` class="right" style="padding-right: ${padding}px"` : "";
   const renderList = (list, key, columns, rows) => {
+    // A column header with the keys gets them back after the rebuild.
+    const header = document.activeElement.closest("[data-tm-sort]");
+    const headerKeys = list.contains(header) ? header.dataset.tmSort : null;
     list.style.setProperty(
       "--tm-columns",
       columns.map(([, width]) => `${width}px`).join(" "),
@@ -464,9 +488,12 @@ const mountTaskManager = (context, { window: win }) => {
             .join("")}</div>`,
       )
       .join("")}`;
+    if (headerKeys !== null)
+      list.querySelector(`[data-tm-sort="${headerKeys}"]`).focus();
   };
   const iconHtml = (task) =>
-    context.createGameIconElement(task.gameId, "tm-icon").outerHTML;
+    context.createGameIconElement(task.applicationId ?? task.gameId, "tm-icon")
+      .outerHTML;
   const renderTasks = () => {
     const list = $(".tm-tasks");
     const current = tasks();
@@ -800,14 +827,6 @@ const mountTaskManager = (context, { window: win }) => {
   };
 
   // Menus.
-  let openMenu = null;
-  const closeMenus = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuBar
-      .querySelectorAll("[aria-expanded]")
-      .forEach((button) => button.setAttribute("aria-expanded", "false"));
-  };
   const isChecked = {
     "always-on-top": () => settings.alwaysOnTop,
     "minimize-on-use": () => settings.minimizeOnUse,
@@ -852,10 +871,12 @@ const mountTaskManager = (context, { window: win }) => {
       entry.append(text);
       entry.insertAdjacentHTML("beforeend", `<kbd>${shortcut}</kbd>`);
       if (submenu) {
+        // The keys can rest on a submenu's parent, like on an item.
         entry.className = "tm-submenu";
-        const items = buildMenu(command);
-        entry.append(items);
-        entry.addEventListener("click", () => items.classList.toggle("open"));
+        entry.tabIndex = -1;
+        entry.setAttribute("aria-haspopup", "menu");
+        entry.setAttribute("aria-expanded", "false");
+        entry.append(buildMenu(command));
       } else {
         entry.type = "button";
         entry.dataset.tmCommand = command;
@@ -866,34 +887,35 @@ const mountTaskManager = (context, { window: win }) => {
     });
     return menu;
   };
+  // Each page builds its own titles, so the items go with the title.
+  const menuItems = new WeakMap();
+  const menus = wireMenuBar({
+    windowElement: win.el,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = buildMenu(menuItems.get(button));
+      menu.style.left = `${button.offsetLeft}px`;
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
   const renderMenuBar = () => {
-    closeMenus();
+    menus.close();
     menuBar.replaceChildren(
       ...MENUS[settings.tab].map(([label, items]) => {
         const button = document.createElement("button");
         button.type = "button";
         button.setAttribute("role", "menuitem");
+        button.setAttribute("aria-haspopup", "menu");
         button.setAttribute("aria-expanded", "false");
         button.dataset.tmMenu = label.replace(/[& ]/g, "").toLowerCase();
         context.setAccessKeyText(button, label);
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const wasOpen = button.getAttribute("aria-expanded") === "true";
-          closeMenus();
-          if (wasOpen) return;
-          openMenu = buildMenu(items);
-          openMenu.style.left = `${button.offsetLeft}px`;
-          menuBar.append(openMenu);
-          button.setAttribute("aria-expanded", "true");
-        });
+        menuItems.set(button, items);
         return button;
       }),
     );
   };
-  const onDocumentPointerDown = (event) => {
-    if (!menuBar.contains(event.target)) closeMenus();
-  };
-  document.addEventListener("pointerdown", onDocumentPointerDown);
 
   // Commands.
   const selectedTask = () => context.openWindows.get(selection.tasks);
@@ -929,10 +951,30 @@ const mountTaskManager = (context, { window: win }) => {
       context.closeGameWindow(win.gameId);
       return;
     }
-    if (process.windowId) {
-      await context.closeGameWindow(process.windowId, {
-        skipBeforeClose: true,
-      });
+    const { task } = process;
+    const application = task?.mountedApplication;
+    // In the XP VM, a process that ended after the list showed it, such
+    // as in a paused list, cannot end again. The list stays as it is. A
+    // window with more than one process ends the one with the id, and
+    // tells if it still had it.
+    if (
+      task &&
+      (context.openWindows.get(process.windowId) !== task ||
+        (application?.endProcess && !application.endProcess(process.part)))
+    ) {
+      await context.XPDialogs.alert(
+        "The operation could not be completed.\n\nThe operation is not valid for this process.",
+        "Unable to Terminate Process",
+        "error",
+      );
+      return;
+    }
+    if (task) {
+      // A window with no processes of its own ends with its window.
+      if (!application?.endProcess)
+        await context.closeGameWindow(task.gameId, {
+          skipBeforeClose: true,
+        });
     } else if (process.image === "explorer.exe") {
       // Explorer's folder windows close with it. The shell keeps running, as
       // if Winlogon had restarted it.
@@ -945,7 +987,8 @@ const mountTaskManager = (context, { window: win }) => {
     refresh();
   };
   const commands = {
-    "new-task": () => context.openRunDialog({ title: "Create New Task" }),
+    "new-task": () =>
+      context.openRunDialog({ title: "Create New Task", modal: true }),
     exit: () => context.closeGameWindow(win.gameId),
     "always-on-top": () => {
       toggleSetting("alwaysOnTop");
@@ -1059,7 +1102,7 @@ const mountTaskManager = (context, { window: win }) => {
   root.addEventListener("click", (event) => {
     const command = event.target.closest("[data-tm-command]");
     if (command) {
-      closeMenus();
+      menus.close();
       commands[command.dataset.tmCommand]();
       return;
     }
@@ -1118,7 +1161,6 @@ const mountTaskManager = (context, { window: win }) => {
       window.cancelAnimationFrame(frame);
       network.disconnect();
       trayIcon.remove();
-      document.removeEventListener("pointerdown", onDocumentPointerDown);
     },
   };
 };

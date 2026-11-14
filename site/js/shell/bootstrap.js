@@ -68,7 +68,7 @@ const cycleShellWindow = (direction, showSwitcher) => {
       switcher.id = "window-switcher";
       document.body.appendChild(switcher);
     }
-    switcher.textContent = formatGameTitle(win.gameId);
+    switcher.textContent = windowTitleOf(win);
     switcher.hidden = false;
   }
 };
@@ -81,26 +81,33 @@ const isEditableTarget = (target) =>
   /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || "") ||
   target?.isContentEditable;
 const typeaheadState = new WeakMap();
-const normalizeTypeaheadText = (value) =>
-  value
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase();
-const cycleTypeaheadItem = (event, scope, items, getLabel) => {
-  if (
-    event.altKey ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.isComposing ||
-    Array.from(event.key).length !== 1
-  )
-    return null;
-
-  const key = normalizeTypeaheadText(event.key);
+// The text that typeahead compares, with no case. With foldAccents, "ó"
+// and "o" are the same.
+const normalizeTypeaheadText = (value, foldAccents) => {
+  const text = value.trim();
+  return (
+    foldAccents ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : text
+  ).toLocaleLowerCase();
+};
+// A typed character goes to the next item whose name starts with it. Like
+// XP, an AltGr character, such as "ą" on a Polish keyboard, is a typed
+// character too. A menu compares the exact character with no case, like
+// the menus of XP: "ą" goes to an item that starts with "ą", never to one
+// that starts with "a".
+const cycleTypeaheadItem = (
+  event,
+  scope,
+  items,
+  getLabel,
+  { foldAccents = true } = {},
+) => {
+  const key = normalizeTypeaheadText(
+    XPDialogs.typedCharacterOf(event),
+    foldAccents,
+  );
   if (!key) return null;
   const matches = items.filter((item) =>
-    normalizeTypeaheadText(getLabel(item)).startsWith(key),
+    normalizeTypeaheadText(getLabel(item), foldAccents).startsWith(key),
   );
   if (!matches.length) return null;
 
@@ -129,6 +136,7 @@ const confirmPermanentDelete = (ids) =>
       : "Are you sure you want to permanently delete these items?",
     "Confirm File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   )
     .then(
       (yes) => yes && fs.transaction(() => ids.forEach((id) => fs.destroy(id))),
@@ -158,7 +166,9 @@ document.addEventListener(
         return item.closest('[role="menu"], [role="menubar"]') === scope;
       },
     );
-    const target = cycleTypeaheadItem(event, scope, items, typeaheadItemLabel);
+    const target = cycleTypeaheadItem(event, scope, items, typeaheadItemLabel, {
+      foldAccents: false,
+    });
     if (!target) return;
     target.focus();
     event.stopImmediatePropagation();
@@ -230,10 +240,46 @@ window.addEventListener("hashchange", () => {
   }
 });
 
+// Tab does nothing in an open menu, like XP, so the keys stay in it.
+// Alt+Tab still switches windows.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (
+      event.key === "Tab" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      event.target.closest?.('[role="menu"]')
+    )
+      event.preventDefault();
+  },
+  true,
+);
+
+// Every open menu of a window has its window's closeMenus. The shell closes
+// them through it, which also gives back the keys and resets the titles.
+const openWindowMenus = () =>
+  document.querySelectorAll('.xp-window [role="menu"]:not([hidden])');
+
+// A click into a program's frame sends no press to the page. The page then
+// loses the keys, and every window closes its menus, like XP.
+window.addEventListener("blur", () => {
+  openWindowMenus().forEach((menu) => menu.closeMenus?.());
+});
+
 // Close the start menu when clicking outside of it
 document.addEventListener("pointerdown", (e) => {
   if (suspended) return;
-  if (!e.target.closest(".explorer-chrome")) closeExplorerMenu();
+  // Each window closes its own menus. A press on a menu, or on an enabled
+  // button that opens one, leaves that window's menus to the window.
+  const menuWindow =
+    e.target
+      .closest('[role="menu"], [aria-haspopup="menu"]:not(:disabled)')
+      ?.closest(".xp-window") ?? null;
+  openWindowMenus().forEach((menu) => {
+    if (menu.closest(".xp-window") !== menuWindow) menu.closeMenus?.();
+  });
   if (!e.target.closest("#desktop-context-menu")) {
     closeDesktopContextMenu();
   }
@@ -262,16 +308,6 @@ document.addEventListener("pointerdown", (e) => {
     closeTrayVolumePopup();
   }
 
-  if (!e.target.closest(".game-menu-bar") && !e.target.closest(".game-menu")) {
-    document.querySelectorAll(".game-menu:not([hidden])").forEach((menu) => {
-      menu.hidden = true;
-      menu.parentElement
-        ?.querySelector(
-          `.game-menu-button[data-game-menu="${menu.dataset.gameMenu}"]`,
-        )
-        ?.setAttribute("aria-expanded", "false");
-    });
-  }
   const startMenu = document.getElementById("start-menu");
   if (startMenu.hidden) return;
   if (
@@ -295,13 +331,7 @@ document.addEventListener("keydown", async (e) => {
 
     // Dialogs and editable controls own their keyboard semantics. Do not
     // steal browser text editing or modal access keys for shell shortcuts.
-    if (
-      e.defaultPrevented ||
-      document.querySelector(
-        ".xp-dialog-overlay:not(.xp-dialog-modeless), .system-dialog-overlay:not([hidden])",
-      )
-    )
-      return;
+    if (e.defaultPrevented || XPDialogs.isModalOpen()) return;
 
     if (e.ctrlKey && e.shiftKey && e.key === "Escape") {
       e.preventDefault();
@@ -315,8 +345,7 @@ document.addEventListener("keydown", async (e) => {
       return;
     }
 
-    if (isEditableTarget(e.target)) return;
-
+    // Window keys work from anywhere, text boxes included, like XP.
     if (e.altKey && e.key === "Tab") {
       e.preventDefault();
       cycleShellWindow(e.shiftKey ? -1 : 1, true);
@@ -327,6 +356,29 @@ document.addEventListener("keydown", async (e) => {
       cycleShellWindow(1, false);
       return;
     }
+
+    if (e.altKey && e.key === "F4" && focusedGameId) {
+      e.preventDefault();
+      closeGameWindow(focusedGameId);
+      return;
+    }
+
+    if (e.altKey && e.key === "F4" && !focusedGameId) {
+      e.preventDefault();
+      showShutdownDialog();
+      return;
+    }
+
+    if (e.altKey && (e.key === " " || e.code === "Space") && focusedGameId) {
+      e.preventDefault();
+      // Minimizing a window moves focus away, so the focused one is visible.
+      const win = openWindows.get(focusedGameId);
+      const rect = win.el.getBoundingClientRect();
+      openWindowSystemMenu(win, rect.left + 6, rect.top + 28);
+      return;
+    }
+
+    if (isEditableTarget(e.target)) return;
 
     const desktopIcon = document.activeElement?.closest?.(".desktop-icon");
     const desktopHasFocus =
@@ -376,7 +428,7 @@ document.addEventListener("keydown", async (e) => {
         allFilesystem,
         movable,
       } = getDesktopSelectionEligibility();
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      if ((e.ctrlKey || e.metaKey) && XPDialogs.shortcutKeyOf(e) === "a") {
         e.preventDefault();
         document
           .querySelectorAll(".desktop-icon")
@@ -385,21 +437,25 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "c" &&
+        XPDialogs.shortcutKeyOf(e) === "c" &&
         allFilesystem
       ) {
         e.preventDefault();
         fileOps.copy(selectedFsIds);
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x" && movable) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        XPDialogs.shortcutKeyOf(e) === "x" &&
+        movable
+      ) {
         e.preventDefault();
         fileOps.cut(selectedFsIds);
         return;
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "v" &&
+        XPDialogs.shortcutKeyOf(e) === "v" &&
         fileOps.canPaste(fs.DESKTOP)
       ) {
         e.preventDefault();
@@ -410,6 +466,13 @@ document.addEventListener("keydown", async (e) => {
         e.preventDefault();
         if (e.shiftKey) confirmPermanentDelete(selectedFsIds);
         else confirmRecycleDelete(selectedFsIds);
+        return;
+      }
+      // Alt+Enter shows the Properties of the selected icon, wherever the
+      // keys are on the desktop, like XP. No icon or many icons show none.
+      if (e.altKey && e.key === "Enter") {
+        e.preventDefault();
+        showDesktopProperties();
         return;
       }
       if (e.key === "F2" && movable && selectedFsIds.length === 1) {
@@ -468,20 +531,22 @@ document.addEventListener("keydown", async (e) => {
         explorerItems.forEach((item) => item.classList.remove("selected"));
         typeaheadTarget.classList.add("selected");
         typeaheadTarget.focus();
+        renderExplorerSelection(explorerWin);
         return;
       }
       const selected = selectedExplorerNodes(explorerWin);
       const protectedSelection = selected.some((id) => fs.isProtected(id));
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      if ((e.ctrlKey || e.metaKey) && XPDialogs.shortcutKeyOf(e) === "a") {
         e.preventDefault();
         explorerWin.el
           .querySelectorAll(".explorer-item")
           .forEach((item) => item.classList.add("selected"));
+        renderExplorerSelection(explorerWin);
         return;
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "c" &&
+        XPDialogs.shortcutKeyOf(e) === "c" &&
         selected.length
       ) {
         e.preventDefault();
@@ -490,7 +555,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "x" &&
+        XPDialogs.shortcutKeyOf(e) === "x" &&
         selected.length &&
         !protectedSelection
       ) {
@@ -500,11 +565,18 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "v" &&
+        XPDialogs.shortcutKeyOf(e) === "v" &&
         fileOps.canPaste(explorerWin.currentFolderId)
       ) {
         e.preventDefault();
         pasteIntoFolder(explorerWin.currentFolderId);
+        return;
+      }
+      // Alt+Enter shows the Properties of the one selected item, like XP.
+      // No item or many items show none.
+      if (e.altKey && e.key === "Enter" && selected.length === 1) {
+        e.preventDefault();
+        openShellProperties(selected[0]);
         return;
       }
       if (e.key === "F2" && selected.length === 1 && !protectedSelection) {
@@ -524,7 +596,13 @@ document.addEventListener("keydown", async (e) => {
       }
       if (e.shiftKey && e.key === "F10") {
         e.preventDefault();
-        const rect = explorerItem.getBoundingClientRect();
+        // The menu opens at the focused item, else at the first selected
+        // item, else at the list.
+        const rect = (
+          explorerItem ||
+          explorerSurface.querySelector(".explorer-item.selected") ||
+          explorerSurface
+        ).getBoundingClientRect();
         openExplorerContextMenu(explorerWin, rect.left, rect.bottom);
         return;
       }
@@ -562,27 +640,6 @@ document.addEventListener("keydown", async (e) => {
       return;
     }
 
-    if (e.altKey && e.key === "F4" && focusedGameId) {
-      e.preventDefault();
-      closeGameWindow(focusedGameId);
-      return;
-    }
-
-    if (e.altKey && e.key === "F4" && !focusedGameId) {
-      e.preventDefault();
-      showShutdownDialog();
-      return;
-    }
-
-    if (e.altKey && (e.key === " " || e.code === "Space") && focusedGameId) {
-      e.preventDefault();
-      // Minimizing a window moves focus away, so the focused one is visible.
-      const win = openWindows.get(focusedGameId);
-      const rect = win.el.getBoundingClientRect();
-      openWindowSystemMenu(win, rect.left + 6, rect.top + 28);
-      return;
-    }
-
     if (e.key === "Escape") {
       closeWindowSystemMenu();
       closeTaskbarMenus();
@@ -591,11 +648,7 @@ document.addEventListener("keydown", async (e) => {
       closeTrayVolumePopup();
     }
   } catch (error) {
-    await XPDialogs.alert(
-      error.message || "The file operation failed.",
-      "File operation",
-      "error",
-    );
+    await alertError(error, "The file operation failed.", "File operation");
   }
 });
 

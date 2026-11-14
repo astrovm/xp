@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
@@ -301,71 +302,66 @@ const mountFreeCell = (context) => {
   };
 
   // ---- Menus, styled like Task Manager's ----
-  const menuButtons = new Map();
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuButtons.forEach((button) =>
-      button.setAttribute("aria-expanded", "false"),
-    );
-  };
   const commandEnabled = (command) =>
     command === "restart"
       ? Boolean(lastGame || gameNumber)
       : command === "undo"
         ? Boolean(undoSteps)
         : true;
+  const buildMenu = (items) => {
+    const menu = document.createElement("div");
+    menu.className = "tm-menu";
+    menu.setAttribute("role", "menu");
+    items.forEach((item) => {
+      if (item === "-") {
+        menu.insertAdjacentHTML(
+          "beforeend",
+          '<div class="tm-menu-separator"></div>',
+        );
+        return;
+      }
+      const [itemLabel, command, shortcut = ""] = item;
+      const entry = document.createElement("button");
+      entry.type = "button";
+      entry.setAttribute("role", "menuitem");
+      entry.dataset.command = command;
+      entry.disabled = !commandEnabled(command);
+      const text = document.createElement("span");
+      context.setAccessKeyText(text, itemLabel);
+      const key = document.createElement("kbd");
+      key.textContent = shortcut;
+      entry.append(text, key);
+      entry.addEventListener("click", () => {
+        menus.close();
+        void run(command);
+      });
+      menu.append(entry);
+    });
+    return menu;
+  };
+  const menuItems = new Map();
+  const menus = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = buildMenu(menuItems.get(button));
+      menu.style.left = `${button.offsetLeft}px`;
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
   MENUS.forEach(([label, items]) => {
     const button = document.createElement("button");
     button.type = "button";
     button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-haspopup", "menu");
     button.setAttribute("aria-expanded", "false");
     button.dataset.freecellMenu = label.replace(/&/g, "").toLowerCase();
     context.setAccessKeyText(button, label);
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
-      items.forEach((item) => {
-        if (item === "-") {
-          openMenu.insertAdjacentHTML(
-            "beforeend",
-            '<div class="tm-menu-separator"></div>',
-          );
-          return;
-        }
-        const [itemLabel, command, shortcut = ""] = item;
-        const entry = document.createElement("button");
-        entry.type = "button";
-        entry.setAttribute("role", "menuitem");
-        entry.dataset.command = command;
-        entry.disabled = !commandEnabled(command);
-        const text = document.createElement("span");
-        context.setAccessKeyText(text, itemLabel);
-        const key = document.createElement("kbd");
-        key.textContent = shortcut;
-        entry.append(text, key);
-        entry.addEventListener("click", () => {
-          closeMenu();
-          void run(command);
-        });
-        openMenu.append(entry);
-      });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
-    });
-    menuButtons.set(label, button);
+    menuItems.set(button, items);
     menuBar.append(button);
   });
-  const closeMenusOutside = (event) => {
-    if (openMenu && !menuBar.contains(event.target)) closeMenu();
-  };
-  document.addEventListener("pointerdown", closeMenusOutside);
 
   // ---- Statistics ----
   const saveStatistics = () => writeJson(STATISTICS_KEY, statistics);
@@ -958,7 +954,7 @@ const mountFreeCell = (context) => {
 
   // Shortcuts work anywhere in the window, like a menu's accelerators.
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay")) return;
+    if (globalThis.XPDialogs.isModalOpen()) return;
     if (event.key === "F10" && event.ctrlKey && event.shiftKey) {
       event.preventDefault();
       void chooseOutcome();
@@ -1160,7 +1156,6 @@ const mountFreeCell = (context) => {
       stopFlashing();
       resizeObserver.disconnect();
       context.windowElement.removeEventListener("keydown", handleKeydown);
-      document.removeEventListener("pointerdown", closeMenusOutside);
     },
   };
 };

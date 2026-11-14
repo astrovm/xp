@@ -164,6 +164,8 @@ test("Explorer toolbar, address bar, tree, and task panes navigate folders", asy
     { s, fs } = h;
   await h.action("search");
   await h.action("view");
+  h.win.querySelector('[data-explorer-command="thumbnails"]').click();
+  await flushShell();
   expect(h.win.querySelector(".explorer-items").dataset.view).toBe(
     "thumbnails",
   );
@@ -295,6 +297,63 @@ test("Recycle Bin tasks restore and delete selected items", async () => {
   ).toBeTrue();
 });
 
+// Like XP, a restore over an item with the same name asks first. One file
+// gets Confirm File Replace with Yes and No, and No leaves it in the bin.
+// A folder gets Confirm Folder Replace with Yes, Yes to All, No and Cancel.
+test("Restore asks Confirm File Replace and Confirm Folder Replace", async () => {
+  const s = await login(await loadShell()),
+    fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "r.txt", { content: "deleted" });
+  const folder = fs.createFolder(fs.DESKTOP, "rf");
+  fs.remove(file.id);
+  fs.remove(folder.id);
+  const newer = fs.createFile(fs.DESKTOP, "r.txt", { content: "newer" });
+  const newerFolder = fs.createFolder(fs.DESKTOP, "rf");
+  await settle();
+  s.document
+    .querySelector('[data-desktop-id="__recycle-bin"]')
+    .dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  await settle();
+  const win = s.document.querySelector('.xp-window[data-game="__recycle-bin"]');
+  const task = (label) =>
+    [
+      ...win.querySelectorAll(".explorer-sidebar > section:first-child button"),
+    ].find((button) => button.textContent === label);
+  const question = () => [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  const buttons = () =>
+    [...question().querySelectorAll("button[data-action]")].map(
+      (button) => button.textContent,
+    );
+  win.querySelector(`.explorer-item[data-node-id="${file.id}"]`).click();
+  task("Restore this item").click();
+  await settle();
+  expect(question().querySelector(".title-text").textContent).toBe(
+    "Confirm File Replace",
+  );
+  expect(buttons()).toEqual(["Yes", "No"]);
+  await answer(s, "no");
+  expect(fs.getNode(file.id).parent).toBe(fs.RECYCLE_BIN);
+  expect(fs.getNode(newer.id).content).toBe("newer");
+  task("Restore this item").click();
+  await settle();
+  await answer(s, "yes");
+  expect(fs.getNode(newer.id)).toBeNull();
+  expect(fs.findChild(fs.DESKTOP, "r.txt").content).toBe("deleted");
+  win.querySelector(`.explorer-item[data-node-id="${folder.id}"]`).click();
+  task("Restore this item").click();
+  await settle();
+  expect(question().querySelector(".title-text").textContent).toBe(
+    "Confirm Folder Replace",
+  );
+  expect(dialogText(s)).toContain(
+    "they will be replaced.  Do you still want to move or copy the folder?",
+  );
+  expect(buttons()).toEqual(["Yes", "Yes to All", "No", "Cancel"]);
+  await answer(s, "cancel");
+  expect(fs.getNode(folder.id).parent).toBe(fs.RECYCLE_BIN);
+  expect(fs.getNode(newerFolder.id).parent).toBe(fs.DESKTOP);
+});
+
 test("Explorer context menus handle declined and failing commands and keyboard use", async () => {
   const h = await openDocuments(),
     { s, fs } = h;
@@ -394,16 +453,11 @@ test("Explorer shows game icons, descriptions, and survives failing file handler
     h.item(iconless.id).querySelector(".explorer-item-emoji"),
   ).toBeTruthy();
   expect(h.item(withIcon.id).textContent).toContain("Game");
-  expect(h.item(plain.id).textContent).toContain("File file");
-  const errors = [];
-  const originalError = s.window.console.error;
-  s.window.console.error = (error) => errors.push(error);
-  try {
-    h.item(boom.id).dispatchEvent(new s.window.MouseEvent("dblclick"));
-  } finally {
-    s.window.console.error = originalError;
-  }
-  expect(errors[0].message).toBe("handler failed");
+  expect(h.item(plain.id).querySelector("small").textContent).toBe("File");
+  // A file that fails to open shows an error, like the context menu.
+  h.item(boom.id).dispatchEvent(new s.window.MouseEvent("dblclick"));
+  await settle();
+  expect(dialogText(s)).toContain("handler failed");
 });
 
 test("Explorer returns to My Computer when its folder is deleted and opens Recycle Bin shortcuts", async () => {
@@ -517,6 +571,16 @@ test("Explorer reports failing menu commands with their message or a default", a
       await h.command("copy");
       expect(dialogText(s)).toContain(expected);
       await answer(s, "ok");
+      // The same command from the item's shortcut menu.
+      h.item(h.note.id).dispatchEvent(
+        new s.window.MouseEvent("contextmenu", { bubbles: true }),
+      );
+      h.win
+        .querySelector('.explorer-context-menu [data-command="copy"]')
+        .click();
+      await settle();
+      expect(dialogText(s)).toContain(expected);
+      await answer(s, "ok");
     }
   } finally {
     s.window.FileOperations.copy = copy;
@@ -586,8 +650,12 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   await h.action("forward");
   expect(h.address().value).toBe(fs.getPath(h.folder.id));
 
-  h.address().value = fs.getPath(other.id);
-  await h.action("go");
+  // Like XP, the first folder opens with Back off, so the history gets
+  // My Documents from the address bar.
+  for (const id of [fs.MY_DOCUMENTS, h.folder.id, other.id]) {
+    h.address().value = fs.getPath(id);
+    await h.action("go");
+  }
   // A folder in the Recycle Bin counts as deleted too. One Back click
   // skips it.
   fs.remove(h.folder.id);
@@ -616,6 +684,77 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   h.address().value = `Recycle Bin\\${fs.getNode(h.folder.id).name}`;
   await h.action("go");
   expect(h.address().value).toBe(fs.getPath(fs.MY_DOCUMENTS));
+});
+
+// In the XP VM, the Address bar takes a name in the open folder and ".."
+// for the folder above it, step by step: "nope\.." fails. "." fails, and
+// XP then takes it as a web address. A full path counts "." and ".." by
+// its text, so "C:\nope\..\WINDOWS" works.
+test("the Address bar takes names and .. from the open folder, like XP", async () => {
+  const h = await openDocuments();
+  const { s, fs } = h;
+  const go = async (text, how = "go") => {
+    h.address().value = text;
+    if (how === "go") await h.action("go");
+    else {
+      h.address().dispatchEvent(new s.window.Event("change"));
+      await settle();
+    }
+    return h.address().value;
+  };
+  const browse = fs.getPath(h.folder.id);
+  const nested = fs.getPath(h.nested.id);
+  for (const how of ["go", "change"]) {
+    expect(await go(browse, how)).toBe(browse);
+    expect(await go("Nested", how)).toBe(nested);
+    expect(await go("..", how)).toBe(browse);
+    expect(await go("Nested\\..\\Nested\\", how)).toBe(nested);
+    expect(await go("..\\.", how)).toBe(nested);
+    expect(await go(".", how)).toBe(nested);
+    expect(await go("nope\\..", how)).toBe(nested);
+    expect(await go("..\\note.txt", how)).toBe(nested);
+    expect(await go(`${browse}\\nope\\..\\.`, how)).toBe(browse);
+    expect(await go("  ", how)).toBe(browse);
+  }
+});
+
+// In the XP VM, "\WINDOWS" in the Address bar of C:\Documents and
+// Settings opens C:\WINDOWS: a "\" at the start is the top of the drive of
+// the open folder. "/WINDOWS" and "\\WINDOWS" are no folder: XP takes them
+// as a web or network address.
+test("the Address bar starts a path with \\ at the top of the drive, like XP", async () => {
+  const h = await openDocuments();
+  const { s, fs } = h;
+  const go = async (text, how) => {
+    h.address().value = text;
+    if (how === "go") await h.action("go");
+    else {
+      h.address().dispatchEvent(new s.window.Event("change"));
+      await settle();
+    }
+    return h.address().value;
+  };
+  const top = fs.createFolder(fs.DRIVE_C, "Top");
+  const onD = fs.createFolder(fs.DRIVE_D, "Data");
+  fs.createFolder(onD.id, "Top");
+  const profile = fs.getPath(fs.USER_PROFILE);
+  const settings = fs.getPath(fs.getNode(fs.USER_PROFILE).parent);
+  // A folder with the same name in the open folder is not the one.
+  fs.createFolder(fs.getNode(fs.USER_PROFILE).parent, "Top");
+  for (const how of ["go", "change"]) {
+    expect(await go(settings, how)).toBe(settings);
+    expect(await go("\\Top", how)).toBe(fs.getPath(top.id));
+    expect(await go(settings, how)).toBe(settings);
+    expect(await go(profile.slice(2), how)).toBe(profile);
+    expect(await go("\\", how)).toBe("C:\\");
+    expect(await go(fs.getPath(onD.id), how)).toBe("D:\\Data");
+    expect(await go("\\Data\\Top", how)).toBe("D:\\Data\\Top");
+    expect(await go("/Data", how)).toBe("D:\\Data\\Top");
+    expect(await go("\\\\Data", how)).toBe("D:\\Data\\Top");
+    // My Computer is on no drive. It has the drive of Windows.
+    expect(await go("My Computer", how)).toBe("My Computer");
+    expect(await go("\\Top", how)).toBe(fs.getPath(top.id));
+  }
 });
 
 test("Explorer items support Ctrl multi-select and drag only what is selected", async () => {

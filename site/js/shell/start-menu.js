@@ -101,7 +101,7 @@ const openAboutWindows = ({
     <div class="about-windows-copy">
       <p>Microsoft ® ${application}<br>Version 5.1 (Build 2600.xpsp.080413-2111 : Service Pack 3)<br>Copyright © 2007 Microsoft Corporation${otherStuff && `<br>${otherStuff}`}</p>
       <p>This product is licensed under the terms of the <a href="https://www.microsoft.com/useterms/" target="_blank" rel="noreferrer">End-User<br>License Agreement</a> to:</p>
-      <p class="about-windows-user">astro</p>
+      <p class="about-windows-user">${fs.USER_NAME}</p>
       <hr>
       <p>Physical memory available to Windows:&nbsp;&nbsp; 523,696 KB</p>
     </div>
@@ -115,9 +115,34 @@ const openShellProperties = (nodeId) => XPDialogs.properties(nodeId);
 
 const openSearchDialog = () => openSystemWindow("__search");
 
-// Task Manager's New Task opens the same dialog titled "Create New Task".
-const openRunDialog = ({ title = "Run" } = {}) => {
-  const dialog = XPDialogs.createDialog({ title });
+// The path of an item as the Run dialog's Open box shows it, like XP: in
+// quotes when it has a space.
+const runBoxPath = (id) => {
+  const path = fs.getPath(id);
+  return path.includes(" ") ? `"${path}"` : path;
+};
+
+// Task Manager's New Task opens the same dialog titled "Create New Task",
+// which keeps the keys of Task Manager. Run itself is modeless, like XP, so
+// an item can be dragged onto it from a window or the desktop.
+// XP opens one Run dialog. Run again brings it to the top with its text.
+let openRun = null;
+// Each Open box gets its own ids, because Run and Create New Task can be
+// open at the same time.
+let runDialogCount = 0;
+const openRunDialog = ({ title = "Run", modal = false } = {}) => {
+  if (!modal && openRun) {
+    openRun.activate();
+    return;
+  }
+  const dialog = XPDialogs.createDialog({ title, modal });
+  if (!modal) {
+    openRun = dialog;
+    dialog.onResult(() => {
+      if (openRun === dialog) openRun = null;
+    });
+  }
+  runDialogCount += 1;
   dialog.el.classList.add("run-dialog");
   const introRow = document.createElement("div");
   introRow.className = "run-dialog-intro";
@@ -133,11 +158,11 @@ const openRunDialog = ({ title = "Run" } = {}) => {
   setAccessKeyText(promptText, "&Open:");
   const input = document.createElement("input");
   input.type = "text";
-  input.className = "shell-dialog-input";
-  input.setAttribute("list", "run-command-history");
-  input.id = "run-command";
+  input.className = "shell-dialog-input run-command";
+  input.id = `run-command-${runDialogCount}`;
   const history = document.createElement("datalist");
-  history.id = "run-command-history";
+  history.id = `run-command-history-${runDialogCount}`;
+  input.setAttribute("list", history.id);
   getRunHistory().forEach((entry) =>
     history.appendChild(new Option(entry, entry)),
   );
@@ -145,16 +170,35 @@ const openRunDialog = ({ title = "Run" } = {}) => {
   const status = document.createElement("p");
   status.className = "shell-dialog-status";
   status.hidden = true;
-  const run = () => {
+  // The Open box gets new text the way XP sets it: the box's undo starts
+  // again, and the page hears an input event.
+  const setRunText = (text) => {
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const run = async () => {
+    // Like XP, Run does nothing without a command.
+    if (!input.value.trim()) return;
     const resolved = resolveShellCommand(input.value);
-    if (!resolved || resolved.run() === false) {
-      // XP titles this error with the command that could not be found.
-      status.textContent = `Windows cannot find '${input.value}'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.`;
-      XPDialogs.alert(status.textContent, input.value, "error");
+    // The command can open a new Run, like `run`. This one closes then.
+    if (!modal) openRun = null;
+    const ran = !!resolved && resolved.run() !== false;
+    if (!modal) openRun ??= dialog;
+    if (ran) {
+      rememberRunCommand(input.value);
+      dialog.close();
       return;
     }
-    rememberRunCommand(input.value);
-    dialog.close();
+    // XP names the program that it could not find, and hides Run while the
+    // error is open. Then Run comes back with its text selected.
+    const { program } = splitShellCommand(input.value);
+    status.textContent = `Windows cannot find '${program}'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.`;
+    const overlay = dialog.el.parentElement;
+    overlay.hidden = true;
+    await XPDialogs.alert(status.textContent, program, "error");
+    overlay.hidden = false;
+    input.focus();
+    input.select();
   };
   const runButton = XPDialogs.createDialogButton(
     { id: "run", label: "&OK" },
@@ -164,7 +208,7 @@ const openRunDialog = ({ title = "Run" } = {}) => {
     { id: "browse", label: "&Browse..." },
     async () => {
       const node = await XPDialogs.openFile({ title: "Browse" });
-      if (node) input.value = fs.getPath(node.id);
+      if (node) setRunText(runBoxPath(node.id));
       input.focus();
     },
   );
@@ -186,6 +230,52 @@ const openRunDialog = ({ title = "Run" } = {}) => {
     if (key && !dialog.accessKeys.has(key)) dialog.accessKeys.set(key, button);
   });
   dialog.accessKeys.set("o", { disabled: false, click: () => input.focus() });
+  // Like XP, a drop anywhere on the dialog goes at the end of the Open box,
+  // after a space. Dropped text gives its first line. A dropped item from a
+  // window or the desktop gives its path. A file from the computer has no
+  // path here, so the dialog does not take it.
+  const appendRunText = (text) => {
+    if (!text) return;
+    setRunText(input.value ? `${input.value} ${text}` : text);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  };
+  const appendRunPaths = (ids) =>
+    appendRunText(
+      ids
+        .filter((id) => fs.getNode(id))
+        .map(runBoxPath)
+        .join(" "),
+    );
+  dialog.el.dataset.dropAction = "items";
+  const { ITEM_DRAG_TYPE } = XPDialogs;
+  const takesDrop = (event) =>
+    XPDialogs.takesItemDrag(event, ["text/plain", ITEM_DRAG_TYPE]);
+  // A drag of items keeps the effect that its window allows, so the drop
+  // comes.
+  ["dragenter", "dragover"].forEach((type) =>
+    dialog.el.addEventListener(type, (event) => {
+      if (!takesDrop(event)) return;
+      event.preventDefault();
+      if (!event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+        event.dataTransfer.dropEffect = "copy";
+    }),
+  );
+  dialog.el.addEventListener("drop", (event) => {
+    if (!takesDrop(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer.types.includes(ITEM_DRAG_TYPE)) {
+      appendRunPaths(XPDialogs.droppedItemIds(event));
+      return;
+    }
+    appendRunText(
+      event.dataTransfer.getData("text/plain").split(/\r\n|\r|\n/)[0],
+    );
+  });
+  // Desktop icons move with the pointer, not with a browser drag.
+  dialog.el.addEventListener("itemsdrop", (event) =>
+    appendRunPaths(event.detail.ids),
+  );
   input.focus();
 };
 
@@ -287,11 +377,7 @@ const getFolderMenu = (folderId) => {
           ? { icon: "LocalDisk.png" }
           : node.type === "folder"
             ? { icon: "NewFolder.png" }
-            : {
-                iconSrc: /\.(txt|log|csv|md)$/i.test(node.name)
-                  ? "assets/xp/icons/TextDocument.png"
-                  : "assets/xp/icons/GenericFile.png",
-              }),
+            : { iconSrc: XP_ICON_PATHS[fileIconName(node.name)] }),
       ...(node.type === "folder"
         ? { children: () => getFolderMenu(node.id) }
         : { action: () => openDesktopItem(node.id) }),
@@ -620,9 +706,11 @@ const buildPlaces = () => {
   };
 
   container.addEventListener("keydown", (event) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    // AltGr types a character, such as "ą", and chooses no item.
+    const key = XPDialogs.accessKeyOf(event);
+    if (event.altKey || !key) return;
     const item = container.querySelector(
-      `[data-access-key="${event.key.toLowerCase()}"]`,
+      `[data-access-key="${CSS.escape(key)}"]`,
     );
     if (!item) return;
     event.preventDefault();
@@ -805,6 +893,11 @@ const buildPinnedPrograms = () => {
   ]);
   if (pinnedKey === renderedPinnedKey && container.isConnected) return;
   renderedPinnedKey = pinnedKey;
+  // A program with the keys keeps them, else All Programs takes them.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) => `[data-pinned-game="${CSS.escape(keys.dataset.pinnedGame)}"]`,
+  );
   container.innerHTML = "";
   container.classList.toggle("sm-small-icons", !options.largeIcons);
 
@@ -822,7 +915,7 @@ const buildPinnedPrograms = () => {
     programsImage.alt = "";
     programsIcon.appendChild(programsImage);
     allProgramsButton.prepend(programsIcon);
-    return;
+    return giveKeysBack(allProgramsButton);
   }
   allProgramsLabel.textContent = "All Programs";
 
@@ -834,6 +927,7 @@ const buildPinnedPrograms = () => {
     "sm-game-icon",
   );
   internetGames.classList.add("sm-pinned");
+  internetGames.dataset.pinnedGame = "__internet-games";
   const internetText = document.createElement("span");
   internetText.className = "sm-pinned-text";
   const internetTitle = document.createElement("span");
@@ -855,15 +949,19 @@ const buildPinnedPrograms = () => {
     container.appendChild(pinnedSeparator);
   }
 
-  pinned.forEach((gameId) =>
-    container.appendChild(createMenuGameItem(gameId, gameStats)),
-  );
+  pinned.forEach((gameId) => {
+    const item = createMenuGameItem(gameId, gameStats);
+    item.dataset.pinnedGame = gameId;
+    container.appendChild(item);
+  });
+  giveKeysBack(allProgramsButton);
 };
 
 let startFlyoutTimer = null;
 const closeAllPrograms = () => {
   clearTimeout(startFlyoutTimer);
   const host = document.getElementById("start-menu-flyouts");
+  giveKeysBackFrom(host);
   host.replaceChildren();
   host.hidden = true;
   document.getElementById("all-programs-button").classList.remove("active");
@@ -924,9 +1022,9 @@ const wireStartFlyoutKeyboard = (panel, parentButton) => {
       parentButton.focus();
       return;
     }
-    const item = items.find(
-      (entry) => entry.dataset.accessKey === event.key.toLowerCase(),
-    );
+    // A key with Ctrl and AltGr type no letter of a menu item, like XP.
+    const key = XPDialogs.accessKeyOf(event);
+    const item = key && items.find((entry) => entry.dataset.accessKey === key);
     if (item) {
       event.preventDefault();
       item.click();
@@ -1098,6 +1196,8 @@ const openProgramSubmenu = (definitions, anchor, depth) => {
   // positionStartFlyout would otherwise clamp to the top-left corner.
   if (!anchor.isConnected) return;
   const host = document.getElementById("start-menu-flyouts");
+  // Keys in a menu that closes go back to the item that opens the new one.
+  const giveKeysBack = holdKeys(host);
   [...host.querySelectorAll(".start-program-flyout")]
     .slice(depth)
     .forEach((panel) => panel.remove());
@@ -1120,6 +1220,7 @@ const openProgramSubmenu = (definitions, anchor, depth) => {
   host.hidden = false;
   positionStartFlyout(panel, anchor);
   wireStartFlyoutKeyboard(panel, anchor);
+  giveKeysBack(anchor);
   panel.addEventListener("pointerenter", () => clearTimeout(startFlyoutTimer));
   panel.addEventListener("pointerleave", () => {
     startFlyoutTimer = setTimeout(closeAllPrograms, 420);
@@ -1130,10 +1231,16 @@ const openAllPrograms = (focusFirst = false) => {
   clearTimeout(startFlyoutTimer);
   const host = document.getElementById("start-menu-flyouts");
   const button = document.getElementById("all-programs-button");
+  // A program with the keys keeps them, else All Programs takes them.
+  const giveKeysBack = holdKeys(
+    host,
+    (keys) => `[data-program-id="${CSS.escape(keys.dataset.programId || "")}"]`,
+  );
   host.replaceChildren();
   host.hidden = false;
   button.classList.add("active");
   openProgramSubmenu(getAllProgramsTree(), button, 0);
+  giveKeysBack(button);
   if (focusFirst) host.querySelector(".start-program-flyout button")?.focus();
 };
 
@@ -1184,10 +1291,10 @@ const openStartMenu = () => {
     edition.textContent = "Professional";
     user.replaceChildren("Windows XP ", edition);
   } else {
-    user.textContent = "astro";
+    user.textContent = fs.USER_NAME;
   }
   document.getElementById("log-off-button").lastChild.textContent = classic
-    ? " Log Off astro..."
+    ? ` Log Off ${fs.USER_NAME}...`
     : " Log Off";
   document.getElementById("turn-off-button").lastChild.textContent = classic
     ? " Turn Off Computer..."
@@ -1209,7 +1316,9 @@ const openStartMenu = () => {
 
 const closeStartMenu = () => {
   closeAllPrograms();
-  document.getElementById("start-menu").hidden = true;
+  const startMenu = document.getElementById("start-menu");
+  giveKeysBackFrom(startMenu);
+  startMenu.hidden = true;
   document.getElementById("start-button").classList.remove("active");
 };
 

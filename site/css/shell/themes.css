@@ -745,6 +745,9 @@ html[data-xp-appearance="classic"] .start-program-flyout button:focus-visible {
   margin: 0;
   font: inherit;
   white-space: pre-wrap;
+  /* Like the console, a long line goes on to the next row at the last
+     column, also in a word. */
+  word-break: break-all;
 }
 
 .xp-terminal-prompt {

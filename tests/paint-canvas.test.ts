@@ -1,18 +1,25 @@
 // @ts-nocheck -- A small pixel-backed canvas verifies the app's drawing logic without a browser GPU.
 import { afterEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
+import { createRequire } from "node:module";
 import { createCanvasEngine } from "../site/apps/paint/canvas-engine.js";
 const previousDocument = globalThis.document,
-  previousImageData = globalThis.ImageData;
+  previousImageData = globalThis.ImageData,
+  previousDialogs = globalThis.XPDialogs;
+// The pure key rules of the shell's dialogs, which Paint reads from
+// globalThis.XPDialogs like in the page.
+const dialogs = createRequire(import.meta.url)("../site/js/dialogs.js");
 let w;
 afterEach(() => {
   w?.close();
   globalThis.document = previousDocument;
   globalThis.ImageData = previousImageData;
+  globalThis.XPDialogs = previousDialogs;
 });
 function setup() {
   w = new Window();
   globalThis.document = w.document;
+  globalThis.XPDialogs = dialogs;
   globalThis.ImageData = class {
     constructor(data, width, height) {
       Object.assign(this, { data, width, height });
@@ -230,9 +237,28 @@ test("selection can move, copy, cut, paste transparently and clear", () => {
 test("text commits on keyboard confirmation and can be canceled", () => {
   const h = setup();
   h.engine.setTool("text");
-  h.pointer("pointerdown", 1, 2);
+  // The press keeps the keys in the new box, so the browser cannot move
+  // them to the picture.
+  const press = new w.PointerEvent("pointerdown", {
+    clientX: 1,
+    clientY: 2,
+    button: 0,
+    pointerId: 1,
+    cancelable: true,
+  });
+  h.canvas.dispatchEvent(press);
+  expect(press.defaultPrevented).toBeTrue();
   let editor = h.frame.querySelector("textarea");
   editor.value = "one\ntwo";
+  // The Enter and Esc that end an input method composition stay in the
+  // text.
+  for (const init of [
+    { key: "Enter", ctrlKey: true, isComposing: true },
+    { key: "Escape", keyCode: 229 },
+  ])
+    editor.dispatchEvent(new w.KeyboardEvent("keydown", init));
+  expect(editor.isConnected).toBeTrue();
+  expect(h.calls.some((c) => c[0] === "fillText")).toBeFalse();
   editor.dispatchEvent(
     new w.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
   );
@@ -243,8 +269,19 @@ test("text commits on keyboard confirmation and can be canceled", () => {
   expect(h.frame.querySelector("textarea")).toBeNull();
   h.pointer("pointerdown", 1, 1);
   editor = h.frame.querySelector("textarea");
+  // Ctrl+Esc and Alt+Esc belong to the shell and keep the text.
+  editor.dispatchEvent(
+    new w.KeyboardEvent("keydown", { key: "Escape", ctrlKey: true }),
+  );
+  editor.dispatchEvent(
+    new w.KeyboardEvent("keydown", { key: "Escape", altKey: true }),
+  );
+  expect(editor.isConnected).toBeTrue();
+  h.canvas.tabIndex = 0;
   editor.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
   expect(h.frame.querySelector("textarea")).toBeNull();
+  // Esc gives the keys back to the picture.
+  expect(w.document.activeElement === h.canvas).toBeTrue();
   h.pointer("pointerdown", 1, 1);
   h.frame.querySelector("textarea").blur();
   expect(h.frame.querySelector("textarea")).toBeNull();

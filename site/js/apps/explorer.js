@@ -109,8 +109,8 @@ const SHELL_COMMANDS = [
 
 const normalizeShellCommand = (value) => value.trim().toLowerCase();
 const resolveShellCommand = (value) => {
+  // Run never asks for an empty command.
   const command = normalizeShellCommand(value);
-  if (!command) return null;
   const shell = SHELL_COMMANDS.find((entry) => entry.aliases.includes(command));
   if (shell) return { kind: "application", title: shell.title, run: shell.run };
   const gameId = Object.keys(gamesList).find(
@@ -124,16 +124,208 @@ const resolveShellCommand = (value) => {
       title: formatGameTitle(gameId),
       run: () => openGameWindow(gameId),
     };
-  const nodeId = fs.resolvePath(String(value).trim());
-  const node = nodeId && fs.getNode(nodeId);
-  // Like XP, Run cannot find an item by its place in the Recycle Bin.
-  if (node && !isDeletedNode(node.id))
+  // Like XP, one pair of quotes around a path, as Browse and a drop give
+  // it, is not part of the path.
+  const node = findRunNode(
+    String(value)
+      .trim()
+      .replace(/^"(.*)"$/, "$1"),
+  );
+  if (node)
     return {
       kind: node.type === "folder" ? "folder" : "file",
       title: node.name,
       run: () => fs.open(node.id),
     };
-  return null;
+  // Else the first word, or a quoted name, is a program, and the rest is
+  // what it opens, like `notepad "C:\a b.txt"`.
+  const { program, args } = splitShellCommand(value);
+  const programId = RUN_PROGRAMS[program.toLowerCase()];
+  if (!programId) return null;
+  return {
+    kind: "application",
+    title: program,
+    run: () => runProgram(programId, args),
+  };
+};
+
+// A program starts in a folder: XP's Run starts it in the user's profile
+// folder, and the Command Prompt in its current folder. A path with no
+// drive, such as "a.txt", is in that folder. A path that starts with "\"
+// is on the drive of that folder.
+const runFullPath = (path, base = fs.getPath(fs.USER_PROFILE)) =>
+  /^[a-z]:/i.test(path)
+    ? path
+    : path.startsWith("\\")
+      ? `${base.slice(0, 2)}${path}`
+      : `${base.replace(/\\$/, "")}\\${path}`;
+
+// Like XP, Run cannot find an item by its place in the Recycle Bin. A path
+// that is not in the start folder can also start at My Computer, such as
+// "Local Disk (C:)\WINDOWS".
+const findRunNode = (path, base) => {
+  const nodeId =
+    fs.resolvePath(runFullPath(path, base)) || fs.resolvePath(path);
+  return nodeId && !isDeletedNode(nodeId) ? fs.getNode(nodeId) : null;
+};
+
+// The program names that XP's Run knows, with or without .exe.
+const RUN_PROGRAMS = Object.fromEntries(
+  [
+    ["calc", "__calculator"],
+    ["cmd", "__command-prompt"],
+    ["explorer", "explorer"],
+    ["freecell", "__freecell"],
+    ["mshearts", "__hearts"],
+    ["mspaint", "__paint"],
+    ["notepad", "__notepad"],
+    ["pbrush", "__paint"],
+    ["pinball", "__pinball"],
+    ["sol", "__solitaire"],
+    ["spider", "__spider-solitaire"],
+    ["taskmgr", "__task-manager"],
+    ["winmine", "__minesweeper"],
+  ].flatMap(([name, id]) => [
+    [name, id],
+    [`${name}.exe`, id],
+  ]),
+);
+
+// A command's program, quoted or up to the first space, and the rest.
+const splitShellCommand = (value) => {
+  const [, quoted, plain, args] = /^(?:"([^"]*)"?|(\S+))\s*(.*)$/.exec(
+    String(value).trim(),
+  );
+  return { program: quoted ?? plain, args };
+};
+
+// The path in a program's arguments: the first quoted text, or else all of
+// them, like XP's Notepad.
+const runArgumentPath = (args) => /^"([^"]*)"?/.exec(args)?.[1] ?? args;
+
+// Opens a program with the item that its arguments name, like XP. base is
+// the path of the folder that the program starts in. A missing item gets
+// the program's own message.
+const runProgram = (programId, args, base) => {
+  if (programId === "explorer") return runExplorer(args, base);
+  if (programId === "__command-prompt") return runCommandPrompt(args);
+  const path = runArgumentPath(args);
+  const application = window.XPApplicationRegistry.get(programId);
+  if (application.kind === "system") return openSystemWindow(programId);
+  if (path && programId === "__notepad") return runNotepad(path, base);
+  // XP's Hearts takes no arguments. It shows an empty error and does not
+  // start.
+  if (path && programId === "__hearts")
+    return XPDialogs.alert("", "The Microsoft Hearts Network", "error");
+  // Calculator and the other games do not use their arguments, like XP.
+  if (!path || programId !== "__paint") return openXPProgram(programId);
+  const node = findRunNode(path, base);
+  if (node?.type === "file") return openXPProgram(programId, { file: node });
+  return XPDialogs.alert(
+    `${path} was not found.`,
+    application.title,
+    "warning",
+  );
+};
+
+// XP's Explorer takes its switches and its path split by commas:
+// - /e shows the Folders bar.
+// - /root,<folder> opens that folder.
+// - /select,<item> opens the folder of the item, with the item selected.
+// - /n opens a new window. Here Explorer has one window, so it does
+//   nothing.
+// Like XP, a comma in quotes is part of the path, the quotes are not, and
+// a path can have spaces with no quotes. With no path, Explorer opens My
+// Documents with the Folders bar. A path of a file opens the file.
+const runExplorer = (args, base) => {
+  const parts = (args.match(/(?:"[^"]*"?|[^,"])+/g) ?? [])
+    .map((part) => part.replaceAll('"', "").trim())
+    .filter(Boolean);
+  let folders = !parts.length;
+  let select = false;
+  let path = "";
+  for (const part of parts) {
+    const flag = part.toLowerCase();
+    if (flag === "/e") folders = true;
+    else if (flag === "/select") select = true;
+    else if (flag !== "/n" && flag !== "/root") path = part;
+  }
+  const node = path ? findRunNode(path, base) : fs.getNode(fs.MY_DOCUMENTS);
+  if (!node)
+    return XPDialogs.alert(
+      `The path '${path}' does not exist or is not a directory.`,
+      "Windows Explorer",
+      "warning",
+    );
+  if (select)
+    return openSystemWindow("__my-documents", {
+      folderId: node.parent,
+      folders,
+      selectId: node.id,
+    });
+  if (node.type !== "folder") return fs.open(node.id);
+  return openSystemWindow("__my-documents", { folderId: node.id, folders });
+};
+
+// XP's cmd opens a new window each time. The window reads its arguments,
+// such as "/c dir" or "/k dir", like cmd.exe.
+const runCommandPrompt = (args) =>
+  openXPProgram("__command-prompt", { arguments: args });
+
+// XP's Notepad opens the file. A name with no extension that no file has
+// gets ".txt", like XP: "notepad foo" opens or asks for "foo.txt".
+const runNotepad = (path, base) => {
+  const node = findRunNode(path, base);
+  if (node?.type === "file") return openXPProgram("__notepad", { file: node });
+  const named = path.split("\\").at(-1).includes(".") ? path : `${path}.txt`;
+  const file = findRunNode(named, base);
+  if (file?.type === "file") return openXPProgram("__notepad", { file });
+  return createNotepadFile(named, base);
+};
+
+// Runs a program that XP has by its name, such as "notepad" or
+// "winmine.exe", from the folder with the path base. The Command Prompt
+// uses it. It is false for a name that is not a program.
+const runNamedProgram = (name, args, base) => {
+  const programId = RUN_PROGRAMS[name.toLowerCase()];
+  if (!programId) return false;
+  // The window that the program opens, if it opens one. A message, such
+  // as Hearts' error, is no window. Like XP, explorer.exe gives its folder
+  // to the Explorer that runs and ends at once, so it has no window.
+  return Promise.resolve(runProgram(programId, args, base)).then((result) =>
+    result?.gameId && programId !== "explorer" ? result : null,
+  );
+};
+
+// XP's Notepad offers to create a file that Run names but that does not
+// exist. No opens an empty Notepad, and Cancel opens nothing. It gives the
+// Notepad window, or null: like XP, Notepad asks in its own process, so
+// START /WAIT and /MAX act on the window that opens after the question.
+const createNotepadFile = async (path, base) => {
+  const answer = await XPDialogs.message({
+    title: "Notepad",
+    text: `Cannot find the ${path} file.\n\nDo you want to create a new file?`,
+    icon: "warning",
+    buttons: XPDialogs.BUTTON_SETS.yesNoCancel,
+  });
+  if (answer === "cancel") return null;
+  if (answer === "no") return openXPProgram("__notepad");
+  const fullPath = runFullPath(path, base);
+  const separator = fullPath.lastIndexOf("\\");
+  const parent = findRunNode(fullPath.slice(0, separator));
+  try {
+    if (parent?.type !== "folder")
+      throw new Error("The system cannot find the path specified.");
+    // With stored documents, a change ends after the browser stores it.
+    const file = await fileOps.createFile(
+      parent.id,
+      fullPath.slice(separator + 1),
+    );
+    return openXPProgram("__notepad", { file });
+  } catch (error) {
+    await XPDialogs.alert(error.message, "Notepad", "error");
+    return null;
+  }
 };
 
 const RUN_HISTORY_KEY = "runHistory";
@@ -255,6 +447,7 @@ const wireSearchCompanion = (win) => {
       item.className = "explorer-item";
       item.setAttribute("role", "option");
       const label = document.createElement("span");
+      label.className = "explorer-item-label";
       const name = document.createElement("b");
       name.textContent = result.title || result.node.name;
       const description = document.createElement("small");
@@ -262,7 +455,7 @@ const wireSearchCompanion = (win) => {
         ? "Application"
         : result.gameId
           ? "Game"
-          : `${result.kind === "folder" ? "File folder" : explorerItemDescription(result.node)} — ${fs.getPath(result.node.id)}`;
+          : `${explorerItemDescription(result.node)} — ${fs.getPath(result.node.id)}`;
       label.append(name, description);
       item.append(
         result.gameId
@@ -273,11 +466,13 @@ const wireSearchCompanion = (win) => {
         label,
       );
       item.addEventListener("dblclick", () => openResult(result));
+      // Enter opens the result. Alt+Enter shows the Properties of a file or
+      // folder, like XP, and does nothing for a program.
       item.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          openResult(result);
-        }
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        if (!event.altKey) openResult(result);
+        else if (result.node) XPDialogs.properties(result.node.id);
       });
       item.addEventListener("click", () => {
         list
@@ -292,7 +487,7 @@ const wireSearchCompanion = (win) => {
     .querySelector('[data-search-action="search"]')
     .addEventListener("click", render);
   query.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !XPDialogs.isComposingKey(event)) {
       event.preventDefault();
       render();
     }
@@ -317,6 +512,7 @@ const findBundledGameByTitle = (title) => {
 const createInternetGameCard = (game, win, { installed = false } = {}) => {
   const card = document.createElement("article");
   card.className = "internet-game-card";
+  card.dataset.uuid = game.uuid;
 
   const artwork = document.createElement("div");
   artwork.className = "internet-game-artwork";
@@ -352,6 +548,7 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
 
   if (installed) {
     action.textContent = "Play";
+    action.dataset.cardAction = "play";
     action.addEventListener("click", () =>
       openGameWindow(`flashpoint:${game.uuid}`),
     );
@@ -359,6 +556,7 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
     remove.type = "button";
     remove.className = "xp-btn";
     remove.textContent = "Uninstall";
+    remove.dataset.cardAction = "uninstall";
     remove.addEventListener("click", async () => {
       const confirmed = await XPDialogs.confirm(
         `Remove ${game.title || "this game"} from this computer?`,
@@ -441,6 +639,12 @@ const createInternetGameCard = (game, win, { installed = false } = {}) => {
 const renderInstalledInternetGames = (win) => {
   const container = win.el.querySelector(".internet-games-installed");
   const status = win.el.querySelector(".internet-games-installed-status");
+  // A button with the keys keeps them, else the Installed tab takes them.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) =>
+      `[data-uuid="${CSS.escape(keys.closest("[data-uuid]").dataset.uuid)}"] [data-card-action="${keys.dataset.cardAction}"]`,
+  );
   container.replaceChildren();
   const records = gameLibrary
     ? [...installedGameIds]
@@ -456,6 +660,7 @@ const renderInstalledInternetGames = (win) => {
       createInternetGameCard(record, win, { installed: true }),
     ),
   );
+  giveKeysBack(win.el.querySelector('[data-internet-tab="installed"]'));
 };
 
 const wireInternetGames = (win) => {
@@ -527,23 +732,16 @@ const wireInternetGames = (win) => {
   query.focus();
 };
 
+// An error box with the text and title of the error, such as XP's "Error
+// Deleting File or Folder". An error without them shows the defaults.
+const alertError = (error, text, title) =>
+  XPDialogs.alert(error.message || text, error.title || title, "error");
+
 // XP's wording and titles, with the Recycle Bin icon.
 // Delete questions report a failed delete themselves, so no caller leaves
 // it unhandled.
 const alertFileOperationError = (error) =>
-  XPDialogs.alert(
-    error.message || "The file operation failed.",
-    "File operation",
-    "error",
-  );
-
-// Explorer and the Desktop report a refused name the same way.
-const alertRenameError = (error) =>
-  XPDialogs.alert(
-    error.message || "The file operation failed.",
-    "Error Renaming File or Folder",
-    "error",
-  );
+  alertError(error, "The file operation failed.", "File operation");
 
 const confirmRecycleDelete = (ids) => {
   const node = fs.getNode(ids[0]);
@@ -562,7 +760,13 @@ const confirmRecycleDelete = (ids) => {
             `Are you sure you want to send '${node.name}' to the Recycle Bin?`,
             "Confirm File Delete",
           ];
-  return XPDialogs.confirm(text, title, "recycle")
+  // XP's delete questions close with No on Esc or the close button.
+  return XPDialogs.confirm(
+    text,
+    title,
+    "recycle",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
+  )
     .then(async (yes) => yes && (await fileOps.removeToBin(ids)))
     .catch(alertFileOperationError);
 };
@@ -574,6 +778,7 @@ const confirmRecycleBinDelete = async (ids) => {
     "Are you sure you want to permanently delete the selected items?",
     "Confirm File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   );
   if (!yes) return;
   try {
@@ -593,6 +798,7 @@ const confirmEmptyRecycleBin = () => {
       : `Are you sure you want to delete these ${count} items?`,
     single ? "Confirm File Delete" : "Confirm Multiple File Delete",
     "warning",
+    XPDialogs.BUTTON_SETS.yesNoClosable,
   ).then(async (yes) => {
     try {
       if (!yes) return false;
@@ -604,33 +810,57 @@ const confirmEmptyRecycleBin = () => {
   });
 };
 
-const choosePasteConflict = ({ existing }) =>
-  new Promise((resolve) => {
-    const dialog = XPDialogs.createDialog({
-      title: "Confirm File Replace",
-      onCancel: () => dialog.close("cancel"),
+// XP's question for a name in use. Each move, copy, import or restore asks
+// with its own function, so Yes to All answers the rest of its questions.
+// The answers are the ones that pasteWithConflicts takes: "replace", "skip"
+// or "cancel".
+// Like XP, the size, then "modified: Today, November 14, 2026, 1:31:59 AM".
+// A day before today shows its weekday.
+const describeReplacedFile = (node) => {
+  const modified = new Date(node.modified);
+  const day =
+    modified.toDateString() === new Date().toDateString()
+      ? "Today"
+      : modified.toLocaleDateString("en-US", { weekday: "long" });
+  return `${XPDialogs.formatBytes(node.size).replace(/ \(.*\)$/, "")}\nmodified: ${day}, ${modified.toLocaleDateString(
+    "en-US",
+    { year: "numeric", month: "long", day: "numeric" },
+  )}, ${modified.toLocaleTimeString("en-US")}`;
+};
+// many is true when the operation has more than one item. Like XP, a file
+// question for one item has only Yes and No. A folder question, and the
+// questions about the items in that folder, have Yes, Yes to All, No and
+// Cancel.
+const createReplaceQuestion = (many) => {
+  let replaceAll = false;
+  return async ({ source, existing }) => {
+    if (replaceAll) return "replace";
+    const folder = existing.type === "folder";
+    if (folder) many = true;
+    const answer = await XPDialogs.message({
+      title: folder ? "Confirm Folder Replace" : "Confirm File Replace",
+      text: folder
+        ? `This folder already contains a folder named '${existing.name}'.\n\nIf the files in the existing folder have the same name as files in the folder you are moving or copying, they will be replaced.  Do you still want to move or copy the folder?`
+        : `This folder already contains a file named '${existing.name}'.\n\nWould you like to replace the existing file\n\n${describeReplacedFile(existing)}\n\nwith this one?\n\n${describeReplacedFile(source)}`,
+      icon: "warning",
+      buttons: many
+        ? XPDialogs.BUTTON_SETS.yesAllNoCancel
+        : XPDialogs.BUTTON_SETS.yesNoClosable,
     });
-    const text = document.createElement("p");
-    text.className = "dlg-text";
-    text.textContent = `${existing.name} already exists. What do you want to do?`;
-    const row = document.createElement("div");
-    row.className = "dlg-buttons";
-    [
-      ["Replace", "replace"],
-      ["Keep Both", "rename"],
-      ["Cancel", "cancel"],
-    ].forEach(([label, value]) => {
-      row.appendChild(
-        XPDialogs.createDialogButton({ id: value, label }, () =>
-          dialog.close(value),
-        ),
-      );
-    });
-    dialog.body.append(text, row);
-    dialog.onResult(resolve);
-    dialog.defaultButton = row.firstChild;
-    row.firstChild.focus();
-  });
+    replaceAll = answer === "all";
+    return { yes: "replace", all: "replace", no: "skip" }[answer] || "cancel";
+  };
+};
+// Restore asks before it replaces an item, like XP, and reports a failed
+// restore itself.
+const restoreFromRecycleBin = async (ids) => {
+  try {
+    return await fileOps.restore(ids, createReplaceQuestion(ids.length > 1));
+  } catch (error) {
+    await alertError(error, "The file operation failed.", "Restore files");
+    return null;
+  }
+};
 // Every caller checks canPaste or fills the clipboard first. Pastes cannot
 // overlap: the conflict and progress dialogs are modal.
 // Pastes the clipboard, or moves or copies `items` ({ mode, ids }) without
@@ -652,7 +882,7 @@ const pasteIntoFolder = async (destinationId, items = null) => {
   try {
     const result = await fileOps.pasteWithConflicts(
       destinationId,
-      choosePasteConflict,
+      createReplaceQuestion(source.ids.length > 1),
       {
         items,
         isCancelled: () => cancelled,
@@ -668,10 +898,10 @@ const pasteIntoFolder = async (destinationId, items = null) => {
   } catch (error) {
     progress?.close?.("error");
     console.error(error);
-    XPDialogs.alert(
-      error.message || "The file operation could not be completed.",
+    alertError(
+      error,
+      "The file operation could not be completed.",
       "File Operation Error",
-      "error",
     );
     return null;
   }
@@ -692,101 +922,70 @@ const readAllDirectoryEntries = (reader) =>
       }, reject);
     read();
   });
-const importFileEntry = (entry, destinationId, state) =>
-  new Promise((resolve, reject) =>
-    entry.file(async (file) => {
-      try {
-        if (state.cancelled) return resolve(false);
-        const content = await fileOps.readFileContent(file);
-        const existing = fs.findChild(destinationId, file.name);
-        let replaceId;
-        if (existing) {
-          const choice = await choosePasteConflict({ existing });
-          if (choice === "cancel") {
-            state.cancelled = true;
-            return resolve(false);
-          }
-          if (choice === "replace" && existing.type === "file")
-            replaceId = existing.id;
-        }
-        await fs.transaction(() => {
-          if (replaceId) fs.destroy(replaceId);
-          return fileOps.createFile(destinationId, file.name, {
-            content,
-            size: file.size,
-          });
-        });
-        state.completed = (state.completed || 0) + 1;
-        state.progress?.update(0, `Imported ${state.completed} item(s)...`);
-        resolve(true);
-      } catch (error) {
-        reject(error);
-      }
-    }, reject),
-  );
-// Callers check state.cancelled before importing each entry.
-const importDirectoryEntry = async (entry, destinationId, state) => {
-  let folder = null;
-  try {
-    const existing = fs.findChild(destinationId, entry.name);
-    if (existing) {
-      const choice = await choosePasteConflict({ existing });
-      if (choice === "cancel") {
-        state.cancelled = true;
-        return;
-      }
-      if (choice === "replace" && existing.type === "folder")
-        await fs.destroy(existing.id);
+// A dropped file or folder as an item for fileOps.importWithConflicts.
+// Only the folder tree is read here; the files are read after the
+// questions.
+const importItemFromEntry = async (entry) => {
+  if (entry.isDirectory) {
+    const children = [];
+    for (const child of await readAllDirectoryEntries(entry.createReader())) {
+      const item = await importItemFromEntry(child);
+      if (item) children.push(item);
     }
-    folder = await fileOps.createFolder(destinationId, entry.name);
-    const entries = await readAllDirectoryEntries(entry.createReader());
-    for (const child of entries) {
-      if (state.cancelled) throw new Error("Directory import cancelled");
-      if (child.isDirectory)
-        await importDirectoryEntry(child, folder.id, state);
-      else if (child.isFile) await importFileEntry(child, folder.id, state);
-    }
-  } catch (error) {
-    // A failed child has already removed its own folder, so this folder is
-    // still present.
-    if (folder) await fs.destroy(folder.id);
-    if (error.message === "Directory import cancelled") return;
-    throw error;
+    return { type: "folder", name: entry.name, children };
   }
+  if (!entry.isFile) return null;
+  const file = await new Promise((resolve, reject) =>
+    entry.file(resolve, reject),
+  );
+  return fileOps.importItemsFromFiles([file])[0];
 };
-// Only writable folders are wired as drop targets (see wireFolderDropTarget).
-const importDroppedFiles = async (destinationId, dataTransfer) => {
-  const state = { cancelled: false, completed: 0 };
-  state.progress = XPDialogs.progress({
-    title: "Importing...",
-    text: "Preparing dropped files...",
+// Imports files from the user's computer into a folder, like a copy: every
+// question comes first, so Cancel imports nothing. Errors go to the caller.
+const importIntoFolder = async (destinationId, readItems) => {
+  let cancelled = false;
+  const progress = XPDialogs.progress({
+    title: "Copying...",
+    text: "Preparing to copy...",
     cancellable: true,
     onCancel: () => {
-      state.cancelled = true;
+      cancelled = true;
     },
   });
   try {
+    const items = await readItems();
+    return await fileOps.importWithConflicts(
+      destinationId,
+      items,
+      createReplaceQuestion(items.length > 1),
+      {
+        isCancelled: () => cancelled,
+        onProgress: ({ completed, total }) =>
+          progress.update(
+            completed / total,
+            `Copying ${completed} of ${total}...`,
+          ),
+      },
+    );
+  } finally {
+    progress.close();
+  }
+};
+// Only writable folders are wired as drop targets (see wireFolderDropTarget).
+const importDroppedFiles = (destinationId, dataTransfer) =>
+  importIntoFolder(destinationId, async () => {
     const entries = [...(dataTransfer.items || [])]
       .map((item) => item.webkitGetAsEntry?.())
       .filter(Boolean);
-    if (entries.length) {
-      for (const entry of entries) {
-        if (state.cancelled) break;
-        if (entry.isDirectory)
-          await importDirectoryEntry(entry, destinationId, state);
-        else if (entry.isFile)
-          await importFileEntry(entry, destinationId, state);
-      }
-      return;
+    if (!entries.length)
+      return fileOps.importItemsFromFiles(dataTransfer.files || []);
+    const items = [];
+    for (const entry of entries) {
+      const item = await importItemFromEntry(entry);
+      if (item) items.push(item);
     }
-    for (const file of [...(dataTransfer.files || [])]) {
-      if (state.cancelled) break;
-      await importFileEntry({ file: (ok) => ok(file) }, destinationId, state);
-    }
-  } finally {
-    state.progress.close();
-  }
-};
+    return items;
+  });
 // The items an Explorer drag carries. A folder never shows as a drop target
 // for itself or for a folder inside it. A drop, a dragend that reaches the
 // document, or the next dragstart ends the list.
@@ -794,11 +993,18 @@ let explorerDragIds = [];
 document.addEventListener("dragend", () => {
   explorerDragIds = [];
 });
-const wireFolderDropTarget = (element, destinationId) => {
-  element.dataset.dropDestinationId = destinationId;
+// The element takes drops into the folder that its data-drop-destination-id
+// names. A list can change it when it shows another folder. A drop on an
+// item inside it that is a target of its own goes only to that item.
+const wireFolderDropTarget = (element, folderId) => {
+  element.dataset.dropDestinationId = folderId;
+  const ownDrop = (event) =>
+    event.target.closest("[data-drop-destination-id]") === element;
   element.addEventListener("dragover", (event) => {
+    if (!ownDrop(event)) return;
+    const destinationId = element.dataset.dropDestinationId;
     const internal = event.dataTransfer?.types?.includes(
-      "application/x-astro-vfs-ids",
+      XPDialogs.ITEM_DRAG_TYPE,
     );
     if (
       internal &&
@@ -810,7 +1016,8 @@ const wireFolderDropTarget = (element, destinationId) => {
     if (
       internal ||
       fileOps.canPaste(destinationId) ||
-      event.dataTransfer?.files?.length
+      // A drag shows no files until the drop, only that it has them.
+      event.dataTransfer?.types?.includes("Files")
     ) {
       event.preventDefault();
       element.classList.add("drop-target");
@@ -820,13 +1027,13 @@ const wireFolderDropTarget = (element, destinationId) => {
     element.classList.remove("drop-target"),
   );
   element.addEventListener("drop", async (event) => {
+    if (!ownDrop(event)) return;
+    const destinationId = element.dataset.dropDestinationId;
     event.preventDefault();
     element.classList.remove("drop-target");
     explorerDragIds = [];
     try {
-      const payload = event.dataTransfer?.getData(
-        "application/x-astro-vfs-ids",
-      );
+      const payload = event.dataTransfer?.getData(XPDialogs.ITEM_DRAG_TYPE);
       const ids = payload ? JSON.parse(payload) : [];
       if (!Array.isArray(ids)) throw new Error("Invalid dropped item list");
       // A drag moves the items without the clipboard, like XP. A folder
@@ -847,21 +1054,13 @@ const wireFolderDropTarget = (element, destinationId) => {
         });
       else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {
-      XPDialogs.alert(
-        error.message || "The dropped files could not be imported.",
+      alertError(
+        error,
+        "The dropped files could not be imported.",
         "File Operation Error",
-        "error",
       );
     }
   });
-};
-const closeExplorerMenu = (root = document) => {
-  root.querySelectorAll(".explorer-menu").forEach((menu) => {
-    menu.hidden = true;
-  });
-  root
-    .querySelectorAll('[data-explorer-menu][aria-expanded="true"]')
-    .forEach((button) => button.setAttribute("aria-expanded", "false"));
 };
 
 const systemFolderShortcuts = {
@@ -873,13 +1072,185 @@ const systemFolderShortcuts = {
 };
 
 // XP shows the All Users documents folder as "Shared Documents", and lists
-// the user's documents in My Computer as "astro's Documents".
+// the user's documents in My Computer as "<user name>'s Documents".
 const explorerDisplayName = (node) =>
   node.id === fs.SHARED_DOCUMENTS ? "Shared Documents" : node.name;
 
 // An item in the Recycle Bin, not the bin itself. Like XP, Explorer never
 // browses into a deleted folder.
 const isDeletedNode = (id) => id !== fs.RECYCLE_BIN && fs.isInRecycleBin(id);
+
+// XP remembers the view of each folder. A folder that has none opens in
+// Filmstrip for Sample Pictures, in Thumbnails elsewhere in My Pictures,
+// and in Tiles everywhere else. Only picture folders offer Filmstrip. The
+// newest views come last, and the oldest go first when the list is full.
+const EXPLORER_VIEWS = [
+  "filmstrip",
+  "thumbnails",
+  "tiles",
+  "icons",
+  "list",
+  "details",
+];
+const EXPLORER_VIEWS_KEY = "explorerFolderViews";
+const MAX_EXPLORER_VIEWS = 400;
+const readExplorerViews = () =>
+  readJsonStorage(
+    EXPLORER_VIEWS_KEY,
+    [],
+    (value) =>
+      Array.isArray(value) &&
+      value.every(
+        (entry) =>
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          EXPLORER_VIEWS.includes(entry[1]),
+      ),
+  );
+const explorerViewsFor = (folderId) =>
+  XPDialogs.isPictureFolder(folderId)
+    ? EXPLORER_VIEWS
+    : EXPLORER_VIEWS.filter((view) => view !== "filmstrip");
+const explorerViewFor = (folderId) => {
+  const saved = readExplorerViews().find(([id]) => id === folderId)?.[1];
+  if (explorerViewsFor(folderId).includes(saved)) return saved;
+  if (folderId === fs.SAMPLE_PICTURES) return "filmstrip";
+  return XPDialogs.isPictureFolder(folderId) ? "thumbnails" : "tiles";
+};
+// Every Explorer window on the folder switches to the new view.
+const setExplorerView = (folderId, view) => {
+  const views = readExplorerViews().filter(([id]) => id !== folderId);
+  views.push([folderId, view]);
+  writeJsonStorage(EXPLORER_VIEWS_KEY, views.slice(-MAX_EXPLORER_VIEWS));
+  openWindows.forEach((other) => {
+    if (other.type === "system" && other.currentFolderId === folderId)
+      renderExplorerItems(other);
+  });
+};
+
+// Filmstrip shows one picture large over a strip of thumbnails, like XP.
+// It shows the selected item, or the first item when none is selected.
+// Rotation keeps the picture's type, so only types the browser can write
+// back rotate.
+const ROTATABLE_PICTURE_TYPES = [".bmp", ".dib", ".jpg", ".jpeg", ".png"];
+const explorerFilmstripItems = (win) => [
+  ...win.el.querySelectorAll(".explorer-items .explorer-item"),
+];
+const explorerFilmstripNode = (win) => {
+  const items = explorerFilmstripItems(win);
+  const item =
+    items.find((entry) => entry.classList.contains("selected")) || items[0];
+  return item ? fs.getNode(item.dataset.nodeId) : null;
+};
+const canRotatePicture = (node) =>
+  !!fs.getPictureUrl(node.id) &&
+  ROTATABLE_PICTURE_TYPES.includes(node.ext.toLowerCase());
+
+const renderExplorerFilmstrip = (win) => {
+  const strip = win.el.querySelector(".explorer-filmstrip");
+  if (!strip) return;
+  const node = explorerFilmstripNode(win);
+  const url = node && fs.getPictureUrl(node.id);
+  const preview = strip.querySelector(".explorer-filmstrip-preview");
+  const shown = preview.querySelector("img");
+  // XP says so for a file without a picture, or one it cannot draw.
+  const showNoPreview = () => {
+    const text = document.createElement("span");
+    text.className = "explorer-filmstrip-empty";
+    text.textContent = "No preview available.";
+    preview.replaceChildren(text);
+  };
+  if (!node || node.type === "folder") preview.replaceChildren();
+  else if (!url) showNoPreview();
+  else if (shown?.getAttribute("src") !== url) {
+    const image = document.createElement("img");
+    image.alt = node.name;
+    // A late error of a picture that is no longer shown changes nothing.
+    image.addEventListener(
+      "error",
+      () => {
+        if (preview.contains(image)) showNoPreview();
+      },
+      { once: true },
+    );
+    image.src = url;
+    preview.replaceChildren(image);
+  }
+  const hasItems = !!node;
+  strip
+    .querySelectorAll(
+      '[data-filmstrip-action="previous"], [data-filmstrip-action="next"]',
+    )
+    .forEach((button) => (button.disabled = !hasItems));
+  strip
+    .querySelectorAll('[data-filmstrip-action^="rotate"]')
+    .forEach((button) => (button.disabled = !node || !canRotatePicture(node)));
+};
+
+const createExplorerFilmstrip = () => {
+  const strip = document.createElement("div");
+  strip.className = "explorer-filmstrip";
+  const preview = document.createElement("div");
+  preview.className = "explorer-filmstrip-preview";
+  const controls = document.createElement("div");
+  controls.className = "explorer-filmstrip-controls";
+  const button = (action, title, icon) => {
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.dataset.filmstripAction = action;
+    entry.title = title;
+    entry.setAttribute("aria-label", title);
+    const image = document.createElement("img");
+    image.src = icon;
+    image.alt = "";
+    entry.appendChild(image);
+    return entry;
+  };
+  const separator = document.createElement("span");
+  separator.className = "explorer-filmstrip-separator";
+  // Full asset paths, so the build can rename them.
+  controls.append(
+    button(
+      "previous",
+      "Previous Image (Left Arrow)",
+      "assets/xp/explorer/filmstrip-previous.png",
+    ),
+    button(
+      "next",
+      "Next Image (Right Arrow)",
+      "assets/xp/explorer/filmstrip-next.png",
+    ),
+    separator,
+    button(
+      "rotate-clockwise",
+      "Rotate Clockwise",
+      "assets/xp/explorer/filmstrip-rotate-clockwise.png",
+    ),
+    button(
+      "rotate-counterclockwise",
+      "Rotate Counterclockwise",
+      "assets/xp/explorer/filmstrip-rotate-counterclockwise.png",
+    ),
+  );
+  strip.append(preview, controls);
+  return strip;
+};
+
+// Previous and Next wrap around, like XP. With no selection, the first
+// item is the current one.
+const stepExplorerFilmstrip = (win, step) => {
+  const items = explorerFilmstripItems(win);
+  if (!items.length) return;
+  const current = Math.max(
+    0,
+    items.findIndex((item) => item.classList.contains("selected")),
+  );
+  const next = items[(current + step + items.length) % items.length];
+  items.forEach((item) => item.classList.toggle("selected", item === next));
+  next.focus({ preventScroll: true });
+  next.scrollIntoView({ block: "nearest", inline: "nearest" });
+  renderExplorerSelection(win);
+};
 
 const navigateExplorer = (win, folderId, { history = true } = {}) => {
   const folder = fs.getNode(folderId);
@@ -929,6 +1300,18 @@ const selectedExplorerNodes = (win) =>
     .map((item) => item.dataset.nodeId)
     .filter((id) => !!fs.getNode(id));
 
+// Gives the focus back to the list, like XP after a menu closes: to
+// `previous` if it is still an item of the list, else to the first selected
+// item, else to the list.
+const focusExplorerList = (win, previous) => {
+  const items = win.el.querySelector(".explorer-items");
+  const target =
+    previous?.isConnected && items.contains(previous)
+      ? previous
+      : items.querySelector(".explorer-item.selected") || items;
+  target.focus({ preventScroll: true });
+};
+
 // Inline rename, like XP: the label becomes an edit box; Enter or leaving
 // it commits, and Escape cancels.
 const startExplorerRename = (win, nodeId) => {
@@ -937,38 +1320,82 @@ const startExplorerRename = (win, nodeId) => {
   const item = win.el.querySelector(
     `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
   );
+  // F2 reaches both the item and the shell. A second start keeps the open
+  // edit box.
+  const open = item.querySelector(".explorer-rename");
+  if (open) return open;
   const label = item.querySelector("b");
   const node = fs.getNode(nodeId);
   const input = document.createElement("input");
   input.className = "explorer-rename";
   input.value = node.name;
+  input.dataset.originalName = node.name;
   label.replaceWith(input);
+  XPDialogs.guardFileName(input);
   input.focus();
-  input.setSelectionRange(
-    0,
-    node.name.lastIndexOf(".") > 0
-      ? node.name.lastIndexOf(".")
-      : node.name.length,
-  );
+  // Like XP, with the extensions shown, the box selects the whole name,
+  // the extension too. The desktop and the file dialogs do the same.
+  input.select();
+  // Each rename ends once. Chrome fires blur while the box leaves the page,
+  // so that blur finds the rename ended.
   let finished = false;
-  const finish = async (commit) => {
+  // A new render drops the box without a commit and opens a new one.
+  input.dropRename = () => (finished = true);
+  // Enter and Escape give the focus back to the item. A click elsewhere
+  // keeps the focus where the user put it.
+  const shown = () =>
+    win.el.querySelector(
+      `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
+    );
+  const finish = async (commit, refocus) => {
     if (finished) return;
     finished = true;
+    const name = commit ? XPDialogs.renameBoxName(input.value) : null;
+    const changed = name !== null && name !== node.name;
+    // Like XP, the box keeps the new name while the question shows. No
+    // opens the box again with the old name, all selected.
+    if (changed && !(await XPDialogs.confirmExtensionChange(node, name))) {
+      input.replaceWith(label);
+      if (win.closing || !shown()) return;
+      startExplorerRename(win, nodeId).select();
+      return;
+    }
     input.replaceWith(label);
-    item.focus();
-    if (!commit || input.value === node.name) return;
+    if (refocus) item.focus();
+    if (!changed) return;
     try {
-      await fileOps.rename(nodeId, input.value);
+      await fileOps.rename(nodeId, name);
     } catch (error) {
-      await alertRenameError(error);
+      // A window that is closing drops the rename and shows nothing.
+      if (win.closing) return;
+      // Like XP, the error shows, and the box opens again with the name.
+      await XPDialogs.alertRenameError(error, node);
+      // A window that closed, or an item that went away, gets no box.
+      if (win.closing || !shown()) return;
+      const again = startExplorerRename(win, nodeId);
+      // Like XP, the box opens again with the old name, all selected.
+      again.select();
     }
   };
+  // The box keeps its own keys from Explorer. The shell's window keys still
+  // reach the shell, and Alt with a letter still opens the window's menu,
+  // like XP. The menu takes the keys, so the rename commits.
   input.addEventListener("keydown", (event) => {
+    if (isShellWindowKey(event) || isMenuAccessKey(event)) return;
     event.stopPropagation();
-    if (event.key === "Enter") finish(true);
-    if (event.key === "Escape") finish(false);
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) return;
+    if (event.key !== "Enter" && event.key !== "Escape") return;
+    // The key ends here, so it cannot also press a button in an error box.
+    event.preventDefault();
+    finish(event.key === "Enter", true);
   });
-  input.addEventListener("blur", () => finish(true));
+  // A blur that keeps the box focused is a switch to another app or tab:
+  // the item keeps the focus for when the user comes back.
+  input.addEventListener("blur", () =>
+    finish(true, document.activeElement === input),
+  );
+  return input;
 };
 
 const renderExplorerTaskPane = (win) => {
@@ -986,11 +1413,18 @@ const renderExplorerTaskPane = (win) => {
     : isBin
       ? "Recycle Bin Tasks"
       : "File and Folder Tasks";
+  // A task with the keys keeps them, else the list takes them.
+  const list = win.el.querySelector(".explorer-items");
+  const giveKeysBack = holdKeys(
+    body,
+    (keys) => `[data-task="${CSS.escape(keys.dataset.task)}"]`,
+  );
   body.replaceChildren();
 
   const addTask = (label, icon, action) => {
     const button = document.createElement("button");
     button.type = "button";
+    button.dataset.task = label;
     const image = document.createElement("img");
     image.src = XP_ICON_PATHS[icon];
     image.alt = "";
@@ -1013,7 +1447,7 @@ const renderExplorerTaskPane = (win) => {
       openControlPanel,
     );
     addTask("Change a setting", "ControlPanel.png", openControlPanel);
-    return;
+    return giveKeysBack(list);
   }
 
   const selected = selectedExplorerNodes(win);
@@ -1026,31 +1460,20 @@ const renderExplorerTaskPane = (win) => {
         "RecyclerFull.png",
         confirmEmptyRecycleBin,
       );
-    const restore = async (ids) => {
-      try {
-        await fileOps.restore(ids);
-      } catch (error) {
-        await XPDialogs.alert(
-          error.message || "The file operation failed.",
-          "Restore files",
-          "error",
-        );
-      }
-    };
     if (selected.length)
       addTask(
         selected.length === 1
           ? "Restore this item"
           : "Restore the selected items",
         "RecyclerEmpty.png",
-        () => restore(selected),
+        () => restoreFromRecycleBin(selected),
       );
     else if (binItems.length)
       addTask("Restore all items", "RecyclerEmpty.png", () =>
-        restore(binItems),
+        restoreFromRecycleBin(binItems),
       );
     section.hidden = !body.children.length;
-    return;
+    return giveKeysBack(list);
   }
 
   // XP's selection tasks; only the ones the simulation can carry out.
@@ -1089,6 +1512,7 @@ const renderExplorerTaskPane = (win) => {
     });
   }
   section.hidden = !body.children.length;
+  giveKeysBack(list);
 };
 
 // XP's "Other Places" list depends on the folder being shown. My Network
@@ -1137,6 +1561,11 @@ const renderExplorerOtherPlaces = (win) => {
         .filter((id) => id !== folder.parent && id !== current)
         .map(place),
     ];
+  // A place with the keys keeps them, else the list takes them.
+  const giveKeysBack = holdKeys(
+    body,
+    (keys) => `[data-place="${CSS.escape(keys.dataset.place)}"]`,
+  );
   body.replaceChildren();
   places.forEach(([id, node]) => {
     const button = document.createElement("button");
@@ -1171,6 +1600,7 @@ const renderExplorerOtherPlaces = (win) => {
     button.append(image, text);
     body.appendChild(button);
   });
+  giveKeysBack(win.el.querySelector(".explorer-items"));
 };
 
 // XP's Details section names the selection, or the open folder when nothing
@@ -1206,15 +1636,43 @@ const renderExplorerDetails = (win) => {
   }
 };
 
+// Shows the Folders bar of an Explorer window, and selects an item in its
+// folder, as Run's "explorer /e" and "explorer /select" ask.
+const showExplorerOptions = (win, { folders = false, selectId = null }) => {
+  if (folders) {
+    win.el.querySelector(".explorer-content").classList.add("folders-visible");
+    win.el
+      .querySelector('[data-explorer-action="folders"]')
+      .setAttribute("aria-pressed", "true");
+  }
+  const item =
+    selectId &&
+    win.el.querySelector(
+      `.explorer-item[data-node-id="${CSS.escape(selectId)}"]`,
+    );
+  if (!item) return;
+  win.el
+    .querySelectorAll(".explorer-item")
+    .forEach((other) => other.classList.toggle("selected", other === item));
+  item.focus({ preventScroll: true });
+  renderExplorerSelection(win);
+};
+
 const renderExplorerSelection = (win) => {
   renderExplorerTaskPane(win);
   renderExplorerOtherPlaces(win);
   renderExplorerDetails(win);
+  renderExplorerFilmstrip(win);
 };
 
 const renderExplorerTree = (win) => {
   const tree = win.el.querySelector(".explorer-tree");
   if (!tree) return;
+  // A folder with the keys keeps them, else the open folder takes them.
+  const giveKeysBack = holdKeys(
+    tree,
+    (keys) => `[data-node-id="${CSS.escape(keys.dataset.nodeId)}"]`,
+  );
   tree.replaceChildren();
   const expanded =
     win.expandedFolders ||
@@ -1243,6 +1701,13 @@ const renderExplorerTree = (win) => {
       if (hasFolders) expanded.add(id);
       navigateExplorer(win, id);
     });
+    // Alt+Enter shows the Properties of the folder, like XP. It does not
+    // open the folder.
+    row.addEventListener("keydown", (event) => {
+      if (!event.altKey || event.key !== "Enter") return;
+      event.preventDefault();
+      XPDialogs.properties(id);
+    });
     row.addEventListener("dblclick", () => {
       if (!hasFolders) return;
       if (expanded.has(id)) expanded.delete(id);
@@ -1257,16 +1722,31 @@ const renderExplorerTree = (win) => {
   };
   addNode(fs.MY_COMPUTER);
   addNode(fs.RECYCLE_BIN);
+  giveKeysBack(tree.querySelector(".explorer-tree-item.active") || tree);
 };
 
 const openExplorerContextMenu = (win, clientX, clientY) => {
   const selected = selectedExplorerNodes(win);
   const recycle = win.currentFolderId === fs.RECYCLE_BIN;
   const protectedSelection = selected.some((id) => fs.isProtected(id));
+  // The item or list that had the focus gets it back when the menu closes.
+  const previousFocus = document.activeElement;
   const menu = document.createElement("div");
   menu.className = "xp-context-menu explorer-context-menu";
   menu.setAttribute("role", "menu");
-  const close = () => menu.remove();
+  // The list gets the focus back, unless a command moved it elsewhere,
+  // such as a rename box or a dialog.
+  // A press outside the menu closes it. A press inside it, such as on a
+  // disabled command, keeps it open, and the next press is checked again.
+  const onOutsidePointerDown = (event) => {
+    if (!menu.contains(event.target)) close();
+  };
+  const close = () => {
+    document.removeEventListener("pointerdown", onOutsidePointerDown);
+    const hadFocus = menu.contains(document.activeElement);
+    menu.remove();
+    if (hadFocus) focusExplorerList(win, previousFocus);
+  };
   const add = (label, command, disabled) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1292,20 +1772,25 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
   const rect = win.el.getBoundingClientRect();
   menu.style.left = `${Math.max(0, Math.min(clientX - rect.left, rect.width - menu.offsetWidth - 2))}px`;
   menu.style.top = `${Math.max(25, Math.min(clientY - rect.top, rect.height - menu.offsetHeight - 2))}px`;
-  menu.querySelector("button:not(:disabled)")?.focus();
+  // With no enabled command, the menu itself takes the focus, so Escape
+  // still closes it.
+  menu.tabIndex = -1;
+  (menu.querySelector("button:not(:disabled)") || menu).focus();
   menu.addEventListener("click", async (event) => {
     try {
       const command = event.target.dataset.command;
       if (!command) return;
-      if (command === "open") fs.open(selected[0]);
+      // The menu closes first, so a dialog that the command opens gives the
+      // focus back to the list when it closes.
+      close();
+      if (command === "open") openExplorerNode(win, fs.getNode(selected[0]));
       if (command === "cut") fileOps.cut(selected);
       if (command === "copy") fileOps.copy(selected);
-      if (command === "restore") await fileOps.restore(selected);
+      if (command === "restore") await restoreFromRecycleBin(selected);
       if (command === "properties") XPDialogs.properties(selected[0]);
       if (command === "rename") startExplorerRename(win, selected[0]);
       if (command === "delete") await confirmRecycleDelete(selected);
       if (command === "permanent") await confirmRecycleBinDelete(selected);
-      close();
     } catch (error) {
       await alertFileOperationError(error);
     }
@@ -1338,13 +1823,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       target?.focus();
     }
   });
-  document.addEventListener(
-    "pointerdown",
-    (event) => {
-      if (!menu.contains(event.target)) close();
-    },
-    { once: true },
-  );
+  document.addEventListener("pointerdown", onOutsidePointerDown);
 };
 
 const createExplorerIcon = (node) => {
@@ -1386,22 +1865,13 @@ const createExplorerIcon = (node) => {
     return icon;
   }
 
-  return addImage(
-    /\.(txt|log|csv|md)$/i.test(node.name)
-      ? "TextDocument.png"
-      : "GenericFile.png",
-  );
+  return addImage(fileIconName(node.name));
 };
 
 XPDialogs.setNodeIconFactory(createExplorerIcon);
 
-const explorerItemDescription = (node) => {
-  if (node.id === fs.DRIVE_C || node.id === fs.DRIVE_D) return "Local Disk";
-  if (node.id === fs.DRIVE_F) return "Removable Disk";
-  if (node.type === "folder") return "File folder";
-  if (node.app && gamesList[node.app]) return "Game";
-  return `${(node.ext || "").replace(".", "").toUpperCase() || "File"} file`;
-};
+const explorerItemDescription = (node) =>
+  node.app && gamesList[node.app] ? "Game" : XPDialogs.describeNodeType(node);
 
 const openExplorerNode = (win, node) => {
   // XP opens Properties for an item in the Recycle Bin.
@@ -1416,7 +1886,7 @@ const openExplorerNode = (win, node) => {
   try {
     fs.open(node.id);
   } catch (error) {
-    console.error(error);
+    alertFileOperationError(error);
   }
 };
 
@@ -1479,8 +1949,61 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   main.querySelector("h2").hidden = true;
 
   const items = main.querySelector(".explorer-items");
-  items.dataset.view = win.explorerView;
+  // Like XP, the empty part of the list takes a drop into the folder that
+  // it shows. My Computer and the Recycle Bin take none.
+  const takesDrop = !(
+    folder.id === fs.MY_COMPUTER || fs.isInRecycleBin(folder.id)
+  );
+  if (!items.dataset.dropWired) {
+    items.dataset.dropWired = "true";
+    wireFolderDropTarget(items, folder.id);
+  }
+  if (takesDrop) items.dataset.dropDestinationId = folder.id;
+  else delete items.dataset.dropDestinationId;
+  const view = explorerViewFor(folder.id);
+  // A new render of the same folder keeps the selection, like XP.
+  const kept = new Set(
+    win.renderedFolderId === folder.id ? selectedExplorerNodes(win) : [],
+  );
+  // The focused item keeps the focus too, so the keys still act on it.
+  const focusedItem = document.activeElement?.closest?.(".explorer-item");
+  const itemHadFocus = items.contains(focusedItem);
+  const focusedId =
+    win.renderedFolderId === folder.id && itemHadFocus
+      ? focusedItem.dataset.nodeId
+      : null;
+  // The render removes any open rename box, so its blur must not rename the
+  // file, also when the folder changes. In the same folder, the box opens
+  // again with the text typed so far.
+  const renameBox = items.querySelector(".explorer-rename");
+  renameBox?.dropRename();
+  const rename =
+    focusedId && renameBox === document.activeElement ? renameBox : null;
+  // If the focused item is gone, the list keeps the focus, like XP.
+  const keepFocus = () => {
+    if (!itemHadFocus) return;
+    const kept =
+      focusedId &&
+      items.querySelector(
+        `.explorer-item[data-node-id="${CSS.escape(focusedId)}"]`,
+      );
+    // A box with no change yet shows the current name, which another
+    // window can have changed.
+    if (rename && kept) {
+      const input = startExplorerRename(win, focusedId);
+      if (rename.value !== rename.dataset.originalName) {
+        input.value = rename.value;
+        input.setSelectionRange(rename.selectionStart, rename.selectionEnd);
+      }
+    } else if (!kept) focusExplorerList(win);
+  };
+  win.renderedFolderId = folder.id;
+  items.dataset.view = view;
   items.innerHTML = "";
+  main.dataset.view = view;
+  const strip = main.querySelector(".explorer-filmstrip");
+  if (view !== "filmstrip") strip?.remove();
+  else if (!strip) main.insertBefore(createExplorerFilmstrip(), items);
 
   const myComputerGroup = (node) =>
     [fs.SHARED_DOCUMENTS, fs.MY_DOCUMENTS].includes(node.id)
@@ -1516,17 +2039,27 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
           a.name.localeCompare(b.name),
     );
 
-  renderExplorerSelection(win);
   if (!children.length) {
     // XP leaves an empty folder's view blank.
     explorerContent.querySelector(".explorer-status").textContent = "0 objects";
+    keepFocus();
+    renderExplorerSelection(win);
     return;
   }
 
-  if (items.dataset.view === "details") {
+  if (view === "details") {
     const header = document.createElement("div");
     header.className = "explorer-details-header";
-    header.innerHTML = "<span>Name</span><span>Type</span><span>Size</span>";
+    // XP's columns. My Computer shows no sizes or dates, because the
+    // simulation has no drive capacity.
+    (folder.id === fs.MY_COMPUTER
+      ? ["Name", "Type"]
+      : ["Name", "Size", "Type", "Date Modified"]
+    ).forEach((title) => {
+      const cell = document.createElement("span");
+      cell.textContent = title;
+      header.appendChild(cell);
+    });
     items.appendChild(header);
   }
 
@@ -1550,6 +2083,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     item.title = node.name;
 
     const label = document.createElement("span");
+    label.className = "explorer-item-label";
     const name = document.createElement("b");
     name.textContent =
       folder.id === fs.MY_COMPUTER && node.id === fs.MY_DOCUMENTS
@@ -1563,23 +2097,29 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       label.appendChild(description);
 
     const itemIcon = createExplorerIcon(node);
-    if (folder.id === fs.MY_COMPUTER && node.id === fs.MY_DOCUMENTS) {
-      itemIcon.querySelector("img").src = XP_ICON_PATHS["NewFolder.png"];
-    }
+    if (view === "thumbnails" || view === "filmstrip")
+      XPDialogs.fillThumbnail(itemIcon, node, createExplorerIcon);
+    if (kept.has(node.id)) item.classList.add("selected");
     item.append(itemIcon, label);
     if (folder.id === fs.MY_COMPUTER) item.classList.add("my-computer-item");
-    if (items.dataset.view === "details") {
+    if (view === "details") {
       item.classList.add("explorer-details-row");
       const type = document.createElement("span");
       type.className = "explorer-detail-type";
       type.textContent = explorerItemDescription(node);
-      const size = document.createElement("span");
-      size.className = "explorer-detail-size";
-      size.textContent =
-        node.type === "folder"
-          ? ""
-          : XPDialogs.formatBytes(fs.getSize(node.id));
-      item.append(type, size);
+      if (folder.id === fs.MY_COMPUTER) item.append(type);
+      else {
+        const size = document.createElement("span");
+        size.className = "explorer-detail-size";
+        size.textContent =
+          node.type === "folder"
+            ? ""
+            : XPDialogs.formatKilobytes(fs.getSize(node.id));
+        const modified = document.createElement("span");
+        modified.className = "explorer-detail-modified";
+        modified.textContent = XPDialogs.formatDetailsDate(node.modified);
+        item.append(size, type, modified);
+      }
     }
     item.addEventListener("click", (event) => {
       if (!event.ctrlKey && !event.metaKey) {
@@ -1591,10 +2131,14 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       renderExplorerSelection(win);
     });
     item.addEventListener("dragstart", (event) => {
+      // The dragged item comes first, so a window that takes one item,
+      // such as the Command Prompt, gets that one.
       const ids = selectedExplorerNodes(win);
-      explorerDragIds = ids.includes(node.id) ? ids : [node.id];
+      explorerDragIds = ids.includes(node.id)
+        ? [node.id, ...ids.filter((id) => id !== node.id)]
+        : [node.id];
       event.dataTransfer.setData(
-        "application/x-astro-vfs-ids",
+        XPDialogs.ITEM_DRAG_TYPE,
         JSON.stringify(explorerDragIds),
       );
       event.dataTransfer.setData(
@@ -1605,7 +2149,8 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("dblclick", () => openExplorerNode(win, node));
     item.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
+      // Alt+Enter shows Properties, from the shell's keys.
+      if (e.key === "Enter" && !e.altKey) {
         e.preventDefault();
         openExplorerNode(win, node);
       }
@@ -1616,16 +2161,21 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
     });
     item.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      item.click();
+      // A right-click on a selected item keeps the whole selection, like XP.
+      if (item.classList.contains("selected")) item.focus();
+      else item.click();
       openExplorerContextMenu(win, event.clientX, event.clientY);
     });
     // A deleted folder takes no drops: nothing new goes in the Recycle Bin.
     if (node.type === "folder" && !fs.isInRecycleBin(node.id))
       wireFolderDropTarget(item, node.id);
     items.appendChild(item);
+    if (node.id === focusedId) item.focus({ preventScroll: true });
   });
   explorerContent.querySelector(".explorer-status").textContent =
     `${children.length} ${children.length === 1 ? "object" : "objects"}`;
+  keepFocus();
+  renderExplorerSelection(win);
 };
 
 // Games participate in the filesystem as ".game" files on the Desktop,
@@ -1708,10 +2258,15 @@ const resetAstroXp = async () => {
   await syncGameFiles();
 };
 
-fs.registerFolderHandler((folder) => {
-  openSystemWindow("__my-documents");
-  navigateExplorer(openWindows.get("__my-documents"), folder.id);
-});
+// A new Explorer window opens on the folder itself, so Back starts off,
+// like XP. The first one waits for its code to load.
+// Explorer never browses into a folder in the Recycle Bin.
+fs.registerFolderHandler((folder) =>
+  openSystemWindow(
+    "__my-documents",
+    isDeletedNode(folder.id) ? {} : { folderId: folder.id },
+  ),
+);
 
 // Keep open explorer windows and desktop shortcuts in sync with filesystem changes.
 const setupExplorerFilesystemSync = () =>

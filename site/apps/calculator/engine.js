@@ -12,7 +12,6 @@ import {
   asinh,
   atan,
   atanh,
-  compare,
   cos,
   cosh,
   decimalPlaces,

@@ -6,7 +6,8 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
-import { face, recordCardCanvas } from "./helpers/card-canvas";
+import { checkMenuBar } from "./helpers/menu-bar";
+import { face, recordCardCanvas, siteFiles } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
 
@@ -34,6 +35,7 @@ const open = async ({
   name = "astro",
 } = {}) => {
   let frames;
+  const files = siteFiles({ failFont });
   // Animation frames and the game's pauses wait for the test to run them.
   const queued = [];
   const sounds = [];
@@ -43,15 +45,7 @@ const open = async ({
   const s = await login(
     await loadShell({
       initialStorage: storage,
-      fetchObject: async (url) => {
-        if (failFont) return new Response(null, { status: 404 });
-        const path = String(url).replace(/^.*?assets\//, "assets/");
-        return new Response(
-          await Bun.file(
-            new URL(`../site/${path}`, import.meta.url),
-          ).arrayBuffer(),
-        );
-      },
+      fetchObject: files.fetchObject,
       beforeScripts: (window) => {
         frames = recordCardCanvas(window, {
           board: "hearts-board",
@@ -128,6 +122,9 @@ const open = async ({
   const settle = async (times = 4) => {
     for (let index = 0; index < times; index += 1) await flushShell();
   };
+  await settle(6);
+  // The board draws once its font is read.
+  await files.read();
   await settle(6);
   const win = s.document.querySelector('.xp-window[data-game="__hearts"]');
   const canvas = win.querySelector(".hearts-board");
@@ -255,9 +252,8 @@ describe("starting", () => {
     const h = await open({ name: null });
     await h.key("F9");
     expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
-    h.dialog().closest(".xp-dialog-overlay").remove();
-    await h.key("F9");
-    expect(h.dialog()).toBeUndefined();
+    await h.key("F7");
+    expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
     await h.key("F8");
     expect(h.s.window.localStorage.getItem("heartsSettings")).toBeNull();
   });
@@ -967,5 +963,16 @@ describe("menus and dialogs", () => {
     // Other keys pass through untouched.
     await h.key("a");
     expect(h.status()).toBe("Select three cards to pass to Pauline.");
+  });
+});
+
+test("Hearts' menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-hearts"),
+    accessKey: "g",
+    settle: flushShell,
   });
 });

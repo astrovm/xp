@@ -97,6 +97,7 @@ const addTrayIcon = (label, onOpen) => {
 const closeTrayVolumePopup = () => {
   const popup = document.getElementById("tray-volume-popup");
   const button = document.getElementById("tray-volume-button");
+  giveKeysBackFrom(popup);
   popup.hidden = true;
   button.classList.remove("pressed");
   button.setAttribute("aria-expanded", "false");
@@ -337,6 +338,8 @@ const wireProjectSettings = (win) => {
 
   const tabs = [...content.querySelectorAll('[role="tab"]')];
   const panels = [...content.querySelectorAll('[role="tabpanel"]')];
+  const selectedTab = () =>
+    tabs.find((tab) => tab.getAttribute("aria-selected") === "true");
   const value = (name) =>
     content.querySelector(`[data-project-value="${name}"]`);
   const offlineStatus = content.querySelector(
@@ -477,6 +480,12 @@ const wireProjectSettings = (win) => {
         gameDataManager.list(),
       ]);
       if (refresh !== gameDataRefresh) return;
+      // A Remove button with the keys keeps them, else the tab takes them.
+      const giveKeysBack = holdKeys(
+        gameDataList,
+        (keys) =>
+          `[data-game-data-owner="${keys.dataset.gameDataOwner}"][data-game-data-id="${CSS.escape(keys.dataset.gameDataId)}"]`,
+      );
       const items = [
         ...internetGames.map((item) => ({
           ...item,
@@ -511,6 +520,7 @@ const wireProjectSettings = (win) => {
         row.append(text, remove);
         gameDataList.appendChild(row);
       });
+      giveKeysBack(selectedTab());
       gameDataStatus.textContent = "";
     } catch (error) {
       if (refresh !== gameDataRefresh) return;
@@ -558,6 +568,11 @@ const wireProjectSettings = (win) => {
     ]);
     if (signature === offlineListSignature) return;
     offlineListSignature = signature;
+    // A box with the keys keeps them, else the tab takes them.
+    const giveKeysBack = holdKeys(
+      offlineGamesList,
+      (keys) => `[data-offline-game="${CSS.escape(keys.dataset.offlineGame)}"]`,
+    );
     offlineGamesList.replaceChildren();
     if (!state.bundledGames.length) {
       if (state.enabled) {
@@ -566,7 +581,7 @@ const wireProjectSettings = (win) => {
         loading.textContent = "Loading...";
         offlineGamesList.appendChild(loading);
       }
-      return;
+      return giveKeysBack(selectedTab());
     }
     const games = [...state.bundledGames].sort((left, right) => {
       const leftTitle = gamesList[left.id]?.title || formatGameTitle(left.id);
@@ -590,6 +605,7 @@ const wireProjectSettings = (win) => {
       label.append(checkbox, title, size);
       offlineGamesList.appendChild(label);
     });
+    giveKeysBack(selectedTab());
   };
 
   offlineGamesList.addEventListener("change", (event) => {
@@ -1393,6 +1409,8 @@ const openDateTimeProperties = () => {
   });
 
   const renderCalendar = () => {
+    // The calendar keeps the keys when it is drawn again, on its day.
+    const calendarHadKeys = calendar.contains(document.activeElement);
     calendar.replaceChildren(
       ...DAY_LETTERS.map((letter) => {
         const head = document.createElement("span");
@@ -1419,6 +1437,7 @@ const openDateTimeProperties = () => {
       });
       calendar.appendChild(dayButton);
     }
+    if (calendarHadKeys) calendar.querySelector(".selected").focus();
   };
 
   const formatTime = (date) =>
@@ -1681,6 +1700,15 @@ const setupSystemTray = () => {
     .getElementById("tray-mute-checkbox")
     .addEventListener("change", (event) => {
       setSystemVolume(getSystemVolume().volume, event.target.checked);
+    });
+  // Escape closes the popup from its slider and its box too, like XP. The
+  // shell's own Escape leaves keys in a form control alone.
+  document
+    .getElementById("tray-volume-popup")
+    .addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeTrayVolumePopup();
     });
 
   syncTrayVolumeUI();

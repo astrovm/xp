@@ -182,8 +182,10 @@ test("drag-over highlights only droppable content", async () => {
     h.drag("dragover", { types: ["application/x-astro-vfs-ids"] })
       .defaultPrevented,
   ).toBeTrue();
+  // Like a browser, a drag of files from the computer shows that it has
+  // files, but not the files, until the drop.
   expect(
-    h.drag("dragover", { files: [h.file("a.txt")] }).defaultPrevented,
+    h.drag("dragover", { types: ["Files"], files: [] }).defaultPrevented,
   ).toBe(true);
   h.element().dispatchEvent(new h.s.window.Event("dragleave"));
   expect(h.element().classList.contains("drop-target")).toBeFalse();
@@ -254,7 +256,10 @@ test("cancelling an import stops remaining files and folders", async () => {
       },
     ],
   });
-  await settle(() => h.fs.findChild(h.target.id, "Partial"));
+  // Like XP, nothing is made while the files are read, so Cancel on the
+  // Copying box leaves the folder empty.
+  await settle(() => h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.findChild(h.target.id, "Partial")).toBeNull();
   cancel();
   releaseFolder();
   await settle(() => !h.s.document.querySelector(".xp-dialog"));
@@ -267,7 +272,11 @@ test("import failures report their error and default messages", async () => {
     getData: () => "",
     files: [h.file("bad?name.txt")],
   });
-  await settle(() => dialogText(h.s).includes("invalid characters"));
+  await settle(() =>
+    dialogText(h.s).includes(
+      "A file name cannot contain any of the following characters",
+    ),
+  );
   await answer(h.s, "ok");
   h.drag("drop", {
     getData: () => {
@@ -317,26 +326,38 @@ test("folder drops skip entries that are neither files nor folders", async () =>
   ]);
 });
 
-test("cancelling a plain file drop stops before the remaining files", async () => {
+// Like XP, the import reads every file before it makes the first one, so
+// Cancel while a file is read imports none of them.
+test("cancelling a plain file drop imports none of the files", async () => {
   const h = await dropSetup();
-  const createFile = h.s.window.FileOperations.createFile;
-  h.s.window.FileOperations.createFile = async (...args) => {
-    const created = await createFile(...args);
-    h.s.document.querySelector(".xp-dialog .dlg-buttons button").click();
-    return created;
+  let release;
+  const blocked = new Promise((resolve) => (release = resolve));
+  // The first file reads until the test releases it. Cancel comes first,
+  // so the second file is never read.
+  const first = h.file("first.txt");
+  let reading = false;
+  first.text = () => {
+    reading = true;
+    return blocked.then(() => "late");
   };
-  try {
-    h.drag("drop", {
-      getData: () => "",
-      files: [h.file("first.txt"), h.file("second.txt")],
-    });
-    await settle(() => !h.s.document.querySelector(".xp-dialog"));
-  } finally {
-    h.s.window.FileOperations.createFile = createFile;
-  }
-  expect(h.fs.getChildren(h.target.id).map(({ name }) => name)).toEqual([
-    "first.txt",
-  ]);
+  const second = h.file("second.txt");
+  let secondRead = false;
+  second.text = async () => {
+    secondRead = true;
+    return "second";
+  };
+  h.drag("drop", {
+    getData: () => "",
+    files: [first, second],
+  });
+  // Cancel comes while the first file is read, after every question.
+  await settle(() => reading);
+  expect(dialogText(h.s)).toContain("Copying...");
+  h.s.document.querySelector(".xp-dialog .dlg-buttons button").click();
+  release();
+  await settle(() => !h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.getChildren(h.target.id)).toEqual([]);
+  expect(secondRead).toBeFalse();
 });
 
 test("shell shortcuts wait while a replace question is open, and Escape cancels the paste", async () => {
@@ -365,7 +386,11 @@ test("shell shortcuts wait while a replace question is open, and Escape cancels 
   };
   ops.copy([file.id]);
   paste();
-  await settle(() => dialogText(s).includes("already exists"));
+  await settle(() =>
+    dialogText(s).includes(
+      "This folder already contains a file named 'same.txt'.",
+    ),
+  );
   paste();
   await flushShell();
   expect(s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
@@ -416,6 +441,10 @@ test("folder drops with invalid names report the error without creating anything
       },
     ],
   });
-  await settle(() => dialogText(h.s).includes("invalid characters"));
+  await settle(() =>
+    dialogText(h.s).includes(
+      "A file name cannot contain any of the following characters",
+    ),
+  );
   expect(h.fs.getChildren(h.target.id)).toEqual([]);
 });

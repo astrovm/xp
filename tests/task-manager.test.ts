@@ -7,6 +7,8 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pointerAt } from "./helpers/hit-test";
+import { checkMenuBar } from "./helpers/menu-bar";
 
 afterEach(cleanupShells);
 
@@ -65,7 +67,7 @@ const withRuffle = (s) => {
 const runCommand = async (s, text) => {
   clickStartAction(s, "run");
   const dialog = s.document.querySelector(".run-dialog");
-  dialog.querySelector("#run-command").value = text;
+  dialog.querySelector(".run-command").value = text;
   dialog.querySelector('[data-action="run"]').click();
   await settle();
 };
@@ -259,11 +261,20 @@ test("Task Manager menus check options, change the update speed and close on out
   menu(tm, "view");
   expect(item("kernel-times").className).toContain("checked");
 
-  // Clicks in the menu bar keep the menu; clicks elsewhere close it.
-  tm.querySelector(".tm-menu-bar").dispatchEvent(
+  // Presses on a title or in the menu keep it; presses elsewhere close it,
+  // also on the bar's empty part, like XP.
+  tm.querySelector('[data-tm-menu="view"]').dispatchEvent(
+    new s.window.Event("pointerdown", { bubbles: true }),
+  );
+  tm.querySelector(".tm-menu").dispatchEvent(
     new s.window.Event("pointerdown", { bubbles: true }),
   );
   expect(tm.querySelector(".tm-menu")).not.toBeNull();
+  tm.querySelector(".tm-menu-bar").dispatchEvent(
+    new s.window.Event("pointerdown", { bubbles: true }),
+  );
+  expect(tm.querySelector(".tm-menu")).toBeNull();
+  menu(tm, "view");
   s.document.body.dispatchEvent(
     new s.window.Event("pointerdown", { bubbles: true }),
   );
@@ -397,6 +408,11 @@ test("Task Manager starts tasks, shows About and runs Shut Down commands", async
   expect(s.document.querySelector(".run-dialog .title-text").textContent).toBe(
     "Create New Task",
   );
+  // Like XP, New Task keeps the keys of Task Manager. Run itself is
+  // modeless.
+  expect(
+    s.document.querySelector(".run-dialog").getAttribute("aria-modal"),
+  ).toBe("true");
   s.document.querySelector('.run-dialog [data-action="cancel"]').click();
   await menuCommand(tm, "help", "about");
   const about = s.document.querySelector(".about-windows-dialog");
@@ -499,13 +515,15 @@ test("Ctrl+Shift+Esc opens Task Manager, which measures CPU from late frames and
     .querySelector('.xp-window[data-game="bike-mania"]')
     .dispatchEvent(new s.window.Event("pointerdown", { bubbles: true }));
   frame(2e9);
-  await menuCommand(tm, "view", "refresh");
+  // The update timer samples while the other program stays active. A press
+  // on Task Manager's menu makes Task Manager active, like XP.
+  await s.advanceTime(2000);
   expect(
     row(tm, "processes", "SAFlashPlayer.exe").children[2].textContent,
   ).toBe("100");
   clickStartAction(s, "documents");
   await settle();
-  await menuCommand(tm, "view", "refresh");
+  await s.advanceTime(2000);
   expect(row(tm, "processes", "explorer.exe").children[2].textContent).toBe(
     "00",
   );
@@ -550,4 +568,148 @@ test("Ctrl+Shift+Esc opens Task Manager, which measures CPU from late frames and
   tm.querySelector(".close-btn").click();
   await settle();
   expect([canceled, disconnected]).toEqual([true, true]);
+});
+
+test("Task Manager's menus follow XP's menu bar rules", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  await checkMenuBar({
+    s,
+    win: tm,
+    control: tm.querySelector('[data-tm-tab][aria-selected="true"]'),
+    accessKey: "f",
+    settle,
+  });
+});
+
+test("Task Manager's Update Speed submenu works from the keys and the pointer", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  const active = () => s.document.activeElement;
+  const key = async (target, name, init = {}) => {
+    target.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        key: name,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+    await settle();
+  };
+  const control = tm.querySelector('[data-tm-tab][aria-selected="true"]');
+  control.focus();
+  await key(control, "v", { altKey: true });
+  const parent = tm.querySelector(".tm-submenu");
+  const submenu = parent.querySelector(".tm-menu");
+  // The keys rest on the submenu's parent, like on an item.
+  await key(active(), "ArrowDown");
+  expect(active() === parent).toBeTrue();
+  expect(parent.getAttribute("aria-haspopup")).toBe("menu");
+  // Right opens the submenu with the keys on its first item; Left closes it.
+  await key(parent, "ArrowRight");
+  expect(submenu.classList.contains("open")).toBeTrue();
+  expect(parent.getAttribute("aria-expanded")).toBe("true");
+  expect(active().dataset.tmCommand).toBe("speed-high");
+  await key(active(), "ArrowUp");
+  expect(active().dataset.tmCommand).toBe("speed-paused");
+  await key(active(), "ArrowLeft");
+  expect(active() === parent).toBeTrue();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  // Enter opens it too, and Escape closes only the submenu, like XP.
+  await key(parent, "Enter");
+  expect(active().dataset.tmCommand).toBe("speed-high");
+  await key(active(), "Escape");
+  expect(active() === parent).toBeTrue();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(tm.querySelector(".tm-menu") === null).toBeFalse();
+  // The pointer on another item closes a submenu that the keys opened.
+  await key(parent, " ");
+  expect(submenu.classList.contains("open")).toBeTrue();
+  const refresh = tm.querySelector('[data-tm-command="refresh"]');
+  refresh.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === refresh).toBeTrue();
+  // The pointer on the parent keeps its submenu, and an item in the
+  // submenu takes the keys.
+  await key(refresh, "ArrowDown");
+  await key(parent, "ArrowRight");
+  parent.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeTrue();
+  const low = submenu.querySelector('[data-tm-command="speed-low"]');
+  low.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(active() === low).toBeTrue();
+  // The submenu's own edge is not its parent: the pointer there moves
+  // nothing, and a click there closes nothing.
+  submenu.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(active() === low).toBeTrue();
+  submenu.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  expect(active() === low).toBeTrue();
+  // A gray item cannot take the keys, so the pointer on one gives them to
+  // the parent before its submenu closes.
+  refresh.disabled = true;
+  refresh.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === parent).toBeTrue();
+  refresh.disabled = false;
+  await key(parent, "ArrowRight");
+  low.dispatchEvent(
+    new s.window.PointerEvent("pointerover", { bubbles: true }),
+  );
+  // A click on the parent toggles the submenu.
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeFalse();
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  // Keys outside a submenu do not move to its parent when it closes.
+  refresh.focus();
+  pointerAt(s, refresh, "pointerover");
+  expect(submenu.classList.contains("open")).toBeFalse();
+  expect(active() === refresh).toBeTrue();
+  parent.click();
+  expect(submenu.classList.contains("open")).toBeTrue();
+  // Choosing an item closes every menu and gives the keys back.
+  low.click();
+  await settle();
+  expect(tm.querySelector(".tm-menu")).toBeNull();
+  expect(active() === control).toBeTrue();
+  expect(JSON.parse(s.window.localStorage.getItem("taskManager")).speed).toBe(
+    "low",
+  );
+});
+
+test("a Task Manager column header keeps the keys when the list is drawn again", async () => {
+  const s = await login(await loadShell());
+  const tm = await openTaskManager(s);
+  tab(tm, "processes");
+  await settle();
+  const header = (index) =>
+    tm.querySelector(`.tm-processes [data-tm-sort="${index}"]`);
+  const name = header(0);
+  name.focus();
+  name.click();
+  await settle();
+  expect(name.isConnected).toBeFalse();
+  expect(s.document.activeElement === header(0)).toBeTrue();
+  // The same after the list updates on its own.
+  await s.advanceTime(2000);
+  expect(s.document.activeElement === header(0)).toBeTrue();
+  // The list itself keeps the keys.
+  tm.querySelector(".tm-processes").focus();
+  header(1).click();
+  await settle();
+  expect(
+    s.document.activeElement === tm.querySelector(".tm-processes"),
+  ).toBeTrue();
 });

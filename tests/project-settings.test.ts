@@ -925,3 +925,57 @@ test("the reload prompt reloads directly with offline use off, or waits", async 
     cleanupShells();
   }
 });
+
+test("the Games page keeps the keys on a control that it draws again", async () => {
+  const installed = [{ id: "internet", title: "Internet Game", bytes: 100 }],
+    external = [{ id: "iso", title: "CD data", detail: "ISO", bytes: 200 }];
+  const library = {
+    subscribe: () => () => {},
+    initialize: async () => ({}),
+    getInstallations: async () => installed,
+    uninstall: async () => {
+      installed.length = 0;
+    },
+  };
+  const h = await setup({
+    gameLibraryManager: library,
+    gameDataManager: { list: async () => external, remove: async () => {} },
+    offlineMethods: { refreshStorageEstimate: async () => {} },
+  });
+  const tab = h.content.querySelector("#project-tab-games");
+  tab.click();
+  await flushShell();
+  const active = () => h.s.document.activeElement;
+  const box = (id) => h.content.querySelector(`[data-offline-game="${id}"]`);
+
+  // A box keeps the keys when the list changes.
+  const freecell = box("freecell");
+  freecell.focus();
+  h.state({ downloadedGameIds: ["freecell"] });
+  expect(freecell.isConnected).toBeFalse();
+  expect(active() === box("freecell")).toBeTrue();
+  // A gray box cannot take them, so the tab takes them.
+  h.state({ gamePhase: "downloading" });
+  expect(box("freecell").disabled).toBeTrue();
+  expect(active() === tab).toBeTrue();
+  // The same while the list loads.
+  h.state({ gamePhase: "idle" });
+  box("solitaire").focus();
+  h.state({ bundledGames: [] });
+  expect(box("solitaire")).toBeNull();
+  expect(active() === tab).toBeTrue();
+
+  // A Remove button keeps the keys, and a gone one gives them to the tab.
+  const remove = (id) => h.content.querySelector(`[data-game-data-id="${id}"]`);
+  const iso = remove("iso");
+  iso.focus();
+  h.s.window.dispatchEvent(new h.s.window.StorageEvent("storage"));
+  await flushShell();
+  expect(iso.isConnected).toBeFalse();
+  expect(active() === remove("iso")).toBeTrue();
+  remove("internet").focus();
+  remove("internet").click();
+  await h.answer();
+  expect(remove("internet")).toBeNull();
+  expect(active() === tab).toBeTrue();
+});

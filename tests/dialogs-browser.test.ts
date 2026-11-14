@@ -245,9 +245,10 @@ test("keyboard handling respects text fields, missing defaults and disabled butt
   key(s, "f", { altKey: true });
   expect(await choice).toBe("first");
 
-  const unanswered = d.message({ buttons: [{ id: "only", label: "Only" }] });
+  // Like XP, a box with one button is an OK box: Esc gives that button.
+  const only = d.message({ buttons: [{ id: "only", label: "Only" }] });
   key(s, "Escape");
-  expect(await unanswered).toBeNull();
+  expect(await only).toBe("only");
   const preferred = d.message({
     text: "Pick",
     buttons: d.BUTTON_SETS.yesNo,
@@ -439,4 +440,58 @@ test("focus trapping leaves middle stops to the browser and holds focus when not
   expect(tab(fields[1], true)).toBeFalse();
   expect(s.document.activeElement).toBe(fields[1]);
   d.close();
+});
+test("a closed dialog gives the keys back, but never to a control that cannot take them", async () => {
+  const s = await login(await loadShell()),
+    d = s.window.XPDialogs;
+  const active = () => s.document.activeElement;
+  const icons = s.document.getElementById("desktop-icons");
+  const answer = async (shown) => {
+    key(s, "Enter");
+    await shown;
+  };
+
+  // The control that had the keys gets them back.
+  const host = s.document.createElement("button");
+  s.document.body.append(host);
+  host.focus();
+  await answer(d.alert("One"));
+  expect(active() === host).toBeTrue();
+
+  // A control that hid meanwhile, like the item of a closed menu, does not.
+  // With no window open, the desktop gets them.
+  host.focus();
+  const hiding = d.alert("Two");
+  host.hidden = true;
+  await answer(hiding);
+  expect(active() === icons).toBeTrue();
+
+  // Chrome skips focus() on a control hidden by a style, such as one in a
+  // minimized window.
+  host.hidden = false;
+  host.focus();
+  host.focus = () => {};
+  await answer(d.alert("Three"));
+  expect(active() === icons).toBeTrue();
+  host.remove();
+
+  // Keys that were on the page go to the dialog under this one, on its
+  // default button.
+  const outer = d.confirm("Outer?");
+  const outerDefault = active();
+  outerDefault.blur();
+  expect(active() === s.document.body).toBeTrue();
+  await answer(d.alert("Inner"));
+  expect(active() === outerDefault).toBeTrue();
+  key(s, "n");
+  expect(await outer).toBeFalse();
+
+  // With no dialog under it, the active window gets them.
+  const fs = s.window.VirtualFS;
+  fs.open(fs.MY_DOCUMENTS);
+  for (let index = 0; index < 4; index += 1) await flushShell();
+  const win = s.document.querySelector(".xp-window.active");
+  active().blur();
+  await answer(d.alert("Four"));
+  expect(win.contains(active())).toBeTrue();
 });

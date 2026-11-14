@@ -6,6 +6,45 @@
 
 const openWindows = new Map();
 let focusedGameId = null;
+// The window that plays its sound while the desktop or the taskbar has the
+// keys: the window that was active before them, like XP.
+let soundGameId = null;
+const audibleGameId = () =>
+  focusedGameId ||
+  (openWindows.get(soundGameId)?.minimized === false ? soundGameId : null);
+// The window keys that the shell runs from anywhere, text boxes included,
+// like XP: Alt+Tab, Alt+Esc, Alt+F4, Alt+Space, the Windows key and Ctrl+Esc.
+const isShellWindowKey = (event) =>
+  event.key === "Meta" ||
+  (event.ctrlKey && event.key === "Escape") ||
+  (event.altKey && ["Tab", "Escape", "F4", " "].includes(event.key));
+// Alt and a letter, which opens a window's menu from any of its controls,
+// like XP.
+const isMenuAccessKey = (event) =>
+  XPDialogs.isAccessKeyPress(event) &&
+  /^\p{L}$/u.test(XPDialogs.accessKeyOf(event));
+// Call before a redraw that can remove or move the control with the keys.
+// Call the function it returns after the redraw. It gives the keys to the
+// same control again, or to its new copy, found with the selector from
+// selectorOf. If that control is gone or cannot take the keys, such as a
+// disabled button, the fallback takes them. With no fallback, the shell
+// gives them to the active window or the desktop.
+const holdKeys = (container, selectorOf = () => "") => {
+  const keys = document.activeElement;
+  const selector =
+    keys !== container && container.contains(keys) ? selectorOf(keys) : null;
+  return (fallback) => {
+    if (selector === null || document.activeElement === keys) return;
+    const same = keys.isConnected
+      ? keys
+      : selector
+        ? container.querySelector(selector)
+        : null;
+    same?.focus({ preventScroll: true });
+    if (document.activeElement !== same)
+      fallback?.focus({ preventScroll: true });
+  };
+};
 let zIndexCounter = 100;
 let cascadeCount = 0;
 
@@ -102,7 +141,37 @@ const parseWindowLength = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const persistWindowPlacement = (win) => {
+// A program with many windows, such as the Command Prompt, keeps one
+// placement for all its windows. Its first window has the id of the
+// program, and the next ones "<program>#2" and up.
+const placementKeyOf = (win) => win.applicationId ?? win.gameId;
+const MANY_WINDOW_KEY = /#\d+$/;
+
+// XP moves each new window of a program 26 pixels down and to the right.
+// When a window does not fit, the cascade starts again at the first place,
+// like XP. It gives the place of the window after steps moves.
+const CASCADE_STEP = 26;
+const cascadePlace = (steps, { left, top, width, height }, area) => {
+  const fits = (start, size, available) =>
+    available > 0
+      ? Math.floor((available - size - start) / CASCADE_STEP) + 1
+      : Infinity;
+  const wrapped =
+    steps %
+    Math.max(
+      1,
+      Math.min(fits(left, width, area.width), fits(top, height, area.height)),
+    );
+  return {
+    left: left + CASCADE_STEP * wrapped,
+    top: top + CASCADE_STEP * wrapped,
+  };
+};
+
+const persistWindowPlacement = (win, { moved = false } = {}) => {
+  // A cascaded copy keeps the place of the program only when the user
+  // moves or sizes it, not when it maximizes or closes.
+  if (!moved && win.cascadeSteps > 0) return;
   // Maximizing records the restore geometry before the window grows.
   const source = win.maximized ? win.prevRect : win.el.style;
   const placement = {
@@ -112,28 +181,38 @@ const persistWindowPlacement = (win) => {
     height: parseWindowLength(source.height, win.el.offsetHeight),
   };
   if (!isWindowPlacement(placement)) return;
+  // The first window of the cascade starts where this one is now.
+  win.cascadeSteps = 0;
+  const kept = Object.entries(getWindowPlacements()).filter(
+    ([key]) => !MANY_WINDOW_KEY.test(key),
+  );
   writeJsonStorage(WINDOW_PLACEMENTS_KEY, {
-    ...getWindowPlacements(),
-    [win.gameId]: placement,
+    ...Object.fromEntries(kept),
+    [placementKeyOf(win)]: placement,
   });
 };
 
 const restoreWindowPlacement = (win) => {
-  const saved = getWindowPlacements()[win.gameId];
+  const saved = getWindowPlacements()[placementKeyOf(win)];
   if (!saved) return;
   const { width: desktopWidth, height: desktopHeight } = getVisibleWorkArea();
   const width =
     desktopWidth > 0 ? Math.min(saved.width, desktopWidth) : saved.width;
   const height =
     desktopHeight > 0 ? Math.min(saved.height, desktopHeight) : saved.height;
+  const { left, top } = cascadePlace(
+    win.cascadeSteps ?? 0,
+    { left: saved.left, top: saved.top, width, height },
+    { width: desktopWidth, height: desktopHeight },
+  );
   Object.assign(win.el.style, {
     width: `${width}px`,
     height: `${height}px`,
-    left: `${saved.left}px`,
-    top: `${saved.top}px`,
+    left: `${left}px`,
+    top: `${top}px`,
   });
   if (desktopWidth > 0 && desktopHeight > 0) {
-    const position = clampWindowPosition(win, saved.left, saved.top, {
+    const position = clampWindowPosition(win, left, top, {
       fullyVisible: true,
     });
     win.el.style.left = `${position.left}px`;
@@ -257,18 +336,18 @@ const keepWindowsInWorkArea = () => {
   });
 };
 
+// The place, the size and the minimized and maximized state of each
+// window, so a resolution preview can put them back. The stacking order
+// and the focus are not part of it: they stay as the user leaves them, and
+// the layers stay as compactWindowLayers numbers them.
 const snapshotWindowState = () => ({
-  focusedGameId,
-  zIndexCounter,
   windows: [...openWindows.values()].map((win) => ({
     gameId: win.gameId,
     minimized: win.minimized,
     maximized: win.maximized,
-    zIndex: win.zIndex,
-    lastUsed: win.lastUsed,
     prevRect: win.prevRect ? { ...win.prevRect } : null,
     styles: Object.fromEntries(
-      ["left", "top", "width", "height", "display", "zIndex"].map((name) => [
+      ["left", "top", "width", "height", "display"].map((name) => [
         name,
         win.el.style[name],
       ]),
@@ -284,24 +363,18 @@ const restoreWindowState = (snapshot) => {
     Object.assign(win, {
       minimized: saved.minimized,
       maximized: saved.maximized,
-      zIndex: saved.zIndex,
-      lastUsed: saved.lastUsed,
       prevRect: saved.prevRect ? { ...saved.prevRect } : null,
     });
     Object.assign(win.el.style, saved.styles);
     win.el.classList.toggle("maximized", saved.maximized);
+    showOwnedDialogs(win);
   });
-  focusedGameId = openWindows.has(snapshot.focusedGameId)
-    ? snapshot.focusedGameId
-    : null;
-  // Opening a window focuses it, so every open window has a z-index.
-  zIndexCounter = Math.max(
-    snapshot.zIndexCounter,
-    ...[...openWindows.values()].map((win) => win.zIndex),
-  );
-  openWindows.forEach((win, gameId) =>
-    win.el.classList.toggle("active", gameId === focusedGameId),
-  );
+  // A window that goes back to the taskbar gives the focus to the top
+  // window, like a minimized window.
+  if (openWindows.get(focusedGameId)?.minimized) {
+    focusedGameId = null;
+    focusTopWindow();
+  }
   // A bounded selected monitor is not a physical viewport constraint. Only
   // clamp a restored snapshot when the browser itself is the limiting edge.
   const monitor = getSimulatedMonitorSize();
@@ -314,12 +387,13 @@ const restoreWindowState = (snapshot) => {
 };
 
 const updateDocumentTitle = () => {
-  document.title = focusedGameId ? formatGameTitle(focusedGameId) : "Astro XP";
+  const win = openWindows.get(focusedGameId);
+  document.title = win ? windowTitleOf(win) : "Astro XP";
 };
 
 const applyFocusVolumes = () => {
   openWindows.forEach((win, gameId) => {
-    const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+    const volume = gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
     setPlayerVolume(win.player, win.type, volume);
   });
 };
@@ -446,19 +520,41 @@ const trackGamePlay = (gameId) => {
   openWindows.get(gameId).lastUsed = timestamp;
 };
 
-const createWindowElement = (gameId) => {
+// applicationId is the program of the window. A program with many
+// windows gives each one its own gameId, such as "__command-prompt#2".
+const createWindowElement = (gameId, applicationId = gameId) => {
   const win = document.createElement("div");
   win.className = "xp-window";
   win.dataset.game = gameId;
+  // The frame takes the focus when the window has nothing else to focus.
+  win.tabIndex = -1;
+  win.addEventListener("focusin", (event) => {
+    const target = event.target;
+    // XP never gives the keys to the frame, or by mouse to the title bar, a
+    // toolbar or a task pane. The window's control keeps them.
+    if (
+      target === win ||
+      (pointerHeld && target.closest("[data-mouse-keeps-focus]"))
+    ) {
+      focusWindowControl(win);
+      return;
+    }
+    // The window remembers its focused control, to give it back when the
+    // window becomes active again, like XP. A menu is not a control: XP
+    // leaves the menus when the window loses the keys.
+    if (!target.closest('[role="menu"], [role="menubar"]'))
+      win.lastFocusedElement = target;
+  });
 
   const titleBar = document.createElement("div");
   titleBar.className = "title-bar";
+  titleBar.dataset.mouseKeepsFocus = "";
 
-  const titleIcon = createGameIconElement(gameId, "title-icon");
+  const titleIcon = createGameIconElement(applicationId, "title-icon");
 
   const titleText = document.createElement("span");
   titleText.className = "title-text";
-  titleText.textContent = formatGameTitle(gameId);
+  titleText.textContent = formatGameTitle(applicationId);
 
   const titleButtons = document.createElement("div");
   titleButtons.className = "title-buttons";
@@ -633,12 +729,27 @@ const createWindowElement = (gameId) => {
   return win;
 };
 
+// Like XP, a window with no Maximize box, such as Calculator, or with a
+// dialog frame, does not maximize by the mouse or the system menu. A
+// program can still maximize it, like START /MAX or Task Manager's
+// Maximize in the XP VM, and then the window can restore.
+const canMaximize = (win) =>
+  win.application?.window.maximizable !== false &&
+  !win.application?.window.dialogControls;
+// A window with a fixed frame, such as Calculator, has no Size command.
+const canResize = (win) =>
+  win.application?.window.resizable !== false &&
+  !win.application?.window.dialogControls;
+
 const updateMaximizeButton = (win) => {
   const button = win.maximizeBtn;
 
   button.classList.toggle("restore-btn", win.maximized);
   button.title = win.maximized ? "Restore" : "Maximize";
   button.setAttribute("aria-label", button.title);
+  button.disabled = !win.maximized && !canMaximize(win);
+  if (button.disabled) button.setAttribute("aria-disabled", "true");
+  else button.removeAttribute("aria-disabled");
 };
 
 const bundledGameRoot = (gameId, type) =>
@@ -690,11 +801,13 @@ const mountRuffleSWF = (gameId, win) => {
   const ruffle = window.RufflePlayer.newest();
   const player = ruffle.createPlayer();
   player.id = `player-${gameId}`;
+  // The game gets the keys when its window becomes active.
+  player.dataset.defaultFocus = "";
   win.content.appendChild(player);
   win.player = player;
 
   const applyVolume = () => {
-    const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+    const volume = gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
     setPlayerVolume(player, "swf", volume);
   };
   player.addEventListener("loadedmetadata", applyVolume, { once: true });
@@ -720,7 +833,7 @@ const mountRuffleSWF = (gameId, win) => {
     openUrlMode: "confirm",
     showSwfDownload: true,
     ...(frameRate === null ? {} : { frameRate }),
-    volume: gameId === focusedGameId ? normalizeGameVolume(gameId) : 0,
+    volume: gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0,
     allowScriptAccess: false,
     autoplay: "on",
     unmuteOverlay: "hidden",
@@ -871,17 +984,71 @@ const loadIframe = (gameId, win) => {
   player.allow = "fullscreen";
   player.src = bundledGameRoot(gameId, "iframe");
   player.id = `player-${gameId}`;
+  // The game gets the keys when its window becomes active.
+  player.dataset.defaultFocus = "";
   win.content.appendChild(player);
   win.player = player;
 
   player.addEventListener(
     "load",
     () => {
-      const volume = gameId === focusedGameId ? normalizeGameVolume(gameId) : 0;
+      const volume =
+        gameId === audibleGameId() ? normalizeGameVolume(gameId) : 0;
       setPlayerVolume(player, "iframe", volume);
     },
     { once: true },
   );
+};
+
+// A press lasts from pointerdown to its click. The focus that a press gives
+// is the mouse's, not the keyboard's. A touch tap moves the focus after its
+// pointerup, so the press ends only at the click. A key also ends it,
+// because a press can end in an iframe or with a drag, with no click.
+let pointerHeld = false;
+document.addEventListener("pointerdown", () => (pointerHeld = true), true);
+// A right-click or a middle-click ends with its own event, or at its
+// pointerup when it ends on another element.
+document.addEventListener(
+  "pointerup",
+  (event) => {
+    if (event.button !== 0) pointerHeld = false;
+  },
+  true,
+);
+["click", "contextmenu", "auxclick", "pointercancel", "keydown"].forEach(
+  (type) => document.addEventListener(type, () => (pointerHeld = false), true),
+);
+// A click into a game's iframe fires no focusin in the page. So when the
+// page loses the focus to an iframe, its window records it.
+// Its window also becomes the active window, like a press on it.
+window.addEventListener("blur", () => {
+  const frame = document.activeElement;
+  const el = frame?.tagName === "IFRAME" && frame.closest(".xp-window");
+  if (!el) return;
+  el.lastFocusedElement = frame;
+  activateWindowOf(frame);
+});
+
+// The window gives the focus to the control that had it last, else to its
+// default control. A control that cannot take the focus, such as a disabled
+// or hidden one, is skipped. It returns false if no control took it.
+const focusWindowControl = (el) => {
+  const last = el.lastFocusedElement;
+  return [
+    last?.isConnected && el.contains(last) ? last : null,
+    el.querySelector("[data-default-focus]"),
+  ].some((target) => {
+    if (!target || target.disabled || target.closest("[hidden]")) return false;
+    target.focus({ preventScroll: true });
+    return document.activeElement === target;
+  });
+};
+
+// The keys go to the active window, like XP. If the focus is outside it, the
+// window focuses its control, else its frame.
+const focusWindowContent = (win) => {
+  if (win.el.contains(document.activeElement)) return;
+  if (!focusWindowControl(win.el)) win.el.focus({ preventScroll: true });
 };
 
 const focusWindow = (gameId) => {
@@ -903,12 +1070,61 @@ const focusWindow = (gameId) => {
     return;
   }
 
+  activateWindow(win);
+  win.mountedApplication?.focus?.();
+  focusWindowContent(win);
+};
+
+// A promise that ends when the window closes. A window that is not open
+// any more ends it at once.
+const whenWindowCloses = (win) =>
+  new Promise((resolve) => {
+    if (openWindows.get(win.gameId) !== win) resolve();
+    else (win.closeListeners ??= []).push(resolve);
+  });
+
+// A program gives the keys to a control of its window, such as after a
+// command that it waits for. Like XP, only the active window takes them:
+// a window that is behind another one, or minimized, does not come to the
+// top, and an open modal dialog, such as a question of a program that the
+// command started, keeps them. The window gives the control the keys when
+// it becomes active again.
+const giveKeysInWindow = (win, target) => {
+  if (win.gameId !== focusedGameId || win.minimized || giveKeysToModal()) {
+    win.el.lastFocusedElement = target;
+    return;
+  }
+  target.focus({ preventScroll: true });
+};
+
+// True when the element is in a window that is behind the active window,
+// such as a window that a program from Run went in front of. Like XP, a
+// dialog that closes does not bring that window back to the top: the
+// window keeps the element for the time that it becomes active again.
+const keepsKeysForLater = (element) => {
+  const win = openWindows.get(
+    element.closest(".xp-window[data-game]")?.dataset.game,
+  );
+  if (!win || !focusedGameId || win.gameId === focusedGameId) return false;
+  win.el.lastFocusedElement = element;
+  return true;
+};
+window.XPShell = { ...window.XPShell, keepsKeysForLater };
+
+// Makes a window the active one, like XP's foreground window: on top, with
+// the active task button, the title and the sound. It does not move the keys.
+const activateWindow = (win) => {
+  const { gameId } = win;
   focusedGameId = gameId;
+  soundGameId = null;
   win.needsAttention = false;
   win.lastUsed = Date.now();
-  win.zIndex = ++zIndexCounter;
-  win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : win.zIndex;
-  win.mountedApplication?.focus?.();
+  setWindowLayer(win, nextWindowLayer());
+  // The window's own modeless dialogs stay above it, like XP's owned
+  // windows.
+  ownedDialogsOf(gameId).forEach(
+    (overlay) => (overlay.style.zIndex = nextWindowLayer()),
+  );
 
   openWindows.forEach((w, id) => {
     w.el.classList.toggle("active", id === gameId);
@@ -921,7 +1137,8 @@ const focusWindow = (gameId) => {
 
   const deepLinkId = gamesList[gameId]
     ? gameId
-    : window.XPApplicationRegistry?.get(gameId)?.deepLinkId;
+    : window.XPApplicationRegistry?.get(win.applicationId ?? gameId)
+        ?.deepLinkId;
   if (deepLinkId && window.location.hash !== `#${deepLinkId}`) {
     const deepLinkUrl = new URL("/", window.location.origin);
     deepLinkUrl.search = window.location.search;
@@ -933,10 +1150,59 @@ const focusWindow = (gameId) => {
 // Topmost windows (Task Manager's Always On Top) stay above the others but
 // below shell dialogs (6900) and the taskbar.
 const TOPMOST_Z_INDEX = 6800;
+// The first layer of the windows. The desktop is below it.
+const FIRST_WINDOW_LAYER = 100;
+
+// The modeless dialogs that a window owns, such as Calculator's
+// Statistics Box.
+const ownedDialogsOf = (gameId) =>
+  document.querySelectorAll(
+    `.xp-dialog-modeless[data-owner="${CSS.escape(gameId)}"]`,
+  );
+
+const setWindowLayer = (win, layer) => {
+  win.zIndex = layer;
+  win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : layer;
+};
+
+// Gives the windows, the modeless dialogs and the floating toolbars the
+// layers from FIRST_WINDOW_LAYER up, in the same order. Each one that
+// comes to the top takes a new layer, so the layers only go up. This keeps
+// them below the topmost windows and the shell dialogs.
+const compactWindowLayers = () => {
+  const layered = [
+    ...[...openWindows.values()].map((win) => ({
+      layer: win.zIndex,
+      set: (layer) => setWindowLayer(win, layer),
+    })),
+    ...[
+      ...document.querySelectorAll(
+        ".xp-dialog-modeless, .taskbar-toolbar.floating",
+      ),
+    ]
+      .map((element) => ({
+        layer: Number(element.style.zIndex),
+        set: (layer) => (element.style.zIndex = String(layer)),
+      }))
+      // A toolbar that is always on top keeps its own layer.
+      .filter(({ layer }) => layer < TOPMOST_Z_INDEX),
+  ].sort((a, b) => a.layer - b.layer);
+  layered.forEach((item, index) => item.set(FIRST_WINDOW_LAYER + index + 1));
+  zIndexCounter = FIRST_WINDOW_LAYER + layered.length;
+};
+
+// The next layer on the desktop, above every window and modeless dialog.
+// The dialogs of dialogs.js and the floating toolbars take their layers
+// here too.
+const nextWindowLayer = () => {
+  if (zIndexCounter + 1 >= TOPMOST_Z_INDEX) compactWindowLayers();
+  return ++zIndexCounter;
+};
+window.nextWindowLayer = nextWindowLayer;
 const setWindowTopmost = (gameId, topmost) => {
   const win = openWindows.get(gameId);
   win.alwaysOnTop = topmost;
-  win.el.style.zIndex = topmost ? TOPMOST_Z_INDEX : win.zIndex;
+  setWindowLayer(win, win.zIndex);
 };
 
 const focusTopWindow = () => {
@@ -1111,11 +1377,19 @@ const animateCaption = (
   tick();
 };
 
+// Like XP, the dialogs that a window owns hide while the window is
+// minimized, and show again when it is restored.
+const showOwnedDialogs = (win) =>
+  ownedDialogsOf(win.gameId).forEach(
+    (overlay) => (overlay.hidden = win.minimized),
+  );
+
 const minimizeWindow = (gameId, { animate = false } = {}) => {
   const win = openWindows.get(gameId);
   if (!win || win.minimized) return;
 
   win.minimized = true;
+  showOwnedDialogs(win);
   const hide = () => {
     if (win.minimized) win.el.style.display = "none";
   };
@@ -1135,6 +1409,9 @@ const minimizeWindow = (gameId, { animate = false } = {}) => {
     focusedGameId = null;
     focusTopWindow();
   } else {
+    // The window that has the sound while the desktop has the keys goes
+    // quiet.
+    applyFocusVolumes();
     renderTaskButtons();
   }
 };
@@ -1144,8 +1421,13 @@ const restoreWindow = (gameId, { animate = false } = {}) => {
   if (!win || !win.minimized) return;
 
   win.minimized = false;
+  // A hidden window cannot take the focus, so the active window takes it
+  // when it shows.
   const show = () => {
-    if (!win.minimized) win.el.style.display = "flex";
+    if (win.minimized) return;
+    win.el.style.display = "flex";
+    showOwnedDialogs(win);
+    if (focusedGameId === gameId) focusWindowContent(win);
   };
   if (animate && animationsEnabled()) {
     // The restored window is about to be the active one.
@@ -1166,6 +1448,7 @@ const minimizeAllWindows = () => {
   openWindows.forEach((win) => {
     win.minimized = true;
     win.el.style.display = "none";
+    showOwnedDialogs(win);
   });
   focusedGameId = null;
   applyFocusVolumes();
@@ -1293,9 +1576,15 @@ const closeGameWindow = (gameId, { skipBeforeClose = false } = {}) => {
   // A closed window drops its caption without changing.
   win.windowAnimation?.cancel();
   persistWindowPlacement(win);
+  // Chrome sends no blur when it removes the control with the keys. The
+  // control loses them first, like XP, so a rename box keeps its new name.
+  // A rename that fails then shows no error for a window that is closing.
+  win.closing = true;
+  if (win.el.contains(document.activeElement)) document.activeElement.blur();
   win.mountedApplication?.unmount?.();
   win.el.remove();
   openWindows.delete(gameId);
+  win.closeListeners?.forEach((listener) => listener());
 
   if (focusedGameId === gameId) {
     focusedGameId = null;
@@ -1390,7 +1679,7 @@ const wireDrag = (win) => {
           height: win.el.style.height,
         };
       }
-      persistWindowPlacement(win);
+      persistWindowPlacement(win, { moved: true });
     };
 
     try {
@@ -1409,6 +1698,7 @@ const wireDrag = (win) => {
 
   bar.addEventListener("dblclick", (e) => {
     if (e.target.closest(".title-buttons, .title-icon")) return;
+    if (!win.maximized && !canMaximize(win)) return;
     toggleMaximize(win.gameId, { animate: true });
   });
 
@@ -1518,7 +1808,7 @@ const wireResize = (win) => {
         }
         updateSize();
         win.resizing = false;
-        persistWindowPlacement(win);
+        persistWindowPlacement(win, { moved: true });
         win.mountedApplication?.bounds?.(
           win.el.offsetLeft,
           win.el.offsetTop,
@@ -1541,13 +1831,206 @@ const wireResize = (win) => {
 };
 
 // ============================================
+// Shell popups (menus, the Start menu, the volume popup)
+// ============================================
+
+// Like XP, the keys never go to the page. A popup that closes gives the keys
+// back to the control that had them before it got them. A press on a part
+// of a popup that is not a control keeps the keys where they are.
+const SHELL_POPUP =
+  '[role="menu"], #start-menu, #start-menu-flyouts, #tray-volume-popup';
+const POPUP_CONTROL =
+  "button:not(:disabled), input:not(:disabled), select, textarea, label, a[href], [tabindex]";
+const popupReturnFocus = new WeakMap();
+
+document.addEventListener(
+  "focusin",
+  (event) => {
+    const from = event.relatedTarget;
+    if (!from) return;
+    // The first control outside a popup that gives it the keys is the one
+    // that gets them back. Keys that come back from a flyout of the popup
+    // do not change it. A popup in a popup records its own return.
+    for (
+      let popup = event.target.closest(SHELL_POPUP);
+      popup && !popup.contains(from);
+      popup = popup.parentElement.closest(SHELL_POPUP)
+    )
+      if (!popupReturnFocus.has(popup)) popupReturnFocus.set(popup, from);
+  },
+  true,
+);
+
+document.addEventListener(
+  "mousedown",
+  (event) => {
+    const popup = event.target.closest(SHELL_POPUP);
+    if (!popup) return;
+    const control = event.target.closest(POPUP_CONTROL);
+    if (!control || !popup.contains(control)) event.preventDefault();
+  },
+  true,
+);
+
+// Chrome skips focus() on a control that a style or a class hides, such as
+// a control in a minimized window. So a move counts only when the control
+// has the keys after it.
+const keysTaken = (target) => {
+  if (!target?.isConnected || target.closest("[hidden]")) return false;
+  target.focus({ preventScroll: true });
+  return document.activeElement === target;
+};
+// An open modal dialog keeps the keys, like XP. It returns true when one
+// is open.
+const giveKeysToModal = () => {
+  const systemDialog = document.querySelector(
+    ".system-dialog-overlay:not([hidden])",
+  );
+  if (!systemDialog) return XPDialogs.takeKeys();
+  systemDialog.querySelector("[data-default-focus]").focus();
+  return true;
+};
+// The keys go to an open modal dialog, else to the active window, like XP,
+// or else to the desktop.
+const giveKeysToActiveWindow = () => {
+  if (giveKeysToModal()) return;
+  const win = openWindows.get(focusedGameId);
+  if (win && !win.minimized) {
+    focusWindowContent(win);
+    // A window that an animation still hides takes the keys when it shows.
+    // The desktop never takes them from a window that is about to show.
+    if (win.el.contains(document.activeElement) || win.windowAnimation) return;
+  }
+  document.getElementById("desktop-icons").focus({ preventScroll: true });
+};
+
+// Chrome sends no mousedown for a disabled item, but it still moves the
+// keys, to the page or to the window. They go back to where they were, like
+// XP, after the press. A hover still reaches the item.
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (
+      !event.target.closest(SHELL_POPUP) ||
+      !event.target.closest(":disabled")
+    )
+      return;
+    const keys = document.activeElement;
+    setTimeout(() => {
+      if (document.activeElement !== keys && !keysTaken(keys))
+        giveKeysToActiveWindow();
+    });
+  },
+  true,
+);
+
+// Chrome puts the keys on the page when it removes the control that has
+// them, for example a taskbar button of a window that closes. XP never
+// leaves the keys on nothing, so they go to the active window.
+let lastKeys = null;
+document.addEventListener(
+  "focusin",
+  (event) => (lastKeys = event.target),
+  true,
+);
+new MutationObserver(() => {
+  if (
+    document.activeElement === document.body &&
+    lastKeys?.isConnected === false
+  )
+    giveKeysToActiveWindow();
+}).observe(document.body, { childList: true, subtree: true });
+
+// Chrome also puts the keys on the page when it hides the control that has
+// them, by an attribute, a style or a class. The control then loses the keys
+// with no new owner. If nothing takes them after that, the active window
+// gets them.
+document.addEventListener(
+  "focusout",
+  (event) => {
+    if (event.relatedTarget) return;
+    setTimeout(() => {
+      if (document.activeElement === document.body && document.hasFocus())
+        giveKeysToActiveWindow();
+    });
+  },
+  true,
+);
+
+// The desktop and the taskbar are no windows. When they take the keys, no
+// window is active, like XP. The last active window keeps its sound. A
+// modeless dialog, such as Run, is a window of its own: when it takes the
+// keys, the windows draw inactive too. A dialog with an owner window keeps
+// that window on its taskbar button, but the window draws inactive.
+document.addEventListener(
+  "focusin",
+  (event) => {
+    const modeless = event.target.closest(".xp-dialog-modeless");
+    const owner = openWindows.get(modeless?.dataset.owner);
+    if (owner) {
+      if (owner.gameId !== focusedGameId) activateWindow(owner);
+      owner.el.classList.remove("active");
+      return;
+    }
+    if (
+      !focusedGameId ||
+      !(
+        modeless ||
+        event.target.closest("#desktop-icons") ||
+        event.target.id === "taskbar"
+      )
+    )
+      return;
+    soundGameId = focusedGameId;
+    focusedGameId = null;
+    openWindows.forEach((win) => win.el.classList.remove("active"));
+    renderTaskButtons();
+    updateDocumentTitle();
+  },
+  true,
+);
+
+// A window that takes the keys becomes the active window, like XP, also
+// when no press put them there: Tab, a script or a control that gives them
+// back. A minimized window takes no keys. A window that gets the keys back
+// from its own dialog, such as Calculator from its Statistics Box, is
+// still the focused window but draws inactive, so it becomes active again.
+const activateWindowOf = (element) => {
+  const win = openWindows.get(
+    element.closest(".xp-window[data-game]")?.dataset.game,
+  );
+  if (
+    win &&
+    !win.minimized &&
+    (win.gameId !== focusedGameId || !win.el.classList.contains("active"))
+  )
+    activateWindow(win);
+};
+document.addEventListener(
+  "focusin",
+  (event) => activateWindowOf(event.target),
+  true,
+);
+
+// Call when the popup hides, before it hides. The keys go back to the
+// control that had them, or else to the active window or the desktop.
+const giveKeysBackFrom = (popup) => {
+  const target = popupReturnFocus.get(popup);
+  popupReturnFocus.delete(popup);
+  if (popup.contains(document.activeElement) && !keysTaken(target))
+    giveKeysToActiveWindow();
+};
+
+// ============================================
 // Window System Menu (Restore / Move / Size / ...)
 // ============================================
 
 let systemMenuWin = null;
 
 const closeWindowSystemMenu = () => {
-  document.getElementById("window-system-menu").hidden = true;
+  const menu = document.getElementById("window-system-menu");
+  giveKeysBackFrom(menu);
+  menu.hidden = true;
   systemMenuWin = null;
 };
 
@@ -1559,9 +2042,9 @@ const openWindowSystemMenu = (win, clientX, clientY) => {
   const enabled = {
     restore: win.maximized || win.minimized,
     move: !win.maximized && !win.minimized,
-    size: !win.maximized && !win.minimized,
+    size: !win.maximized && !win.minimized && canResize(win),
     minimize: !win.minimized,
-    maximize: !win.maximized && !win.minimized,
+    maximize: !win.maximized && !win.minimized && canMaximize(win),
     close: true,
   };
   menu.querySelectorAll("[data-command]").forEach((button) => {
@@ -1638,7 +2121,7 @@ const startMoveSizeMode = (win, mode) => {
       return;
     }
     // Same as finishing a pointer drag or resize.
-    persistWindowPlacement(win);
+    persistWindowPlacement(win, { moved: true });
     win.mountedApplication?.bounds?.(
       el.offsetLeft,
       el.offsetTop,
@@ -1749,14 +2232,27 @@ const wireWindowControls = (win) => {
   const menus = [...win.el.querySelectorAll(".game-menu")];
   const menuButtons = [...menuBar.querySelectorAll(".game-menu-button")];
 
+  // Keys in a menu that closes go back to the window's control, so a
+  // close never leaves them on the page, like XP. The frame passes them on.
   const closeGameMenus = () => {
+    const holdsKeys = menus.some((menu) =>
+      menu.contains(document.activeElement),
+    );
     menus.forEach((menu) => {
       menu.hidden = true;
     });
     menuButtons.forEach((button) =>
       button.setAttribute("aria-expanded", "false"),
     );
+    if (holdsKeys) win.el.focus({ preventScroll: true });
   };
+  // A press outside the window closes the menus through the shell. Keys
+  // that move to another window close them too, like XP.
+  menus.forEach((menu) => (menu.closeMenus = closeGameMenus));
+  win.el.addEventListener("focusout", (event) => {
+    if (event.relatedTarget && !win.el.contains(event.relatedTarget))
+      closeGameMenus();
+  });
 
   const openGameMenu = (name, focusFirstItem = false) => {
     const menu = menus.find((item) => item.dataset.gameMenu === name);
@@ -1835,9 +2331,9 @@ const wireWindowControls = (win) => {
     }
   });
   win.el.addEventListener("keydown", (event) => {
-    if (!event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!isMenuAccessKey(event)) return;
     const button = menuButtons.find(
-      (item) => item.dataset.accessKey === event.key.toLowerCase(),
+      (item) => item.dataset.accessKey === XPDialogs.accessKeyOf(event),
     );
     if (!button) return;
     event.preventDefault();
@@ -1856,8 +2352,9 @@ const wireWindowControls = (win) => {
         const button = menuButtons.find(
           (item) => item.dataset.gameMenu === menu.dataset.gameMenu,
         );
-        closeGameMenus();
+        // The keys move first, so the program never gets them for a moment.
         button?.focus();
+        closeGameMenus();
       } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         items[
@@ -1876,8 +2373,8 @@ const wireWindowControls = (win) => {
       const item = event.target.closest("[data-game-action]");
       if (!item || item.disabled) return;
       if (item.dataset.gameAction === "volume-popup") {
-        closeGameMenus();
         win.volumeSlider.focus();
+        closeGameMenus();
         return;
       }
       switch (item.dataset.gameAction) {

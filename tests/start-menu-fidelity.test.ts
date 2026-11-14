@@ -385,7 +385,7 @@ test("Start menu options cover hidden groups, file types, and menus", async () =
     "TextDocument.png",
   );
   expect(pictures[4].querySelector("img").getAttribute("src")).toContain(
-    "GenericFile.png",
+    "BitmapImage.png",
   );
   pictures[0].dispatchEvent(new s.window.PointerEvent("pointerenter"));
   await s.advanceTime(300);

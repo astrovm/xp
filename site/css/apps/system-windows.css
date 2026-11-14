@@ -142,6 +142,7 @@ html:not([data-xp-appearance="classic"])
   padding: 0;
   background: #6375d6;
   color: #fff;
+  outline: 0;
 }
 
 .control-panel-main::after {

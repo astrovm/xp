@@ -215,6 +215,111 @@ test("Explorer drag and drop moves internal files and imports external file cont
     await flushShell();
   expect(h.fs.findChild(h.child.id, "external.txt").content).toBe("imported");
 });
+// Like XP, a drop on the empty part of a folder window goes into the
+// folder that the window shows. A folder item in the list takes its own
+// drop. My Computer and the Recycle Bin take none.
+test("a drop on the empty part of an Explorer window goes into its folder", async () => {
+  const h = await setup(),
+    w = h.s.window;
+  const list = h.win.querySelector(".explorer-items");
+  const dropOn = (element, type, transfer) => {
+    const event = new w.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { value: transfer });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const items = (ids) => {
+    const transfer = new w.DataTransfer();
+    transfer.setData("application/x-astro-vfs-ids", JSON.stringify(ids));
+    return transfer;
+  };
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await flushShell();
+  };
+  const away = h.fs.createFile(h.fs.MY_DOCUMENTS, "away.txt");
+  expect(dropOn(list, "dragover", items([away.id]))).toBeTrue();
+  dropOn(list, "drop", items([away.id]));
+  await settle();
+  expect(h.fs.getNode(away.id).parent).toBe(h.folder.id);
+  // A file item in the list is part of the empty list.
+  const second = h.fs.createFile(h.fs.MY_DOCUMENTS, "second.txt");
+  await settle();
+  dropOn(h.item(h.file.id), "drop", items([second.id]));
+  await settle();
+  expect(h.fs.getNode(second.id).parent).toBe(h.folder.id);
+  // A folder item takes the drop alone.
+  dropOn(h.item(h.child.id), "drop", items([second.id]));
+  await settle();
+  expect(h.fs.getNode(second.id).parent).toBe(h.child.id);
+  expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(0);
+  // A folder dragged onto itself goes nowhere, also not into the list.
+  h.item(h.child.id).dispatchEvent(
+    Object.defineProperty(
+      new w.Event("dragstart", { bubbles: true, cancelable: true }),
+      "dataTransfer",
+      { value: new w.DataTransfer() },
+    ),
+  );
+  expect(
+    dropOn(h.item(h.child.id), "dragover", items([h.child.id])),
+  ).toBeFalse();
+  h.s.document.dispatchEvent(new w.Event("dragend"));
+  // A file from the computer goes into the folder too.
+  const external = {
+    types: ["Files"],
+    files: [new w.File(["text"], "outside.txt", { type: "text/plain" })],
+    items: [],
+    getData: () => "",
+  };
+  expect(dropOn(list, "dragover", external)).toBeTrue();
+  dropOn(list, "drop", external);
+  for (let i = 0; i < 30 && !h.fs.findChild(h.folder.id, "outside.txt"); i++)
+    await flushShell();
+  expect(h.fs.findChild(h.folder.id, "outside.txt").content).toBe("text");
+  // The list follows the window to another folder.
+  h.key(h.item(h.child.id), "Enter");
+  await settle();
+  const third = h.fs.createFile(h.fs.MY_DOCUMENTS, "third.txt");
+  dropOn(list, "drop", items([third.id]));
+  await settle();
+  expect(h.fs.getNode(third.id).parent).toBe(h.child.id);
+  // A desktop icon dropped on the list moves into the folder too.
+  const icon = h.fs.createFile(h.fs.DESKTOP, "icon.txt");
+  await settle();
+  h.s.document.elementsFromPoint = () => [list];
+  const iconElement = h.s.document.querySelector(
+    `.desktop-icon[data-desktop-id="${icon.id}"]`,
+  );
+  [
+    ["pointerdown", 10],
+    ["pointermove", 190],
+    ["pointerup", 190],
+  ].forEach(([type, at]) =>
+    iconElement.dispatchEvent(
+      new w.PointerEvent(type, {
+        button: 0,
+        pointerId: 1,
+        clientX: at,
+        clientY: at,
+        bubbles: true,
+      }),
+    ),
+  );
+  await settle();
+  expect(h.fs.getNode(icon.id).parent).toBe(h.child.id);
+  // The window stops taking drops when it shows My Computer or the
+  // Recycle Bin.
+  for (const folderId of [h.fs.MY_COMPUTER, h.fs.RECYCLE_BIN]) {
+    h.fs.open(folderId);
+    await settle();
+    expect(h.win.querySelector(".explorer-items")).toBe(list);
+    expect(dropOn(list, "dragover", items([third.id]))).toBeFalse();
+    dropOn(list, "drop", items([third.id]));
+    await settle();
+    expect(h.fs.getNode(third.id).parent).toBe(h.child.id);
+  }
+});
+
 test("search companion finds files from its form", async () => {
   const h = await setup(),
     s = h.s;
@@ -226,16 +331,29 @@ test("search companion finds files from its form", async () => {
   kinds[0].click();
   const query = search.querySelector("#search-filename");
   query.value = "note";
+  // The Enter that ends an input method composition does not search.
+  query.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+    }),
+  );
+  await flushShell();
+  expect(search.textContent.includes("note.txt")).toBeFalse();
   h.key(query, "Enter");
   await flushShell();
   expect(search.textContent).toContain("note.txt");
 });
 test("Explorer menu commands switch views, select items and paste copies", async () => {
   const h = await setup();
-  const menu = async (name, command) => {
-    h.win.querySelector(`[data-explorer-menu="${name}"]`).click();
+  const menuCommand = async (command) => {
     h.win.querySelector(`[data-explorer-command="${command}"]`).click();
     await flushShell();
+  };
+  const menu = async (name, command) => {
+    h.win.querySelector(`[data-explorer-menu="${name}"]`).click();
+    await menuCommand(command);
   };
   for (const view of ["thumbnails", "tiles", "icons", "list", "details"]) {
     await menu("view", view);
@@ -272,6 +390,7 @@ test("Explorer menu commands switch views, select items and paste copies", async
   address.dispatchEvent(new h.s.window.Event("change"));
   expect(address.value).toBe(h.fs.getPath(h.folder.id));
   h.win.querySelector('[data-explorer-action="view"]').click();
+  await menuCommand("tiles");
   expect(h.win.querySelector(".explorer-items").dataset.view).toBe("tiles");
   await menu("view", "refresh");
   await menu("help", "about-windows");

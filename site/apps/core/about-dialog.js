@@ -1,6 +1,13 @@
 export const showXPAboutDialog = (
   dialogs,
-  { title, product, version, copyright, icon, licensedTo = "astro" },
+  {
+    title,
+    product,
+    version,
+    copyright,
+    icon,
+    licensedTo = globalThis.VirtualFS.USER_NAME,
+  },
 ) => {
   const dialog = dialogs.createDialog({ title, wide: true });
   dialog.el.classList.add("xp-about-dialog");

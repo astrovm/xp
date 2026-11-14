@@ -2,11 +2,14 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import {
   cleanupShells,
+  clickStartAction,
   flushShell,
   loadShell,
   login,
 } from "./helpers/shell-harness";
-import { recordCardCanvas } from "./helpers/card-canvas";
+import { pressAltGr } from "./helpers/keys";
+import { checkMenuBar } from "./helpers/menu-bar";
+import { recordCardCanvas, siteFiles } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
 
@@ -56,6 +59,7 @@ const open = async ({
   wait = true,
 } = {}) => {
   let frames;
+  const files = siteFiles({ failFont });
   const sounds = [];
   const clock = { now: 0 };
   const s = await login(
@@ -64,15 +68,7 @@ const open = async ({
         spiderSettings: JSON.stringify(settings),
         ...storage,
       },
-      fetchObject: async (url) => {
-        if (failFont) return new Response(null, { status: 404 });
-        const path = String(url).replace(/^.*?assets\//, "assets/");
-        return new Response(
-          await Bun.file(
-            new URL(`../site/${path}`, import.meta.url),
-          ).arrayBuffer(),
-        );
-      },
+      fetchObject: files.fetchObject,
       beforeScripts: (window) => {
         frames = recordCardCanvas(window, {
           board: "spider-board",
@@ -112,6 +108,9 @@ const open = async ({
   const settle = async (times = 8) => {
     for (let index = 0; index < times; index += 1) await flushShell();
   };
+  await settle();
+  // The board draws once its font is read.
+  await files.read();
   await settle();
   const win = s.document.querySelector(
     '.xp-window[data-game="__spider-solitaire"]',
@@ -254,10 +253,23 @@ test("cards drag onto a card one higher, turn over what they uncover, and undo",
   expect(h.drawnAt(28, 73)).toBe(face("5S"));
   expect(h.drawnAt(622, 31)).toBe(face("TS"));
   expect(h.score()).toBe("Spider Solitaire. Score: 499. Moves: 1.");
-  // Undo turns the 10 back down and counts as a move.
-  await h.key("z", { ctrlKey: true });
+  // Undo turns the 10 back down and counts as a move. Like Windows, the
+  // letter follows the layout: AZERTY has Z where QWERTY has W.
+  await h.key("z", { ctrlKey: true, code: "KeyW" });
   expect(h.drawnAt(622, 31)).toBe(BACK);
   expect(h.drawnAt(622, 38)).toBe(face("5S"));
+  expect(h.score()).toBe("Spider Solitaire. Score: 498. Moves: 2.");
+  // AltGr types characters, such as "ż" on the Z key of a Polish
+  // keyboard. Like XP, it runs no Ctrl shortcut.
+  for (const [key, code] of [
+    ["ż", "KeyZ"],
+    ["ś", "KeyS"],
+    ["ó", "KeyO"],
+    ["ń", "KeyN"],
+  ])
+    for (const event of pressAltGr(h.s.window, h.win, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
   expect(h.score()).toBe("Spider Solitaire. Score: 498. Moves: 2.");
   expect(await h.menu("game", "undo")).toBeFalse();
   // Cards dropped where nothing takes them go back.
@@ -336,7 +348,8 @@ test("the score box and M show available moves in turn, or say there are none", 
   const h = await open();
   await h.click([512, 640]);
   expect(h.sounds).toEqual(["Hint.wav"]);
-  await h.key("m");
+  // AZERTY has M where QWERTY has ";". Like Windows, M follows the layout.
+  await h.key("m", { code: "Semicolon" });
   await h.key("M", { code: "KeyM", shiftKey: true });
   expect(h.sounds).toEqual(["Hint.wav", "Hint.wav"]);
   // The seven moves cycle back to the first.
@@ -520,8 +533,10 @@ test("New Game and Restart ask once a card has moved, and leaving counts a loss"
   expect(h.dialog().textContent).toContain(
     "Are you sure you want to start a new game?",
   );
-  // spider.exe's questions default to No.
+  // spider.exe's questions default to No. Like XP's message box, Yes and
+  // No has a gray close button.
   expect(h.dialog().querySelector(".xp-btn.default").dataset.action).toBe("no");
+  expect(h.dialog().querySelector(".close-btn").disabled).toBeTrue();
   await h.answer("no");
   expect(h.drawnAt(28, 73)).toBe(face("5S"));
   await h.menu("game", "restart");
@@ -1193,4 +1208,78 @@ test("tiny windows leave the columns as they are", async () => {
   // Under 107 pixels, spider.exe doesn't squeeze at all.
   const tiny = await open({ settings, storage, start: null, height: 100 });
   expect(tiny.drawnAt(28, 80 + 28)).toBe(face("5S"));
+});
+
+test("Spider's menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-spider"),
+    accessKey: "g",
+    settle: flushShell,
+  });
+});
+
+test("Spider's Deal! title runs from Alt+D, and the arrows pass over it", async () => {
+  const h = await open();
+  const root = h.win.querySelector(".xp-spider");
+  const active = () => h.s.document.activeElement;
+  const keyOn = async (target, name, init = {}) => {
+    const event = new h.s.window.KeyboardEvent("keydown", {
+      key: name,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    await h.idle();
+    return event;
+  };
+  root.focus();
+  // Alt and D choose Deal! at once, like a menu item, and the keys stay.
+  expect((await keyOn(root, "d", { altKey: true })).defaultPrevented).toBe(
+    true,
+  );
+  expect(h.sounds.filter((name) => name === "Deal.wav")).toHaveLength(1);
+  expect(h.drawnAt(871, 586)).toBeUndefined();
+  expect(active() === root).toBeTrue();
+  // Right from the Game menu stops on Deal!, which has no menu.
+  await keyOn(root, "g", { altKey: true });
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("true");
+  await keyOn(active(), "ArrowRight");
+  expect(active() === h.menuButton("deal")).toBeTrue();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("false");
+  // With no menu open, the next arrow only moves the keys.
+  await keyOn(active(), "ArrowRight");
+  expect(active() === h.menuButton("help")).toBeTrue();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
+  await keyOn(active(), "Escape");
+  expect(active() === root).toBeTrue();
+  // From the last menu, Right wraps to the first one.
+  await keyOn(root, "h", { altKey: true });
+  await keyOn(active(), "ArrowRight");
+  expect(h.menuButton("game").getAttribute("aria-expanded")).toBe("true");
+  expect(active().dataset.command).toBe("new");
+  // A letter that no title has, or Ctrl, leaves the keys to the program.
+  expect((await keyOn(root, "q", { altKey: true })).defaultPrevented).toBe(
+    false,
+  );
+});
+
+test("an open Run leaves Spider its keys, like XP", async () => {
+  const h = await open();
+  clickStartAction(h.s, "run");
+  await h.idle();
+  expect(!!h.s.document.querySelector(".run-dialog")).toBeTrue();
+  const event = new h.s.window.KeyboardEvent("keydown", {
+    key: "F3",
+    bubbles: true,
+    cancelable: true,
+  });
+  h.win.dispatchEvent(event);
+  await h.idle();
+  expect(event.defaultPrevented).toBeTrue();
+  expect(h.dialogTitle()).toBe("Difficulty");
 });

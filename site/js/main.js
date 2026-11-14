@@ -181,7 +181,10 @@ const SIMULATED_RESOLUTIONS = Object.freeze({
   "1440x900": { width: 1440, height: 900 },
 });
 const XP_ICON_PATHS = Object.freeze({
+  "BitmapImage.png": "assets/xp/icons/BitmapImage.png",
   "GenericFile.png": "assets/xp/icons/GenericFile.png",
+  "ImageDocument.png": "assets/xp/icons/ImageDocument.png",
+  "JpegImage.png": "assets/xp/icons/JpegImage.png",
   "TextDocument.png": "assets/xp/icons/TextDocument.png",
   "AccessibilityOptions.png": "assets/xp/icons/AccessibilityOptions.png",
   "AccessibilitySound.png": "assets/xp/icons/AccessibilitySound.png",
@@ -291,6 +294,24 @@ const XP_ICON_PATHS = Object.freeze({
   "RecyclerFull.png": "assets/xp/icons/RecyclerFull.png",
   "Shortcut.png": "assets/xp/icons/Shortcut.png",
 });
+
+// XP's icon for a file, by its type. Pictures use the icons of the
+// Windows Picture and Fax Viewer.
+const FILE_TYPE_ICONS = Object.freeze({
+  ".bmp": "BitmapImage.png",
+  ".csv": "TextDocument.png",
+  ".dib": "BitmapImage.png",
+  ".gif": "ImageDocument.png",
+  ".jpeg": "JpegImage.png",
+  ".jpg": "JpegImage.png",
+  ".log": "TextDocument.png",
+  ".md": "TextDocument.png",
+  ".png": "ImageDocument.png",
+  ".txt": "TextDocument.png",
+});
+const fileIconName = (name) =>
+  FILE_TYPE_ICONS[/\.[^.]*$/.exec(name)?.[0].toLowerCase()] ||
+  "GenericFile.png";
 let activeMonitorResolution = "auto";
 
 const categoryIcons = {
@@ -386,6 +407,11 @@ const formatGameTitle = (gameId) =>
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+
+// The title of an open window: the title that it sets, such as a Command
+// Prompt's TITLE, or else the name of its program or game.
+const windowTitleOf = (win) =>
+  win.title || formatGameTitle(win.applicationId ?? win.gameId);
 
 const getGameIcon = (gameId) =>
   categoryIcons[gamesList[gameId]?.category] || categoryIcons["Other"];

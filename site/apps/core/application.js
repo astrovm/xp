@@ -18,6 +18,11 @@ export const defineApplication = (definition) => {
     title: requiredText(definition.title, "title"),
     icon: requiredText(definition.icon, "icon"),
     kind: requiredText(definition.kind, "kind"),
+    // The taskbar groups the windows of a program with many windows under
+    // this title, like XP, which takes the description of the program file.
+    ...(definition.window?.manyWindows && {
+      groupTitle: requiredText(definition.groupTitle, "groupTitle"),
+    }),
     fileTypes: Object.freeze([
       ...new Set(
         (definition.fileTypes || []).map((extension) =>

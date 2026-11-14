@@ -13,6 +13,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 import { face, recordCardCanvas } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
@@ -698,12 +699,21 @@ test("statistics, options and About use freecell.exe's dialogs", async () => {
   h.win.querySelector('[data-freecell-menu="game"]').click();
   expect(h.win.querySelector(".tm-menu")).toBeNull();
   h.win.querySelector('[data-freecell-menu="help"]').click();
+  // A press on a title keeps the menus; one on the bar's empty part closes
+  // them, like XP.
+  h.win
+    .querySelector('[data-freecell-menu="help"]')
+    .dispatchEvent(
+      new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  expect(h.win.querySelector(".tm-menu")).not.toBeNull();
   h.win
     .querySelector(".cards-menu-bar")
     .dispatchEvent(
       new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
     );
-  expect(h.win.querySelector(".tm-menu")).not.toBeNull();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
+  h.win.querySelector('[data-freecell-menu="help"]').click();
   h.s.document.body.dispatchEvent(
     new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
   );
@@ -971,4 +981,15 @@ test("the table draws at full size, and scales down to fit a phone", async () =>
   // Eight cards side by side need 568 pixels.
   const phone = await open({ width: 390 });
   expect(phone.frames.transform[0]).toBeCloseTo(390 / 568, 6);
+});
+
+test("FreeCell's menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-freecell"),
+    accessKey: "g",
+    settle: flushShell,
+  });
 });

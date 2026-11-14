@@ -131,7 +131,16 @@ test("restoring brings the caption back from the task button", async () => {
   const { s, win, taskButton, ghost } = await documents();
   win.querySelector(".minimize-btn").click();
   await s.advanceTime(WHOLE_ANIMATION);
+  // Like Chrome, a hidden window cannot take the focus.
+  const items = win.querySelector(".explorer-items");
+  for (const element of [items, win]) {
+    const focus = element.focus;
+    element.focus = (options) => {
+      if (win.style.display !== "none") focus.call(element, options);
+    };
+  }
 
+  taskButton().focus();
   taskButton().click();
   const bar = ghost();
   expect(bar.textContent).toContain("My Documents");
@@ -151,6 +160,8 @@ test("restoring brings the caption back from the task button", async () => {
   expect(ghost()).toBeNull();
   expect(win.style.display).toBe("flex");
   expect(parseFloat(win.style.left)).toBe(100);
+  // The window gets the keys when it shows.
+  expect(s.document.activeElement === items).toBeTrue();
 });
 
 test("maximizing and restoring step the caption to and from the work area", async () => {

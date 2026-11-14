@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 
 const mountNotepad = (context, instance) => {
   const { file, window: win } = instance;
@@ -12,6 +13,8 @@ const mountNotepad = (context, instance) => {
   menuBar.className = "notepad-menu-bar";
   menuBar.setAttribute("role", "menubar");
   const editor = document.createElement("textarea");
+  // The text gets the keys when the window becomes active.
+  editor.dataset.defaultFocus = "";
   editor.className = "notepad-editor";
   editor.setAttribute("aria-label", "Notepad document");
   editor.spellcheck = false;
@@ -23,10 +26,13 @@ const mountNotepad = (context, instance) => {
   win.nodeId = null;
   win.dirty = false;
   let savedContent = "";
+  // The name of a document dropped from the computer. It has no file here
+  // until Save As writes one.
+  let looseName = null;
 
   const updateTitle = () => {
     const node = win.nodeId && fs.getNode(win.nodeId);
-    const documentName = node?.name || "Untitled";
+    const documentName = node?.name || looseName || "Untitled";
     const title = `${documentName} - Notepad`;
     context.setTitle(title);
   };
@@ -37,14 +43,21 @@ const mountNotepad = (context, instance) => {
     status.textContent = `Ln ${lines.length}, Col ${lines.at(-1).length + 1}`;
   };
 
-  const loadDocument = (node) => {
+  const loadDocument = (node, loose = null) => {
     win.nodeId = node?.id || null;
-    editor.value = node ? fs.getContent(node.id) || "" : "";
+    looseName = loose?.name ?? null;
+    editor.value = node ? fs.getContent(node.id) || "" : (loose?.text ?? "");
+    // A new value puts the caret at the end. XP opens a file at its start.
+    editor.setSelectionRange(0, 0);
+    editor.scrollTop = 0;
+    editor.scrollLeft = 0;
     savedContent = editor.value;
     win.dirty = false;
     updateTitle();
     updateStatus();
-    editor.focus();
+    // Like XP, a file that opens, such as by a drop on a window that is
+    // behind another one, does not bring the window to the top.
+    context.giveKeys(editor);
   };
 
   const saveAs = async () => {
@@ -54,7 +67,8 @@ const mountNotepad = (context, instance) => {
       startFolder: current?.parent || fs.MY_DOCUMENTS,
       // The Recycle Bin can rename a deleted file. Save As suggests the
       // name the user gave it.
-      defaultName: current?.originalName || current?.name || "Untitled.txt",
+      defaultName:
+        current?.originalName || current?.name || looseName || "Untitled.txt",
       filter: [".txt"],
       defaultExtension: ".txt",
     });
@@ -62,15 +76,13 @@ const mountNotepad = (context, instance) => {
     const { name } = result;
     const contentToSave = editor.value;
     try {
-      // Save As never names a folder: its name opens the folder instead.
-      let target = result.existingId && fs.getNode(result.existingId);
-      if (!target) {
-        target = await fileOps.createFile(result.parentId, name, {
-          content: contentToSave,
-        });
-      } else {
-        await fs.setContent(target.id, contentToSave, { name });
-      }
+      // The file is found again when Notepad writes, after the Replace
+      // question.
+      const target = await fileOps.writeFile(
+        result.parentId,
+        name,
+        contentToSave,
+      );
       win.nodeId = target.id;
       savedContent = contentToSave;
       win.dirty = editor.value !== savedContent;
@@ -114,7 +126,7 @@ const mountNotepad = (context, instance) => {
     const node = win.nodeId && fs.getNode(win.nodeId);
     const answer = await XPDialogs.message({
       title: "Notepad",
-      text: `The text in the ${node?.name || "Untitled"} file has changed.\n\nDo you want to save the changes?`,
+      text: `The text in the ${node?.name || looseName || "Untitled"} file has changed.\n\nDo you want to save the changes?`,
       icon: "warning",
       buttons: XPDialogs.BUTTON_SETS.yesNoCancel,
       defaultButton: "yes",
@@ -226,14 +238,15 @@ const mountNotepad = (context, instance) => {
     ["&Help", [["&About Notepad", "about", ""]]],
   ];
 
-  const closeMenus = () => {
-    menuBar.querySelectorAll(".notepad-menu").forEach((menu) => {
-      menu.hidden = true;
-    });
-    menuBar.querySelectorAll(".notepad-menu-button").forEach((button) => {
-      button.setAttribute("aria-expanded", "false");
-    });
-  };
+  const menus = wireMenuBar({
+    windowElement: el,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = button.nextElementSibling;
+      menu.hidden = false;
+      return menu;
+    },
+  });
 
   menuDefinitions.forEach(([label, items]) => {
     const group = document.createElement("div");
@@ -276,17 +289,10 @@ const mountNotepad = (context, instance) => {
       key.textContent = shortcut;
       item.append(check, text, key);
       item.addEventListener("click", () => {
-        closeMenus();
+        menus.close();
         commands[command]?.(item);
       });
       menu.appendChild(item);
-    });
-    button.addEventListener("click", () => {
-      const shouldOpen = menu.hidden;
-      closeMenus();
-      menu.hidden = !shouldOpen;
-      button.setAttribute("aria-expanded", String(shouldOpen));
-      if (shouldOpen) menu.querySelector("button")?.focus();
     });
     group.append(button, menu);
     menuBar.appendChild(group);
@@ -299,17 +305,14 @@ const mountNotepad = (context, instance) => {
   ["click", "keyup", "select"].forEach((eventName) =>
     editor.addEventListener(eventName, updateStatus),
   );
-  el.addEventListener("pointerdown", (event) => {
-    if (!event.target.closest(".notepad-menu-group")) closeMenus();
-  });
   el.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.key.toLowerCase() === "s") {
+    if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "s") {
       event.preventDefault();
       save();
-    } else if (event.ctrlKey && event.key.toLowerCase() === "o") {
+    } else if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "o") {
       event.preventDefault();
       commands.open();
-    } else if (event.ctrlKey && event.key.toLowerCase() === "n") {
+    } else if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "n") {
       event.preventDefault();
       commands.new();
     } else if (event.key === "F5") {
@@ -318,15 +321,73 @@ const mountNotepad = (context, instance) => {
     }
   });
 
+  // Opens a file, like XP: Notepad asks first when its text has changed.
+  // The file can go away or move while the question is open. Notepad then
+  // looks for it at its old path, and does not find it.
+  const openAfterQuestion = async (node) => {
+    const path = context.pathOf(node.id);
+    if (!(await confirmSaveChanges())) return false;
+    if (context.pathOf(node.id) !== path) {
+      await XPDialogs.alert(
+        `Cannot find the ${path} file.\n\nCheck the file name and try again.`,
+        "Notepad",
+        "warning",
+      );
+      return false;
+    }
+    loadDocument(node);
+    return true;
+  };
+  // Like XP, a file dropped on Notepad opens in it. A folder does not open.
+  const openDroppedItems = (ids) => {
+    const node = ids.map((id) => fs.getNode(id)).find(Boolean);
+    if (node?.type === "file") void openAfterQuestion(node);
+  };
+  const openComputerFile = async (dropped) => {
+    if (!(await confirmSaveChanges())) return;
+    try {
+      loadDocument(null, { name: dropped.name, text: await dropped.text() });
+    } catch (error) {
+      await XPDialogs.alert(
+        error.message || `Cannot open the ${dropped.name} file.`,
+        "Notepad",
+        "error",
+      );
+    }
+  };
+  const { ITEM_DRAG_TYPE } = XPDialogs;
+  const takesDrop = (event) =>
+    XPDialogs.takesItemDrag(event, ["Files", ITEM_DRAG_TYPE]);
+  el.dataset.dropAction = "items";
+  // A drag of items keeps the effect that its window allows, so the drop
+  // comes.
+  ["dragenter", "dragover"].forEach((type) =>
+    el.addEventListener(type, (event) => {
+      if (!takesDrop(event)) return;
+      event.preventDefault();
+      if (!event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+        event.dataTransfer.dropEffect = "copy";
+    }),
+  );
+  el.addEventListener("drop", (event) => {
+    if (!takesDrop(event)) return;
+    event.preventDefault();
+    // An item from a window can also carry a file, such as a picture that
+    // the browser drags. The item comes first.
+    if (event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+      openDroppedItems(XPDialogs.droppedItemIds(event));
+    else openComputerFile(event.dataTransfer.files[0]);
+  });
+  // Desktop icons move with the pointer, not with a browser drag.
+  el.addEventListener("itemsdrop", (event) =>
+    openDroppedItems(event.detail.ids),
+  );
+
   loadDocument(file);
   return {
     element: content,
     beforeClose: confirmSaveChanges,
-    async openFile(node) {
-      if (!(await confirmSaveChanges())) return false;
-      loadDocument(node);
-      return true;
-    },
+    openFile: openAfterQuestion,
     unmount() {},
   };
 };

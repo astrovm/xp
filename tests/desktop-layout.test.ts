@@ -147,7 +147,8 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect(fs.getNode(move.id).parent).toBe(folder.id);
   expect(fs.getNode(move.id).content).toBe("keep me");
   expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
-  // Cancel on a name clash leaves the file, its icon and the clipboard.
+  // Like XP, one file asks with Yes and No. No leaves the file, its icon
+  // and the clipboard.
   const clash = fs.createFile(fs.DESKTOP, "move.txt");
   await flushShell();
   const start = [icon(clash.id).style.left, icon(clash.id).style.top];
@@ -156,7 +157,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect(icon(clash.id).style.visibility).toBe("hidden");
   [...s.document.querySelectorAll(".xp-dialog")]
     .at(-1)
-    .querySelector('[data-action="cancel"]')
+    .querySelector('[data-action="no"]')
     .click();
   await flushShell();
   await flushShell();
@@ -536,4 +537,74 @@ test("keys never select a desktop icon that is still moving away", async () => {
   );
   expect(movingIcon.classList.contains("selected")).toBeFalse();
   expect(icons.at(-2).classList.contains("selected")).toBeTrue();
+});
+
+test("the browser never starts its own drag from a desktop icon picture", async () => {
+  const s = await login(await loadShell()),
+    fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "picture.txt");
+  await flushShell();
+  const icon = s.document.querySelector(`[data-desktop-id="${file.id}"]`);
+  const image = icon.querySelector("img");
+  expect(image !== null).toBeTrue();
+  // Chrome cancels the pointer when its own drag of the picture starts.
+  const start = new s.window.Event("dragstart", {
+    bubbles: true,
+    cancelable: true,
+  });
+  image.dispatchEvent(start);
+  expect(start.defaultPrevented).toBeTrue();
+});
+
+test("only the top window under the pointer gets a desktop icon's drop, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.DESKTOP, "Behind");
+  const file = fs.createFile(fs.DESKTOP, "dragged.txt");
+  await flushShell();
+  const icon = (id) => s.document.querySelector(`[data-desktop-id="${id}"]`);
+  // A window that takes no items covers the folder and the Recycle Bin.
+  const covering = s.document.createElement("div");
+  covering.className = "xp-window";
+  const inside = s.document.createElement("span");
+  covering.append(inside);
+  s.document.getElementById("desktop").append(covering);
+  geometry(s);
+  const start = [icon(file.id).style.left, icon(file.id).style.top];
+  for (const target of [icon(folder.id), icon("__recycle-bin")]) {
+    s.document
+      .querySelectorAll(".desktop-icon")
+      .forEach((item) =>
+        item.classList.toggle("selected", item === icon(file.id)),
+      );
+    // The dragged icon under the pointer does not count.
+    s.document.elementsFromPoint = () => [
+      icon(file.id),
+      inside,
+      covering,
+      target,
+      s.document.body,
+    ];
+    for (const [type, clientX, clientY] of [
+      ["pointerdown", 10, 10],
+      ["pointermove", 190, 140],
+      ["pointerup", 190, 140],
+    ])
+      icon(file.id).dispatchEvent(
+        new s.window.PointerEvent(type, {
+          button: 0,
+          pointerId: 1,
+          clientX,
+          clientY,
+          bubbles: true,
+        }),
+      );
+    await flushShell();
+    await flushShell();
+  }
+  expect(fs.getNode(file.id).parent).toBe(fs.DESKTOP);
+  expect(fs.isInRecycleBin(file.id)).toBeFalse();
+  expect(s.document.querySelectorAll(".drop-target").length).toBe(0);
+  // The icon goes back to its place.
+  expect([icon(file.id).style.left, icon(file.id).style.top]).toEqual(start);
 });

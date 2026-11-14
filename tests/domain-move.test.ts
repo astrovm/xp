@@ -432,7 +432,7 @@ describe("storage copy", () => {
   test("rejects unknown items and failed writes", async () => {
     const to = makeEnv(NEW);
     const importer = createImporter(to);
-    expect(importer.write({ kind: "mystery" })).rejects.toThrow(
+    await expect(importer.write({ kind: "mystery" })).rejects.toThrow(
       "Unknown storage item: mystery",
     );
     const database = await createDatabase(to, "unique", 1, (db) =>
@@ -442,7 +442,7 @@ describe("storage copy", () => {
     );
     await putRecords(database, "items", [[undefined, { id: 1, name: "a" }]]);
     database.close();
-    expect(
+    await expect(
       importer.write({
         kind: "records",
         database: "unique",
@@ -450,11 +450,11 @@ describe("storage copy", () => {
         keys: [2],
         values: [{ id: 2, name: "a" }],
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toMatchObject({ name: "ConstraintError" });
     to.opfs.getDirectoryHandle = async () => {
       throw new Error("Storage is locked");
     };
-    expect(
+    await expect(
       importer.write({
         kind: "file",
         path: ["a", "b"],
@@ -466,7 +466,7 @@ describe("storage copy", () => {
       if (!options) throw new Error("Storage is broken");
       return getFileHandle(name, options);
     };
-    expect(
+    await expect(
       importer.write({ kind: "file", path: ["b"], file: new File([], "b") }),
     ).rejects.toThrow("Storage is broken");
   });
@@ -482,7 +482,7 @@ describe("storage copy", () => {
       });
       return opening;
     };
-    expect(collect(from)).rejects.toThrow("Blocked");
+    await expect(collect(from)).rejects.toThrow("Blocked");
   });
 
   test("reports whether there is anything to move", async () => {

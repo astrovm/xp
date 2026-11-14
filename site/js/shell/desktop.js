@@ -109,6 +109,24 @@ const getDesktopSelectionEligibility = () => {
   return { selectedIds, filesystemIds, allFilesystem, movable };
 };
 
+// The item whose Properties a desktop icon shows, like XP: the folder or
+// file itself, and the shell folder of My Computer, My Documents and the
+// Recycle Bin. Icons for programs, such as Internet Games, show none.
+const DESKTOP_PROPERTIES_ITEMS = {
+  "__my-computer": () => fs.MY_COMPUTER,
+  "__my-documents": () => fs.MY_DOCUMENTS,
+  "__recycle-bin": () => fs.RECYCLE_BIN,
+};
+const desktopPropertiesItem = (id) =>
+  DESKTOP_PROPERTIES_ITEMS[id]?.() || (fs.getNode(id) ? id : null);
+// The Properties of the one selected icon, like XP. No icon or many icons
+// show none.
+const showDesktopProperties = () => {
+  const [id, ...more] = getSelectedDesktopIds();
+  const itemId = id && !more.length && desktopPropertiesItem(id);
+  if (itemId) openShellProperties(itemId);
+};
+
 const layoutDesktopIcons = (force = false) => {
   const container = document.getElementById("desktop-icons");
   const positions = force ? {} : getDesktopIconPositions();
@@ -188,8 +206,17 @@ const layoutDesktopIcons = (force = false) => {
   }
 };
 
+// Like XP, only the top window under the pointer gets the drop. A window
+// that takes no items refuses it, also when a folder is behind it: the
+// icons go back. The dragged icons themselves do not count.
 const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
-  for (const element of document.elementsFromPoint(clientX, clientY)) {
+  const elements = document
+    .elementsFromPoint(clientX, clientY)
+    .filter((element) => !element.closest?.(".desktop-icon.selected"));
+  const topWindow = elements[0]?.closest?.(".xp-window");
+  const refused = topWindow ? { action: "refuse" } : null;
+  for (const element of elements) {
+    if (topWindow && !topWindow.contains(element)) return refused;
     const target = element.closest?.(
       "[data-drop-action], [data-drop-destination-id]",
     );
@@ -197,6 +224,11 @@ const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
     if (target.dataset.dropAction === "recycle") {
       return { action: "recycle", element: target };
     }
+    // A window that does its own work with the items, such as the Run
+    // dialog or Notepad. It gets an itemsdrop event and shows no drop
+    // highlight.
+    if (target.dataset.dropAction === "items")
+      return { action: "items", box: target };
     const destinationId = target.dataset.dropDestinationId;
     if (
       destinationId === fs.DESKTOP ||
@@ -207,10 +239,13 @@ const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
     }
     return { action: "move", element: target, destinationId };
   }
-  return null;
+  return refused;
 };
 
 const wireDesktopIconDrag = (icon) => {
+  // The icon moves with the pointer. A browser drag of its picture would
+  // cancel the pointer and leave the icon where it was.
+  icon.addEventListener("dragstart", (event) => event.preventDefault());
   icon.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
 
@@ -265,7 +300,7 @@ const wireDesktopIconDrag = (icon) => {
         item.style.top = `${top}px`;
       });
 
-      dropTarget?.element.classList.remove("drop-target");
+      dropTarget?.element?.classList.remove("drop-target");
       dropTarget = eligibility.movable
         ? findDesktopDropTarget(
             moveEvent.clientX,
@@ -273,14 +308,14 @@ const wireDesktopIconDrag = (icon) => {
             draggedIds,
           )
         : null;
-      dropTarget?.element.classList.add("drop-target");
+      dropTarget?.element?.classList.add("drop-target");
     };
 
     const onUp = async (upEvent) => {
       icon.removeEventListener("pointermove", onMove);
       icon.removeEventListener("pointerup", onUp);
       icon.removeEventListener("pointercancel", onUp);
-      dropTarget?.element.classList.remove("drop-target");
+      dropTarget?.element?.classList.remove("drop-target");
       dropTarget =
         eligibility.movable && upEvent.type === "pointerup"
           ? findDesktopDropTarget(upEvent.clientX, upEvent.clientY, draggedIds)
@@ -312,7 +347,23 @@ const wireDesktopIconDrag = (icon) => {
         return;
       }
       if (desktopDragged) {
-        if (dropTarget) {
+        if (dropTarget?.action === "refuse") returnIcons();
+        else if (dropTarget?.action === "items") {
+          // The items stay where they are. The window gets their ids,
+          // the pressed icon first, so a window that takes one item, such
+          // as the Command Prompt, gets that one.
+          returnIcons();
+          const ids = eligibility.filesystemIds;
+          dropTarget.box.dispatchEvent(
+            new CustomEvent("itemsdrop", {
+              detail: {
+                ids: [...new Set([icon.dataset.desktopId, ...ids])].filter(
+                  (id) => ids.includes(id),
+                ),
+              },
+            }),
+          );
+        } else if (dropTarget) {
           // The icons hide while the items move. Items that move away leave
           // the Desktop when it redraws. After a failure or Cancel, the
           // icons come back at their places.
@@ -482,6 +533,16 @@ const buildDesktopIcons = () => {
 
   const container = document.getElementById("desktop-icons");
   container.hidden = getDesktopLayoutSettings().showIcons === false;
+  // The rebuild removes an open rename box, so its blur must not rename.
+  const renameBox = container.querySelector(".desktop-rename");
+  const reopen = renameBox?.dropRename() ? renameBox : null;
+  // The icon with the keys gets them back after the rebuild, like XP. An
+  // icon that is gone leaves the keys on the desktop.
+  const giveKeysBack = holdKeys(
+    container,
+    (keys) =>
+      `.desktop-icon[data-desktop-id="${CSS.escape(keys.closest(".desktop-icon").dataset.desktopId)}"]`,
+  );
   container.replaceChildren();
   container.tabIndex = 0;
   // System places stay available even though regular desktop files are
@@ -605,7 +666,8 @@ const buildDesktopIcons = () => {
       }
     });
     icon.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
+      // Alt+Enter shows Properties, from the shell's keys.
+      if (event.key === "Enter" && !event.altKey) {
         event.preventDefault();
         openDesktopItem(id);
       }
@@ -614,6 +676,8 @@ const buildDesktopIcons = () => {
     container.appendChild(icon);
   });
 
+  giveKeysBack(container);
+  if (reopen) reopenDesktopRename(reopen);
   renderTaskbarToolbars();
   if (!wasBuilt) wireDesktopSelectionRectangle();
   if (!wasBuilt) wireFolderDropTarget(container, fs.DESKTOP);
@@ -623,7 +687,9 @@ const buildDesktopIcons = () => {
 };
 
 const closeDesktopContextMenu = () => {
-  document.getElementById("desktop-context-menu").hidden = true;
+  const menu = document.getElementById("desktop-context-menu");
+  giveKeysBackFrom(menu);
+  menu.hidden = true;
 };
 
 const getDesktopLayoutSettings = () =>
@@ -644,6 +710,12 @@ const refreshDesktop = () => {
   buildDesktopIcons();
 };
 
+// The rebuilt icon of a rename takes the keys.
+const focusDesktopIcon = (id) =>
+  document
+    .querySelector(`.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`)
+    .focus({ preventScroll: true });
+
 const beginDesktopRename = (id) => {
   const icon = document.querySelector(
     `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
@@ -654,38 +726,83 @@ const beginDesktopRename = (id) => {
   const input = document.createElement("input");
   input.className = "desktop-rename";
   input.value = node.name;
+  input.dataset.desktopId = id;
+  input.dataset.originalName = node.name;
   label.replaceWith(input);
+  XPDialogs.guardFileName(input);
   input.focus();
   input.select();
   let finished = false;
-  async function finish(save) {
+  // A rebuild of the icons drops the box without a rename. It returns true
+  // if the box was still open.
+  input.dropRename = () => {
+    const open = !finished;
+    finished = true;
+    document.removeEventListener("pointerdown", onOutsidePointerDown, true);
+    return open;
+  };
+  // Enter and Escape leave the keys on the icon, like XP. A rename that
+  // ends because the keys left keeps them where they went.
+  async function finish(save, keepKeys = false) {
     if (finished) return;
     finished = true;
     document.removeEventListener("pointerdown", onOutsidePointerDown, true);
-    if (save) {
+    const name = save ? XPDialogs.renameBoxName(input.value) : null;
+    const changed = name !== null && name !== node.name;
+    // Like XP, the box keeps the new name while the question shows. No
+    // opens the box again with the old name, all selected.
+    if (changed && !(await XPDialogs.confirmExtensionChange(node, name))) {
+      refreshDesktop();
+      if (
+        document.querySelector(
+          `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+        )
+      )
+        beginDesktopRename(id).select();
+      return;
+    }
+    if (changed) {
       try {
-        await fileOps.rename(id, input.value);
+        await fileOps.rename(id, name);
       } catch (error) {
-        // Like Explorer, a name Windows refuses shows an error.
+        // Like XP, a name Windows refuses shows an error, and the box opens
+        // again with that name.
         refreshDesktop();
-        await alertRenameError(error);
+        await XPDialogs.alertRenameError(error, node);
+        // An icon that went away while the error showed takes no box.
+        if (
+          !document.querySelector(
+            `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+          )
+        )
+          return;
+        const again = beginDesktopRename(id);
+        // Like XP, the box opens again with the old name, all selected.
+        again.select();
         return;
       }
     }
     refreshDesktop();
+    if (keepKeys) focusDesktopIcon(id);
   }
   function onOutsidePointerDown(event) {
     if (!input.contains(event.target)) finish(true);
   }
   input.addEventListener("keydown", (event) => {
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key === "Enter" || event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      finish(event.key === "Enter");
+      finish(event.key === "Enter", true);
     }
   });
   input.addEventListener("blur", () => finish(true), { once: true });
   document.addEventListener("pointerdown", onOutsidePointerDown, true);
+  return input;
 };
 
 const beginSystemDesktopRename = (id) => {
@@ -696,11 +813,19 @@ const beginSystemDesktopRename = (id) => {
   const input = document.createElement("input");
   input.className = "desktop-rename";
   input.value = label.textContent;
+  input.dataset.desktopId = id;
+  input.dataset.originalName = label.textContent;
+  input.dataset.system = "";
   label.replaceWith(input);
   input.focus();
   input.select();
   let finished = false;
-  const finish = (save) => {
+  input.dropRename = () => {
+    const open = !finished;
+    finished = true;
+    return open;
+  };
+  const finish = (save, keepKeys = false) => {
     if (finished) return;
     finished = true;
     const name = input.value.trim();
@@ -708,14 +833,38 @@ const beginSystemDesktopRename = (id) => {
       saveDesktopSystemNames({ ...getDesktopSystemNames(), [id]: name });
     }
     refreshDesktop();
+    if (keepKeys) focusDesktopIcon(id);
   };
   input.addEventListener("keydown", (event) => {
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== "Enter" && event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
-    finish(event.key === "Enter");
+    finish(event.key === "Enter", true);
   });
   input.addEventListener("blur", () => finish(true), { once: true });
+  return input;
+};
+
+// A rebuild of the icons keeps an open rename box, with the text typed so
+// far, like Explorer. A box with no change yet shows the current name.
+const reopenDesktopRename = (old) => {
+  const id = old.dataset.desktopId;
+  const icon = document.querySelector(
+    `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+  );
+  if (!icon) return;
+  const begin =
+    "system" in old.dataset ? beginSystemDesktopRename : beginDesktopRename;
+  const input = begin(id);
+  if (old.value !== old.dataset.originalName) {
+    input.value = old.value;
+    input.setSelectionRange(old.selectionStart, old.selectionEnd);
+  }
 };
 
 const addDesktopMenuItem = (
@@ -781,6 +930,7 @@ const addDesktopSubmenu = (menu, label, buildItems) => {
       child.style.top = `${-2 - (rect.bottom - bottom)}px`;
   };
   const close = () => {
+    giveKeysBackFrom(child);
     parent.classList.remove("open");
     button.setAttribute("aria-expanded", "false");
   };
@@ -854,8 +1004,10 @@ const renderDesktopContextMenu = (menu, itemId) => {
       disabled: !movable || selectedFsIds.length !== 1,
     });
     addDesktopSeparator(menu);
+    const selectedIds = getSelectedDesktopIds();
     addDesktopMenuItem(menu, "Properties", "item-properties", {
-      disabled: selectedFsIds.length !== 1,
+      disabled:
+        selectedIds.length !== 1 || !desktopPropertiesItem(selectedIds[0]),
     });
   } else {
     addDesktopSubmenu(menu, "Arrange Icons By", (submenu) => {
@@ -1006,19 +1158,16 @@ const setupDesktopContextMenu = () => {
         input.addEventListener(
           "change",
           async () => {
+            // Like a drop: a name in use is a question, never a new name.
             try {
-              for (const file of input.files) {
-                const content = await fileOps.readFileContent(file);
-                await fileOps.createFile(fs.DESKTOP, file.name, {
-                  content,
-                  size: file.size,
-                });
-              }
+              await importIntoFolder(fs.DESKTOP, () =>
+                fileOps.importItemsFromFiles(input.files),
+              );
             } catch (error) {
-              await XPDialogs.alert(
-                error.message || "The file operation failed.",
+              await alertError(
+                error,
+                "The file operation failed.",
                 "File operation",
-                "error",
               );
             } finally {
               refreshDesktop();
@@ -1075,7 +1224,7 @@ const setupDesktopContextMenu = () => {
       } else if (action === "rename") {
         beginDesktopRename(selectedFsIds[0]);
       } else if (action === "item-properties") {
-        openShellProperties(selectedFsIds[0]);
+        showDesktopProperties();
       } else {
         // Menus disable Rename and Properties unless exactly one file is
         // selected, and Paste Shortcut is never enabled, so only the
@@ -1084,11 +1233,7 @@ const setupDesktopContextMenu = () => {
       }
       closeDesktopContextMenu();
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertError(error, "The file operation failed.", "File operation");
     }
   });
   menu.addEventListener("keydown", (event) => {

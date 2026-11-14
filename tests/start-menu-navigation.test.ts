@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 const key = (s, el, value, extra = {}) =>
   el.dispatchEvent(
@@ -78,6 +79,13 @@ test.each(["click", "hover", "keyboard"])(
     expect(panels(s).length).toBe(1);
     expect(panels(s)[0].textContent).toContain("My Pictures");
     panels(s)[0].querySelector("button").focus();
+    // AltGr types a character, such as "π". Like XP, it chooses no item,
+    // also when the browser sends only the AltGraph state.
+    pressAltGr(s.window, panels(s)[0], "π", "KeyP");
+    expect(panels(s).length).toBe(1);
+    expect(
+      s.document.querySelector('.xp-window[data-game="__my-pictures"]'),
+    ).toBeNull();
     key(s, panels(s)[0], "p");
     expect(
       s.document.querySelector('.xp-window[data-game="__my-pictures"]') !==
@@ -86,13 +94,52 @@ test.each(["click", "hover", "keyboard"])(
     expect(s.document.getElementById("start-menu").hidden).toBeTrue();
     s.document.getElementById("start-button").click();
     key(s, places, "r", { ctrlKey: true });
+    pressAltGr(s.window, places, "®", "KeyR");
     expect(s.document.querySelector(".run-dialog") === null).toBeTrue();
+    expect(s.document.getElementById("start-menu").hidden).toBeFalse();
     key(s, places, "r");
     expect(s.document.activeElement.dataset.startAction).toBe("run");
     s.document.activeElement.click();
     expect(s.document.querySelector(".run-dialog") !== null).toBeTrue();
   },
 );
+// Like the menus of XP, a typed character goes to an item that starts with
+// that exact character, with no case. An AltGr character, such as "ł" on a
+// Polish keyboard, is a typed character too. "o" is not "ó".
+test("a menu takes the exact typed character, also from AltGr", async () => {
+  const s = await login(
+    await loadShell({
+      initialStorage: {
+        startMenuStyle: "classic",
+        startMenuOptions: JSON.stringify({
+          classicExpand: { documents: true },
+        }),
+      },
+    }),
+  );
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.MY_DOCUMENTS, "Łódź.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "Ósmy.txt", { content: "" });
+  s.document.getElementById("start-button").click();
+  s.document.querySelectorAll("#start-menu-places .sm-place")[0].click();
+  s.document
+    .querySelectorAll(".start-program-flyout .start-program-folder")[0]
+    .click();
+  const panel = panels(s)[1];
+  const focused = () => s.document.activeElement.textContent;
+  const first = () => panel.querySelector("button").focus();
+  first();
+  for (const event of pressAltGr(s.window, panel, "ł", "KeyL")) {
+    expect(event.defaultPrevented).toBeTrue();
+    expect(focused()).toContain("Łódź.txt");
+  }
+  first();
+  key(s, panel, "o");
+  expect(focused()).not.toContain("Ósmy.txt");
+  key(s, panel, "Ó");
+  expect(focused()).toContain("Ósmy.txt");
+});
+
 test("recent documents has an empty state and Internet Games can be launched from All Programs", async () => {
   const s = await login(await loadShell());
   clickStartAction(s, "recent");
@@ -121,7 +168,7 @@ test("Run Browse uses the selected file path and cancel preserves the command", 
   });
   clickStartAction(s, "run");
   const run = s.document.querySelector(".run-dialog"),
-    input = run.querySelector("#run-command");
+    input = run.querySelector(".run-command");
   input.value = "keep this command";
   run.querySelector('[data-action="browse"]').click();
   await flushShell();
@@ -140,7 +187,10 @@ test("Run Browse uses the selected file path and cancel preserves the command", 
   );
   browse.querySelector('[data-action="accept"]').click();
   await flushShell();
-  expect(input.value).toBe(fs.getPath(file.id));
+  // Like XP, Browse puts quotes around a path with a space, and Run opens
+  // the quoted path.
+  expect(fs.getPath(file.id)).toContain(" ");
+  expect(input.value).toBe(`"${fs.getPath(file.id)}"`);
   run.querySelector('[data-action="run"]').click();
   await flushShell();
   expect(s.document.querySelector(".notepad-editor").value).toBe(

@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 const dialogs = (s) => [...s.document.querySelectorAll(".xp-dialog")];
 const current = (s) => dialogs(s).at(-1);
@@ -39,7 +40,7 @@ test("only the newest dialog is active", async () => {
   key(s, "Enter");
   await inner;
   expect(first.classList.contains("active")).toBeTrue();
-  key(s, "Escape");
+  key(s, "n");
   expect(await outer).toBeFalse();
 });
 
@@ -149,10 +150,33 @@ test("file dialogs browse with places, back, the folder list, and file types", a
     .click();
   expect(folder.dataset.value).toBe(fs.DESKTOP);
 
+  const typed = dialog.querySelector("#dlg-file-name").value;
   dialog.querySelector('[data-action="new-folder"]').click();
+  await flushShell();
+  expect(dialog.querySelector(".dlg-file-rename").value).toBe("New Folder");
+  expect(dialog.querySelector("#dlg-file-name").value).toBe(typed);
+  // F2 in the rename box reaches the item too. Like Explorer, the open box
+  // stays with its text.
+  const errors = [];
+  const onError = (event) => errors.push(event.error);
+  s.window.addEventListener("error", onError);
+  const renameBox = dialog.querySelector(".dlg-file-rename");
+  renameBox.value = "Typed";
+  renameBox.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "F2",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  s.window.removeEventListener("error", onError);
+  expect(errors).toEqual([]);
+  expect(dialog.querySelectorAll(".dlg-file-rename")).toHaveLength(1);
+  expect(dialog.querySelector(".dlg-file-rename") === renameBox).toBeTrue();
+  expect(renameBox.value).toBe("Typed");
+  // The first Esc ends the rename box, and the second closes the dialog.
+  key(s, "Escape");
   expect(names()).toContain("New Folder");
-  expect(dialog.querySelector("#dlg-file-name").value).toBe("New Folder");
-
   key(s, "Escape");
   expect(await save).toBeNull();
 
@@ -484,7 +508,11 @@ test("Views switches between XP's five list views", async () => {
     [...note.querySelectorAll(".dlg-file-item-detail")].map(
       (cell) => cell.textContent,
     ),
-  ).toEqual(["1 KB", "TXT File", expect.stringMatching(/\d/)]);
+  ).toEqual([
+    "1 KB",
+    "Text Document",
+    expect.stringMatching(/^\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{2} [AP]M$/),
+  ]);
   const music = [...list.querySelectorAll(".dlg-file-item")].find((item) =>
     item.textContent.startsWith("My Music"),
   );
@@ -516,6 +544,21 @@ test("Views switches between XP's five list views", async () => {
   key(s, "o");
   expect(menu.hidden).toBeFalse();
   expect(current(s)).toBe(dialog);
+  // Tab does nothing in the menu, like XP.
+  const menuKey = s.document.activeElement;
+  key(s, "Tab");
+  keyOn(s, menuKey, "Tab", { shiftKey: true });
+  expect(menu.hidden).toBeFalse();
+  expect(s.document.activeElement === menuKey).toBeTrue();
+  // AltGr types "ś" on the S key of a Polish keyboard. It chooses no view.
+  pressAltGr(s.window, menuKey, "ś", "KeyS");
+  expect(menu.hidden).toBeFalse();
+  expect(list.dataset.view).toBe("icons");
+  // Alt and a letter closes the menu and chooses no view.
+  keyOn(s, menuKey, "s", { altKey: true, code: "KeyS" });
+  expect(menu.hidden).toBeTrue();
+  expect(list.dataset.view).toBe("icons");
+  views.click();
   key(s, "S");
   expect(list.dataset.view).toBe("tiles");
   expect(menu.hidden).toBeTrue();
@@ -748,10 +791,23 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
       (element) =>
         element.querySelector(".dlg-file-item-name").textContent === name,
     );
-  const picture = (name) => item(name).querySelector(".dlg-thumbnail-picture");
+  const picture = (name) => item(name).querySelector(".thumbnail-picture");
   expect(picture("art.png").getAttribute("src")).toBe(art);
   expect(picture("notes.txt")).toBeNull();
   expect(picture("Sample Pictures")).toBeNull();
+  // A folder shows its first 4 pictures on a large folder, like XP.
+  expect(
+    [
+      ...item("Sample Pictures").querySelectorAll(
+        ".folder-thumbnail-pictures img",
+      ),
+    ].map((image) => image.getAttribute("src")),
+  ).toEqual([
+    "/assets/xp/sample-pictures/blue-hills.jpg",
+    "/assets/xp/sample-pictures/sunset.jpg",
+    "/assets/xp/sample-pictures/water-lilies.jpg",
+    "/assets/xp/sample-pictures/winter.jpg",
+  ]);
   // A picture the browser cannot draw shows its icon instead.
   picture("broken.png").dispatchEvent(new s.window.Event("error"));
   expect(picture("broken.png")).toBeNull();
@@ -759,7 +815,7 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
   // The sample pictures show the pictures from the XP CD.
   item("Sample Pictures").dispatchEvent(new s.window.MouseEvent("dblclick"));
   expect(
-    [...list.querySelectorAll(".dlg-thumbnail-picture")].map((image) =>
+    [...list.querySelectorAll(".thumbnail-picture")].map((image) =>
       image.getAttribute("src"),
     ),
   ).toEqual([
@@ -773,7 +829,7 @@ test("Thumbnails view shows pictures, and other items keep their icons", async (
   [...current(s).querySelectorAll(".dlg-file-views-menu button")]
     .find((button) => button.textContent.includes("Icons"))
     .click();
-  expect(list.querySelector(".dlg-thumbnail-picture")).toBeNull();
+  expect(list.querySelector(".thumbnail-picture")).toBeNull();
   key(s, "Escape");
   expect(await open).toBeNull();
 });
@@ -857,7 +913,10 @@ test("Open and Save open a folder whose name is typed, like XP", async () => {
     expect(dialog.querySelector(".dlg-file-folder").textContent).toContain(
       "My Pictures",
     );
-    expect(name.value).toBe("");
+    // Like XP, the typed text stays in the box, all selected.
+    expect(name.value).toBe("my pictures");
+    expect(name.selectionStart).toBe(0);
+    expect(name.selectionEnd).toBe("my pictures".length);
     expect(s.document.activeElement).toBe(name);
     // Back returns to the folder the dialog came from.
     dialog.querySelector('[data-action="back"]').click();
@@ -867,4 +926,625 @@ test("Open and Save open a folder whose name is typed, like XP", async () => {
     key(s, "Escape");
     expect(await result).toBeNull();
   }
+});
+
+test("Save As and Open take patterns, paths and the file system's name rules, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const sub = fs.createFolder(fs.MY_DOCUMENTS, "Sub");
+  const inside = fs.createFile(sub.id, "inside.txt", { content: "" });
+  // Like XP, "*.*" also shows a file with no extension.
+  fs.createFile(sub.id, "noext", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "notes.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "photo.bmp", { content: "" });
+  const names = (dialog) =>
+    [...dialog.querySelectorAll(".dlg-file-item")].map((item) =>
+      item.textContent.trim(),
+    );
+  const folderOf = (dialog) =>
+    dialog.querySelector(".dlg-file-folder").textContent;
+  const submit = (dialog, label, typed) => {
+    dialog.querySelector("#dlg-file-name").value = typed;
+    [...dialog.querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === label)
+      .click();
+  };
+  // A warning keeps the dialog open. OK closes the warning.
+  const warning = async (dialog) => {
+    await flushShell();
+    const box = current(s);
+    expect(box === dialog).toBeFalse();
+    const text = box.textContent;
+    box.querySelector('[data-action="ok"]').click();
+    await flushShell();
+    expect(current(s) === dialog).toBeTrue();
+    return text;
+  };
+
+  for (const [show, label] of [
+    [
+      () =>
+        d.saveFile({
+          startFolder: fs.MY_DOCUMENTS,
+          defaultExtension: ".txt",
+          filter: [".txt"],
+        }),
+      "Save",
+    ],
+    [
+      () => d.openFile({ startFolder: fs.MY_DOCUMENTS, filter: [".txt"] }),
+      "Open",
+    ],
+  ]) {
+    show();
+    const dialog = current(s);
+    const box = dialog.querySelector("#dlg-file-name");
+    // A pattern shows only the files that match it, and stays in the box.
+    submit(dialog, label, "note?.txt");
+    await flushShell();
+    expect(current(s) === dialog).toBeTrue();
+    expect(names(dialog)).toEqual([
+      "My Music",
+      "My Pictures",
+      "Sub",
+      "notes.txt",
+    ]);
+    expect(box.value).toBe("note?.txt");
+    submit(dialog, label, "*.bmp");
+    await flushShell();
+    expect(names(dialog)).toEqual([
+      "My Music",
+      "My Pictures",
+      "Sub",
+      "photo.bmp",
+    ]);
+    // A pattern with a folder opens that folder with the pattern.
+    submit(dialog, label, "sub\\*.*");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Sub");
+    expect(names(dialog)).toEqual(["inside.txt", "noext"]);
+    expect(box.value).toBe("*.*");
+    // Like XP, the pattern of a type chooses that type, in any case.
+    const type = dialog.querySelector(".dlg-file-type");
+    expect(type.value).toBe("");
+    submit(dialog, label, "*.TXT");
+    await flushShell();
+    expect(type.value).toBe(".txt");
+    expect(names(dialog)).toEqual(["inside.txt"]);
+    expect(box.value).toBe("*.TXT");
+    expect([box.selectionStart, box.selectionEnd]).toEqual([0, 5]);
+    // A pattern that is not a type keeps the type. A ".*" at the end also
+    // takes a name with no extension.
+    submit(dialog, label, "*.bak");
+    await flushShell();
+    expect(type.value).toBe(".txt");
+    expect(names(dialog)).toEqual([]);
+    submit(dialog, label, "n*.*");
+    await flushShell();
+    expect(type.value).toBe(".txt");
+    expect(names(dialog)).toEqual(["noext"]);
+    // A new file type ends the pattern.
+    type.value = "";
+    type.dispatchEvent(new s.window.Event("change"));
+    expect(names(dialog)).toEqual(["inside.txt", "noext"]);
+    // "..", "\" at the end, "C:" and "\" at the start move between folders.
+    submit(dialog, label, "..");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("My Documents");
+    expect(names(dialog)).toContain("photo.bmp");
+    expect(box.value).toBe("..");
+    submit(dialog, label, "Sub\\");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Sub");
+    submit(dialog, label, "C:");
+    await flushShell();
+    expect(folderOf(dialog)).toMatch(/C:/);
+    submit(dialog, label, "\\Documents and Settings");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Documents and Settings");
+    dialog.querySelector('[data-action="back"]').click();
+    dialog.querySelector('[data-action="back"]').click();
+    dialog.querySelector('[data-action="back"]').click();
+    expect(folderOf(dialog)).toBe("My Documents");
+    // A path that is not there, or that goes through a file, is refused.
+    submit(dialog, label, "Nope\\x");
+    expect(await warning(dialog)).toContain(
+      "Nope\\x\nPath does not exist.\nCheck the path and try again.",
+    );
+    submit(dialog, label, "notes.txt\\x");
+    expect(await warning(dialog)).toContain("Path does not exist.");
+    // The file system's name rules, before the dialog closes.
+    submit(dialog, label, "con");
+    expect(await warning(dialog)).toContain(
+      "This file name is reserved for use by Windows.",
+    );
+    submit(dialog, label, "bad<name");
+    expect(await warning(dialog)).toContain("The above file name is invalid.");
+    // ".." at the top stays at the top.
+    submit(dialog, label, "..\\..\\..\\..\\..");
+    await flushShell();
+    const top = folderOf(dialog);
+    submit(dialog, label, "..");
+    await flushShell();
+    expect(folderOf(dialog)).toBe(top);
+    key(s, "Escape");
+  }
+
+  // A path names a file in another folder.
+  let result = d.saveFile({
+    startFolder: fs.MY_DOCUMENTS,
+    defaultExtension: ".txt",
+  });
+  submit(current(s), "Save", "Sub\\made");
+  expect(await result).toEqual({
+    parentId: sub.id,
+    name: "made.txt",
+    existingId: null,
+  });
+  // A "\\" at the start is the top of the drive.
+  result = d.saveFile({
+    startFolder: fs.MY_DOCUMENTS,
+    defaultExtension: ".txt",
+  });
+  submit(current(s), "Save", "\\top");
+  expect(await result).toEqual({
+    parentId: fs.resolvePath("C:\\"),
+    name: "top.txt",
+    existingId: null,
+  });
+  // Like Windows, it is the drive of the open folder.
+  const data = fs.createFolder(fs.DRIVE_D, "Data");
+  result = d.saveFile({ startFolder: data.id, defaultExtension: ".txt" });
+  submit(current(s), "Save", "\\top");
+  expect(await result).toEqual({
+    parentId: fs.resolvePath("D:\\"),
+    name: "top.txt",
+    existingId: null,
+  });
+  result = d.openFile({ startFolder: fs.MY_DOCUMENTS });
+  submit(current(s), "Open", "./sub/inside.txt");
+  expect((await result).id).toBe(inside.id);
+});
+
+test("Ctrl+A does not select all in a one-line box of a dialog, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const ctrlA = (element, init = { ctrlKey: true }) => {
+    const event = new s.window.KeyboardEvent("keydown", {
+      key: "a",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const result = d.openFile({ startFolder: s.window.VirtualFS.MY_DOCUMENTS });
+  const dialog = current(s);
+  const name = dialog.querySelector("#dlg-file-name");
+  name.focus();
+  expect(ctrlA(name)).toBeTrue();
+  expect(ctrlA(name, { metaKey: true })).toBeTrue();
+  expect(ctrlA(name, { key: "A", ctrlKey: true, shiftKey: true })).toBeTrue();
+  // Other keys, and Ctrl+Alt+A, stay with the box.
+  expect(ctrlA(name, {})).toBeFalse();
+  expect(ctrlA(name, { ctrlKey: true, altKey: true })).toBeFalse();
+  key(s, "Escape");
+  expect(await result).toBeNull();
+  // Each dialog's one-line box acts the same. A multi-line box does not.
+  const plain = d.createDialog({ title: "Run" });
+  const box = s.document.createElement("input");
+  const area = s.document.createElement("textarea");
+  plain.body.append(box, area);
+  box.focus();
+  expect(ctrlA(box)).toBeTrue();
+  area.focus();
+  expect(ctrlA(area)).toBeFalse();
+  plain.close();
+});
+
+test("a one-line box keeps only the first line of pasted text, like XP", async () => {
+  const s = await login(await loadShell());
+  const paste = (element, text) => {
+    const clipboardData = new s.window.DataTransfer();
+    clipboardData.setData("text/plain", text);
+    const event = new s.window.ClipboardEvent("paste", {
+      clipboardData,
+      bubbles: true,
+      cancelable: true,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const result = s.window.XPDialogs.openFile({
+    startFolder: s.window.VirtualFS.MY_DOCUMENTS,
+  });
+  const name = current(s).querySelector("#dlg-file-name");
+  for (const [text, value] of [
+    ["one\ntwo", "aonec"],
+    ["one\r\ntwo\r\n", "aonec"],
+    ["one\rtwo", "aonec"],
+  ]) {
+    name.value = "abc";
+    name.setSelectionRange(1, 2);
+    expect(paste(name, text)).toBeTrue();
+    expect(name.value).toBe(value);
+    expect(name.selectionStart).toBe(4);
+  }
+  // An empty first line replaces the selection, and puts in nothing at
+  // the caret.
+  name.value = "abc";
+  name.setSelectionRange(1, 2);
+  expect(paste(name, "\ntwo")).toBeTrue();
+  expect(name.value).toBe("ac");
+  name.setSelectionRange(1, 1);
+  expect(paste(name, "\ntwo")).toBeTrue();
+  expect(name.value).toBe("ac");
+  // One line is the browser's own paste.
+  expect(paste(name, "one")).toBeFalse();
+  key(s, "Escape");
+  expect(await result).toBeNull();
+  // Each one-line box acts the same. Other boxes keep the browser's paste.
+  const box = s.document.createElement("input");
+  const area = s.document.createElement("textarea");
+  const check = s.document.createElement("input");
+  check.type = "checkbox";
+  const locked = s.document.createElement("input");
+  locked.readOnly = true;
+  s.document.body.append(box, area, check, locked);
+  expect(paste(box, "x\ny")).toBeTrue();
+  expect(box.value).toBe("x");
+  for (const other of [area, check, locked])
+    expect(paste(other, "x\ny")).toBeFalse();
+  box.disabled = true;
+  expect(paste(box, "x\ny")).toBeFalse();
+  // A paste with no text does nothing.
+  box.disabled = false;
+  const empty = new s.window.ClipboardEvent("paste", {
+    bubbles: true,
+    cancelable: true,
+  });
+  box.dispatchEvent(empty);
+  expect(empty.defaultPrevented).toBeFalse();
+  expect(box.value).toBe("x");
+  // A number box has no caret position. It takes the first line at its
+  // own selection, with the browser's edit, and an empty first line puts
+  // in nothing. A browser without that edit gets the first line.
+  const number = s.document.createElement("input");
+  number.type = "number";
+  s.document.body.append(number);
+  expect(paste(number, "45\n67")).toBeTrue();
+  expect(number.value).toBe("45");
+  const edits = [];
+  s.document.execCommand = (command, ui, text) => {
+    edits.push([command, text]);
+    return true;
+  };
+  try {
+    expect(paste(number, "8\n9")).toBeTrue();
+    expect(paste(number, "\n9")).toBeTrue();
+  } finally {
+    delete s.document.execCommand;
+  }
+  expect(edits).toEqual([["insertText", "8"]]);
+  expect(number.value).toBe("45");
+});
+
+test("Create New Folder makes a folder with a rename box, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  fs.createFolder(fs.MY_DOCUMENTS, "Taken");
+  const result = d.saveFile({ startFolder: fs.MY_DOCUMENTS });
+  const dialog = current(s);
+  const name = dialog.querySelector("#dlg-file-name");
+  const button = dialog.querySelector('[data-action="new-folder"]');
+  const box = () => dialog.querySelector(".dlg-file-rename");
+  const folders = () =>
+    fs.getChildren(fs.MY_DOCUMENTS).map((node) => node.name);
+  name.value = "typed";
+  expect(button.disabled).toBeFalse();
+  button.click();
+  await flushShell();
+  // The box has the new name, all selected. File name keeps its text.
+  expect(box().value).toBe("New Folder");
+  expect(s.document.activeElement === box()).toBeTrue();
+  expect([box().selectionStart, box().selectionEnd]).toEqual([0, 10]);
+  expect(
+    box().closest(".dlg-file-item").classList.contains("selected"),
+  ).toBeTrue();
+  expect(name.value).toBe("typed");
+  // Clicks in the box stay in the box.
+  box().click();
+  box().dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  expect(current(s) === dialog).toBeTrue();
+  expect(box()).not.toBeNull();
+  // Other keys, and the keys of an input method, stay in the box.
+  for (const init of [{ key: "a" }, { key: "Enter", isComposing: true }])
+    box().dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+  expect(box()).not.toBeNull();
+  // Enter gives the name and does not press Save. The blur of the box
+  // that goes away does nothing more.
+  const named = box();
+  named.value = "nf. ";
+  key(s, "Enter");
+  await flushShell();
+  named.dispatchEvent(new s.window.FocusEvent("blur"));
+  await flushShell();
+  expect(current(s) === dialog).toBeTrue();
+  expect(box()).toBeNull();
+  expect(folders()).toContain("nf");
+  expect(name.value).toBe("typed");
+  expect(
+    s.document.activeElement.querySelector(".dlg-file-item-name").textContent,
+  ).toBe("nf");
+  // A name in use shows Explorer's error, and the box opens again with the
+  // old name.
+  button.click();
+  await flushShell();
+  box().value = "Taken";
+  key(s, "Enter");
+  await flushShell();
+  const error = current(s);
+  expect(error === dialog).toBeFalse();
+  expect(error.textContent).toContain("Cannot rename New Folder");
+  error.querySelector('[data-action="ok"]').click();
+  await flushShell();
+  expect(box().value).toBe("New Folder");
+  // A box whose folder went out of the list during the error opens no
+  // more.
+  box().value = "Taken";
+  key(s, "Enter");
+  await flushShell();
+  const second = current(s);
+  dialog.querySelector('[data-action="up"]').click();
+  second.querySelector('[data-action="ok"]').click();
+  await flushShell();
+  expect(box()).toBeNull();
+  dialog.querySelector('[data-action="back"]').click();
+  expect(folders()).toContain("New Folder");
+  button.click();
+  await flushShell();
+  expect(box().value).toBe("New Folder (2)");
+  // Esc keeps the name and does not close the dialog.
+  key(s, "Escape");
+  await flushShell();
+  expect(current(s) === dialog).toBeTrue();
+  expect(box()).toBeNull();
+  expect(folders()).toContain("New Folder");
+  // A click elsewhere gives the name and leaves the keys there.
+  button.click();
+  await flushShell();
+  expect(box().value).toBe("New Folder (3)");
+  box().value = "elsewhere";
+  name.focus();
+  await flushShell();
+  expect(folders()).toContain("elsewhere");
+  expect(s.document.activeElement === name).toBeTrue();
+  // An empty name keeps the old name.
+  button.click();
+  await flushShell();
+  box().value = " ";
+  key(s, "Enter");
+  await flushShell();
+  expect(folders()).toContain("New Folder (3)");
+  // Like XP, My Computer takes no new folder.
+  [...dialog.querySelectorAll(".dlg-file-place")]
+    .find((place) => place.textContent === "My Computer")
+    .click();
+  expect(dialog.querySelector(".dlg-file-folder").textContent).toBe(
+    "My Computer",
+  );
+  expect(button.disabled).toBeTrue();
+  key(s, "Escape");
+  expect(await result).toBeNull();
+});
+
+test("Create New Folder waits for the file system and shows its error", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const create = fs.createFolder;
+  // Like the stored file system, the folder comes later.
+  let release;
+  fs.createFolder = (...args) =>
+    new Promise((resolve) => {
+      release = () => resolve(create(...args));
+    });
+  const result = d.saveFile({ startFolder: fs.MY_DOCUMENTS });
+  const dialog = current(s);
+  dialog.querySelector('[data-action="new-folder"]').click();
+  await flushShell();
+  expect(dialog.querySelector(".dlg-file-rename")).toBeNull();
+  release();
+  await flushShell();
+  expect(dialog.querySelector(".dlg-file-rename").value).toBe("New Folder");
+  key(s, "Escape");
+  // A dialog in another folder, or a closed dialog, gets no box.
+  dialog.querySelector('[data-action="new-folder"]').click();
+  await flushShell();
+  dialog.querySelector('[data-action="up"]').click();
+  release();
+  await flushShell();
+  expect(dialog.querySelector(".dlg-file-rename")).toBeNull();
+  dialog.querySelector('[data-action="new-folder"]').click();
+  await flushShell();
+  key(s, "Escape");
+  expect(await result).toBeNull();
+  release();
+  await flushShell();
+  expect(dialog.querySelector(".dlg-file-rename")).toBeNull();
+  fs.createFolder = create;
+});
+
+// The XP SP3 VM: a rename asks first when the old extension is a type that
+// XP knows (it has a program), and the extension changes or goes away.
+test("the extension question follows XP's registered file types", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const asks = async (name, newName) => {
+    const node = fs.createFile(fs.MY_DOCUMENTS, name, { content: "" });
+    const answer = d.confirmExtensionChange(node, newName);
+    await flushShell();
+    const asked = dialogs(s).length > 0;
+    if (asked) key(s, "y");
+    expect(await answer).toBeTrue();
+    fs.destroy(node.id);
+    return asked;
+  };
+  for (const [name, newName, asked] of [
+    ["a.xyz", "a.txt", false],
+    ["a.txt", "a.qqz", true],
+    ["k.qqq", "k.zzz", false],
+    ["b.txt", "b", true],
+    ["noext", "noext.txt", false],
+    ["song.mp3", "song.txt", true],
+    ["setup.ini", "setup.old", true],
+    ["page.HTM", "page.txt", true],
+    ["notes.log", "notes.LOG", false],
+  ])
+    expect(await asks(name, newName)).toBe(asked);
+});
+
+test("F2 renames a file in the Open and Save As lists, with Explorer's rules", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.MY_DOCUMENTS, "b.txt", { content: "" });
+  const other = fs.createFile(fs.MY_DOCUMENTS, "c.txt", { content: "" });
+  const result = d.saveFile({ startFolder: fs.MY_DOCUMENTS, filter: null });
+  const dialog = current(s);
+  const name = dialog.querySelector("#dlg-file-name");
+  const item = () =>
+    dialog.querySelector(`.dlg-file-item[data-node-id="${file.id}"]`);
+  const box = () => dialog.querySelector(".dlg-file-rename");
+  const press = (target, init) => {
+    const event = new s.window.KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  item().click();
+  expect(name.value).toBe("b.txt");
+  // F2 with a modifier key does nothing.
+  for (const modifier of ["altKey", "ctrlKey", "metaKey", "shiftKey"])
+    expect(press(item(), { key: "F2", [modifier]: true })).toBeFalse();
+  expect(box()).toBeNull();
+  expect(press(item(), { key: "F2" })).toBeTrue();
+  expect(box().value).toBe("b.txt");
+  // A new extension asks first, and the box keeps the new name meanwhile.
+  box().value = "bb.qqz";
+  key(s, "Enter");
+  await flushShell();
+  expect(current(s).querySelector(".dlg-text").textContent).toBe(
+    "If you change a file name extension, the file may become unusable.\n\nAre you sure you want to change it?",
+  );
+  expect(dialog.querySelector(".dlg-file-rename").value).toBe("bb.qqz");
+  // No opens the box again with the old name.
+  key(s, "n");
+  await flushShell();
+  expect(current(s) === dialog).toBeTrue();
+  expect(box().value).toBe("b.txt");
+  // Yes renames. Like XP, the File name box keeps its text.
+  box().value = "bb.qqz";
+  key(s, "Enter");
+  await flushShell();
+  key(s, "y");
+  await flushShell();
+  expect(fs.getNode(file.id).name).toBe("bb.qqz");
+  expect(box()).toBeNull();
+  expect(name.value).toBe("b.txt");
+  // A question that comes back after the dialog closed opens no box.
+  press(dialog.querySelector(`.dlg-file-item[data-node-id="${other.id}"]`), {
+    key: "F2",
+  });
+  box().value = "c.doc";
+  key(s, "Enter");
+  await flushShell();
+  const question = current(s);
+  dialog.querySelector('[data-action="cancel"]').click();
+  question.querySelector('[data-action="no"]').click();
+  await flushShell();
+  expect(await result).toBeNull();
+  expect(fs.getNode(other.id).name).toBe("c.txt");
+  expect(dialog.querySelector(".dlg-file-rename")).toBeNull();
+
+  // A protected folder, such as My Music, keeps its name.
+  const open = d.openFile({ startFolder: fs.MY_DOCUMENTS });
+  const music = current(s).querySelector(
+    `.dlg-file-item[data-node-id="${fs.findChild(fs.MY_DOCUMENTS, "My Music").id}"]`,
+  );
+  expect(press(music, { key: "F2" })).toBeFalse();
+  expect(current(s).querySelector(".dlg-file-rename")).toBeNull();
+  key(s, "Escape");
+  expect(await open).toBeNull();
+});
+
+// Like XP's MessageBox, a box with no Cancel answer has a gray close
+// button, and Esc and Alt+F4 do nothing. XP's own questions, such as
+// Confirm File Delete, close with Esc as No.
+test("a Yes and No message box has a gray close button, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const keyWith = (name, init) =>
+    s.document.activeElement.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        key: name,
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+  const closeButton = () => current(s).querySelector(".close-btn");
+  const pending = d.confirm("Go on?");
+  await flushShell();
+  const box = current(s);
+  expect(closeButton().disabled).toBeTrue();
+  key(s, "Escape");
+  keyWith("F4", { altKey: true });
+  closeButton().click();
+  await flushShell();
+  expect(box.isConnected).toBeTrue();
+  key(s, "n");
+  expect(await pending).toBeFalse();
+  // Yes, No and Cancel, OK alone, and a one-button box close with Esc.
+  for (const [buttons, answer] of [
+    [d.BUTTON_SETS.yesNoCancel, "cancel"],
+    [d.BUTTON_SETS.ok, "ok"],
+    [d.BUTTON_SETS.yesNoClosable, "no"],
+  ]) {
+    const shown = d.message({ text: "?", buttons });
+    await flushShell();
+    expect(closeButton().disabled).toBeFalse();
+    key(s, "Escape");
+    expect(await shown).toBe(answer);
+  }
+  // Alt+F4 closes a box that can close.
+  const shown = d.message({ text: "?", buttons: d.BUTTON_SETS.okCancel });
+  await flushShell();
+  keyWith("F4", { altKey: true });
+  expect(await shown).toBe("cancel");
+  // The Save As question about a file that exists has the dialog's title.
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.MY_DOCUMENTS, "here.txt", { content: "" });
+  const save = d.saveFile({ title: "Save As", startFolder: fs.MY_DOCUMENTS });
+  current(s).querySelector("#dlg-file-name").value = "here.txt";
+  current(s).querySelector('[data-action="accept"]').click();
+  await flushShell();
+  expect(current(s).getAttribute("aria-label")).toBe("Save As");
+  expect(closeButton().disabled).toBeTrue();
+  key(s, "y");
+  expect((await save).name).toBe("here.txt");
 });

@@ -18,7 +18,7 @@ const dialogText = (s) =>
 const runCommand = async (s, command) => {
   clickStartAction(s, "run");
   const dialog = s.document.querySelector(".run-dialog");
-  dialog.querySelector("#run-command").value = command;
+  dialog.querySelector(".run-command").value = command;
   dialog.querySelector('[data-action="run"]').click();
   await settle();
 };
@@ -32,6 +32,78 @@ const overrideRegistry = (s, overrides) => {
     values: () => registry.values(),
   };
 };
+
+test("a folder opens in Explorer while Explorer's code still loads", async () => {
+  const s = await login(await loadShell({ preloadApplications: false }));
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Projects");
+  expect(() => fs.open(folder.id)).not.toThrow();
+  await settle();
+  const win = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  expect(win?.querySelector(".title-text")?.textContent).toBe("Projects");
+  // Like XP, the new window starts on the folder, so Back is off.
+  const back = () =>
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] [data-explorer-action="back"]',
+    );
+  expect(back().disabled).toBeTrue();
+  // An open window goes to the folder, and Back goes to where it was.
+  const other = fs.createFolder(fs.MY_DOCUMENTS, "Other");
+  fs.open(other.id);
+  await settle();
+  expect(win.querySelector(".title-text").textContent).toBe("Other");
+  expect(back().disabled).toBeFalse();
+  win.querySelector(".close-btn").click();
+  await settle();
+  // When the code is already loaded, the new window starts on the folder
+  // too.
+  fs.open(folder.id);
+  await settle();
+  expect(
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .title-text',
+    ).textContent,
+  ).toBe("Projects");
+  expect(back().disabled).toBeTrue();
+  s.document
+    .querySelector('.xp-window[data-game="__my-documents"] .close-btn')
+    .click();
+  await settle();
+  // A folder in the Recycle Bin opens no view of the bin: the window shows
+  // My Documents.
+  fs.remove(other.id);
+  fs.open(other.id);
+  await settle();
+  expect(
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .title-text',
+    ).textContent,
+  ).toBe("My Documents");
+  s.document
+    .querySelector('.xp-window[data-game="__my-documents"] .close-btn')
+    .click();
+  await settle();
+
+  // A window that fails to load leaves nothing to show the folder in.
+  win.querySelector(".close-btn").click();
+  await settle();
+  overrideRegistry(s, {
+    "__my-documents": {
+      kind: "system",
+      title: "My Documents",
+      loaded: null,
+      load: () => Promise.reject(new Error("offline")),
+    },
+  });
+  expect(() => fs.open(folder.id)).not.toThrow();
+  await settle();
+  expect(dialogText(s)).toContain("offline");
+  expect(
+    s.document.querySelector('.xp-window[data-game="__my-documents"]') === null,
+  ).toBeTrue();
+});
 
 test("system windows load lazily and report load failures", async () => {
   const s = await login(await loadShell({ preloadApplications: false }));
@@ -132,14 +204,19 @@ test("programs launch other applications, save files and set the wallpaper", asy
   await runCommand(s, "notepad");
 
   expect(context.launchApplication("missing")).toBeFalse();
-  expect(context.launchApplication("__my-documents")).toBeTrue();
+  // It gives the window, or a promise of the window while it loads.
+  const launched = await context.launchApplication("__my-documents");
   await settle();
+  expect(launched.gameId).toBe("__my-documents");
   expect(
-    !!s.document.querySelector('.xp-window[data-game="__my-documents"]'),
+    launched.el ===
+      s.document.querySelector('.xp-window[data-game="__my-documents"]'),
   ).toBeTrue();
+  // A window that is open already is the one that it gives.
+  expect(context.launchApplication("__my-documents") === launched).toBeTrue();
 
   const fs = s.window.VirtualFS;
-  const file = context.createFile(fs.MY_DOCUMENTS, "saved.txt", "old");
+  const file = context.writeFile(fs.MY_DOCUMENTS, "saved.txt", "old");
   expect(fs.getContent(file.id)).toBe("old");
   context.setFileContent(file.id, "new");
   expect(fs.getContent(file.id)).toBe("new");
@@ -147,11 +224,11 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(context.folderOf("missing")).toBeNull();
   // A deleted picture's folder is in the Recycle Bin. Paint never saves there.
   const folder = fs.createFolder(fs.MY_PICTURES, "Trip");
-  const photo = context.createFile(folder.id, "beach.png", "");
+  const photo = context.writeFile(folder.id, "beach.png", "");
   fs.remove(folder.id);
   expect(context.folderOf(photo.id)).toBeNull();
-  expect(() => context.createFile(folder.id, "late.png", "")).toThrow(
-    /cannot accept new items/,
+  expect(() => context.writeFile(folder.id, "late.png", "")).toThrow(
+    /You cannot save in the folder you specified/,
   );
   // Paint reads pictures through the shell, sample pictures included.
   expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(

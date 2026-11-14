@@ -46,7 +46,7 @@
 
   const subscribe = (listener) => {
     if (typeof listener !== "function") {
-      throw new Error("FileOperations: listener must be a function");
+      throw new Error("A listener must be a function.");
     }
     listeners.add(listener);
     return () => listeners.delete(listener);
@@ -95,7 +95,7 @@
   const requireFolder = (id) => {
     const node = fs.getNode(id);
     if (!node || node.type !== "folder") {
-      throw new Error("FileOperations: destination must be a folder");
+      throw new Error("The destination is not a folder.");
     }
     return node;
   };
@@ -104,22 +104,26 @@
     const folder = requireFolder(id);
     // Nothing new goes in the Recycle Bin, or in a folder inside it.
     if (fs.isInRecycleBin(id) || id === fs.MY_COMPUTER) {
-      throw new Error("FileOperations: this location cannot accept new items");
+      throw new Error(
+        "You cannot save in the folder you specified. Please choose another location.",
+      );
     }
     return folder;
   };
 
   const getTopLevelIds = (ids) => {
     if (!Array.isArray(ids)) {
-      throw new Error("FileOperations: items must be an array");
+      throw new Error("The items must be an array.");
     }
     const uniqueIds = [...new Set(ids)];
     if (!uniqueIds.length) {
-      throw new Error("FileOperations: select at least one item");
+      throw new Error("Select at least one item.");
     }
     uniqueIds.forEach((id) => {
       if (!fs.getNode(id))
-        throw new Error(`FileOperations: item "${id}" was not found`);
+        throw new Error(
+          "Cannot find the file or folder. Make sure the path and file name are correct.",
+        );
     });
     return uniqueIds.filter(
       (id) =>
@@ -129,18 +133,19 @@
     );
   };
 
-  const assertMovableTo = (ids, destinationId) => {
+  // Paste asks with checkUse false: like XP, a folder in use leaves Paste
+  // on and shows its error only when the paste runs. Cut already refuses
+  // protected items. An item that is already in the destination does not
+  // move, so like XP nothing checks it.
+  const assertMovableTo = (ids, destinationId, checkUse = true) => {
     requireFolder(destinationId);
     ids.forEach((id) => {
       const node = fs.getNode(id);
-      if (node.protected) {
-        throw new Error(
-          `FileOperations: cannot move "${node.name}": access is denied`,
-        );
-      }
+      if (node.parent === destinationId) return;
+      if (checkUse) fs.checkChange("move", id);
       if (id === destinationId || fs.isDescendantOf(id, destinationId)) {
         throw new Error(
-          `FileOperations: cannot move "${node.name}" into itself`,
+          `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
         );
       }
     });
@@ -152,7 +157,7 @@
       const node = fs.getNode(id);
       if (id === destinationId || fs.isDescendantOf(id, destinationId)) {
         throw new Error(
-          `FileOperations: cannot copy "${node.name}" into itself`,
+          `Cannot copy ${node.name}: The destination folder is a subfolder of the source folder.`,
         );
       }
     });
@@ -171,9 +176,7 @@
     topLevelIds.forEach((id) => {
       const node = fs.getNode(id);
       if (node.protected) {
-        throw new Error(
-          `FileOperations: cannot cut "${node.name}": access is denied`,
-        );
+        throw new Error(`Cannot move ${node.name}: Access is denied.`);
       }
     });
     clipboard = newClipboard("cut", topLevelIds);
@@ -186,7 +189,7 @@
     try {
       assertWritableFolder(destinationId);
       const ids = getTopLevelIds(clipboard.ids);
-      if (clipboard.mode === "cut") assertMovableTo(ids, destinationId);
+      if (clipboard.mode === "cut") assertMovableTo(ids, destinationId, false);
       else assertCopyableTo(ids, destinationId);
       return true;
     } catch (error) {
@@ -206,9 +209,107 @@
       );
   };
 
-  // Resolver receives { source, existing, mode } and returns "replace",
-  // "rename", or "cancel" (sync or Promise). Replace is limited to files;
-  // folders always use the filesystem's deterministic copy naming.
+  // A move or copy never renames an item to make room, like XP. Each item
+  // whose name is in use is a question for resolveConflict, which gets
+  // { source, existing, mode } and returns (sync or Promise):
+  //   "replace" - a file replaces the file with its name. A folder joins
+  //               the folder with its name, and each of its items that
+  //               clashes there is a new question.
+  //   "skip"    - the item stays where it is.
+  //   "cancel"  - nothing changes. Any other answer, or no resolver, also
+  //               cancels.
+  // A file and a folder with the same name are an error. Every question
+  // comes before the first change, so Cancel leaves everything as it was.
+  // A copy into its own folder is never a question: it gets a "Copy of"
+  // name.
+  const cancelled = Symbol("cancelled");
+  // A file cannot replace a folder, and a folder cannot replace a file.
+  const nameInUseError = (name, existing, mode) =>
+    new Error(
+      `Cannot ${mode === "cut" ? "move" : "copy"} ${name}: A ${existing.type} with the name you specified already exists. Specify a different file name.`,
+    );
+  // name is the name that the item takes in the destination. An item in
+  // the Recycle Bin goes back with its original name. findExisting finds
+  // the item that has a name in a folder. A restore also finds the items
+  // that it puts there itself.
+  const planItem = async (
+    id,
+    destinationId,
+    mode,
+    resolveConflict,
+    name = fs.getNode(id).name,
+    findExisting = fs.findChild,
+  ) => {
+    const source = fs.getNode(id);
+    const existing = findExisting(destinationId, name);
+    if (!existing || existing.id === id)
+      return { id, destinationId, name, action: "put" };
+    if (existing.type !== source.type)
+      throw nameInUseError(name, existing, mode);
+    const decision = await Promise.resolve(
+      resolveConflict?.({ source, existing, mode }),
+    );
+    if (decision === "skip") return { id, action: "skip" };
+    if (decision !== "replace") throw cancelled;
+    if (source.type === "file")
+      return {
+        id,
+        destinationId,
+        name,
+        action: "replace",
+        existingId: existing.id,
+      };
+    const children = [];
+    for (const child of fs.getChildren(id))
+      children.push(
+        await planItem(
+          child.id,
+          existing.id,
+          mode,
+          resolveConflict,
+          child.name,
+          findExisting,
+        ),
+      );
+    return {
+      id,
+      destinationId,
+      name,
+      action: "merge",
+      existingId: existing.id,
+      children,
+    };
+  };
+  const putItem = (plan, mode) =>
+    mode === "cut"
+      ? fs.move(plan.id, plan.destinationId)
+      : fs.copy(plan.id, plan.destinationId);
+  // Runs a plan inside a transaction. It returns the item that now holds
+  // the name in the destination, or null for an item that stayed. A folder
+  // that a move empties into the folder with its name goes away. put moves
+  // or copies the item itself; the items inside a folder always use
+  // putItem.
+  const runPlan = (plan, mode, put = putItem) => {
+    if (plan.action === "skip") return null;
+    // The item with the name may have moved or changed while a question
+    // was open. Then the item goes in with its own name.
+    const existing = fs.findChild(plan.destinationId, plan.name);
+    const planned = existing?.id === plan.existingId ? existing : null;
+    if (plan.action === "merge" && planned) {
+      // An item deleted or moved out of the folder while a question was
+      // open stays where it is now.
+      const inside = new Set(fs.getChildren(plan.id).map((child) => child.id));
+      plan.children
+        .filter((child) => inside.has(child.id))
+        .forEach((child) => runPlan(child, mode));
+      if (mode === "cut" && !fs.getChildren(plan.id).length)
+        fs.destroy(plan.id);
+      return planned;
+    }
+    if (plan.action === "replace" && planned) fs.destroy(planned.id);
+    return put(plan, mode);
+  };
+
   // options.items ({ mode, ids, fromBin }) moves or copies those items
   // instead of the clipboard, and leaves the clipboard as it is, like a
   // drag. fromBin lists the items that were in the Recycle Bin at drag
@@ -220,10 +321,10 @@
   ) => {
     const usesClipboard = !options.items;
     const source = options.items || clipboard;
-    if (!source) throw new Error("FileOperations: clipboard is empty");
+    if (!source) throw new Error("The Clipboard is empty.");
     assertWritableFolder(destinationId);
     if (!Array.isArray(source.ids))
-      throw new Error("FileOperations: items must be an array");
+      throw new Error("The items must be an array.");
     // Items destroyed since the user picked them are skipped.
     const liveIds = source.ids.filter((id) => !!fs.getNode(id));
     if (source.ids.length && !liveIds.length)
@@ -249,16 +350,16 @@
       fromBin = fromBin.filter((id) => fs.isInRecycleBin(id));
     });
     try {
-      const decisions = [];
-      for (const conflict of getConflicts(ids, destinationId)) {
-        const response = await Promise.resolve(
-          resolveConflict?.({ ...conflict, mode }) || "rename",
-        );
-        const decision = ["replace", "rename", "cancel"].includes(response)
-          ? response
-          : "rename";
-        if (decision === "cancel") return { cancelled: true, results: [] };
-        decisions.push({ conflict, decision });
+      const plans = new Map();
+      try {
+        for (const id of ids)
+          plans.set(
+            id,
+            await planItem(id, destinationId, mode, resolveConflict),
+          );
+      } catch (error) {
+        if (error !== cancelled) throw error;
+        return { cancelled: true, results: [] };
       }
       // Items already moved leave a cut clipboard; the rest can be retried.
       // A new cut or copy made during the paste stays on the clipboard.
@@ -291,29 +392,10 @@
           reportProgress();
           continue;
         }
-        const planned = decisions.find(
-          ({ conflict }) => conflict.source.id === id,
-        );
         try {
           await fs.transaction(() => {
-            // Replace only the file that still holds the clashing name; it may
-            // have been renamed or moved while the conflict dialog was open.
-            const existing =
-              planned?.decision === "replace"
-                ? fs.findChild(destinationId, fs.getNode(id).name)
-                : null;
-            if (
-              existing?.id === planned?.conflict.existing.id &&
-              existing?.type === "file" &&
-              planned.conflict.source.type === "file"
-            ) {
-              fs.destroy(existing.id);
-            }
-            results.push(
-              mode === "cut"
-                ? fs.move(id, destinationId)
-                : fs.copy(id, destinationId),
-            );
+            const result = runPlan(plans.get(id), mode);
+            if (result) results.push(result);
           });
         } catch (error) {
           keepUnmovedOnClipboard(index);
@@ -345,6 +427,23 @@
     return fs.createFile(parentId, name, options);
   };
   const rename = (id, name) => fs.rename(id, name);
+  // Saves content in the file with that name in the folder, like the Save
+  // As of an XP program. It finds the file when it writes, not when the
+  // Replace question was open. So a file that moved away meanwhile keeps
+  // its content, and a file that took the name meanwhile gets the new
+  // content. The file keeps the case of its name, like Windows. Like XP,
+  // the Replace answer is the check: the file is written as it is now.
+  const writeFile = (parentId, name, content) =>
+    fs.transaction(() => {
+      assertWritableFolder(parentId);
+      const existing = fs.findChild(parentId, name);
+      if (!existing) return fs.createFile(parentId, name, { content });
+      if (existing.type !== "file")
+        throw new Error(
+          `Cannot create the ${name} file. A folder with the name you specified already exists. Specify a different file name.`,
+        );
+      return fs.setContent(existing.id, content);
+    });
 
   // Items dragged away leave a cut clipboard, so a later Paste never moves
   // them again.
@@ -357,12 +456,11 @@
   const removeToBin = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
-      const node = fs.getNode(id);
-      if (node.protected || fs.isInRecycleBin(id)) {
+      if (fs.isInRecycleBin(id))
         throw new Error(
-          `FileOperations: cannot delete "${node.name}" to the Recycle Bin`,
+          `Cannot delete ${fs.getNode(id).name}: Access is denied.`,
         );
-      }
+      fs.checkChange("delete", id);
     });
     topLevelIds.forEach((id) => fs.remove(id));
     return topLevelIds;
@@ -371,24 +469,26 @@
   const permanentlyDelete = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
-      const node = fs.getNode(id);
-      if (!fs.isInRecycleBin(id) || node.protected) {
+      if (!fs.isInRecycleBin(id))
         throw new Error(
-          `FileOperations: "${node.name}" is not deletable from the Recycle Bin`,
+          `Cannot delete ${fs.getNode(id).name}: Access is denied.`,
         );
-      }
+      fs.checkChange("delete", id);
     });
     topLevelIds.forEach((id) => fs.destroy(id));
     return topLevelIds;
   };
 
-  const restore = (ids) => {
+  // Restore puts items back where they were deleted from, like XP. An item
+  // whose name is in use there is a question for resolveConflict, with the
+  // answers of pasteWithConflicts. Every question comes before the first
+  // change, so Cancel leaves everything in the Recycle Bin. It returns
+  // { cancelled, results }.
+  const restore = async (ids, resolveConflict) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
       if (fs.getParent(id)?.id !== fs.RECYCLE_BIN) {
-        throw new Error(
-          "FileOperations: only top-level Recycle Bin items can be restored",
-        );
+        throw new Error("Only top-level Recycle Bin items can be restored.");
       }
     });
     const pending = new Set(topLevelIds);
@@ -412,8 +512,177 @@
       pending.delete(nextId);
       orderedIds.push(nextId);
     }
-    return orderedIds.map((id) => fs.restore(id));
+    // The folders that the restore takes out of the bin before the item
+    // that comes next, and the folder that takes the items of a folder
+    // that joins a folder with its name, at each level. A folder inside a
+    // joined folder goes into that folder before the items that wait for
+    // it.
+    const leaving = new Set();
+    const joins = new Map();
+    // The items that the restore puts in each folder, by name. Like XP, an
+    // item that goes where an item of the same restore went is a question
+    // too.
+    const claims = new Map();
+    const claimKey = (folderId, name) =>
+      `${folderId}\n${String(name).toLowerCase()}`;
+    const findExisting = (folderId, name) => {
+      const claimed = claims.get(claimKey(folderId, name));
+      return claimed
+        ? { ...fs.getNode(claimed.id), name: claimed.name }
+        : fs.findChild(folderId, name);
+    };
+    const record = (plan) => {
+      if (plan.action === "skip") return;
+      if (plan.action === "merge") {
+        joins.set(plan.id, plan.existingId);
+        plan.children.forEach(record);
+      } else {
+        leaving.add(plan.id);
+        claims.set(claimKey(plan.destinationId, plan.name), plan);
+      }
+    };
+    const outOfBin = (folderId) => {
+      for (let id = folderId; id; id = fs.getNode(id)?.parent) {
+        if (leaving.has(id) || joins.has(id)) return true;
+      }
+      return !fs.isInRecycleBin(folderId);
+    };
+    const targetOf = (node) => {
+      const folderId = joins.get(node.originalParent) || node.originalParent;
+      return fs.getNode(folderId)?.type === "folder" && outOfBin(folderId)
+        ? folderId
+        : fs.DESKTOP;
+    };
+    const plans = [];
+    try {
+      for (const id of orderedIds) {
+        const node = fs.getNode(id);
+        const plan = await planItem(
+          id,
+          targetOf(node),
+          "cut",
+          resolveConflict,
+          node.originalName || node.name,
+          findExisting,
+        );
+        record(plan);
+        plans.push(plan);
+      }
+    } catch (error) {
+      if (error !== cancelled) throw error;
+      return { cancelled: true, results: [] };
+    }
+    // An item that left the bin while a question was open stays where it
+    // is now, like a paste. An item that a later item of the restore
+    // replaced is not a result.
+    const results = await fs.transaction(() =>
+      plans
+        .filter((plan) => fs.getParent(plan.id)?.id === fs.RECYCLE_BIN)
+        .map((plan) =>
+          runPlan(plan, "cut", () => fs.restore(plan.id, plan.destinationId)),
+        )
+        .filter((node) => node && fs.getNode(node.id)),
+    );
+    return { cancelled: false, results };
   };
+
+  // Imports files from the user's computer, like a copy. items is a tree:
+  // { type: "file", name, size, modified, read } where read() returns a
+  // Promise of the content, or { type: "folder", name, children }. Every
+  // question comes before the first change, as in pasteWithConflicts, and
+  // the content is read before the first change too. options.isCancelled
+  // stops the import before any change. options.onProgress gets
+  // { completed, total } while the files are read. It returns
+  // { cancelled, results }.
+  const importWithConflicts = async (
+    destinationId,
+    items,
+    resolveConflict,
+    options = {},
+  ) => {
+    assertWritableFolder(destinationId);
+    const files = [];
+    const plan = async (item, folderId) => {
+      if (options.isCancelled?.()) throw cancelled;
+      const existing = folderId && fs.findChild(folderId, item.name);
+      const step = { item, folderId, action: "put" };
+      if (existing) {
+        if (existing.type !== item.type)
+          throw nameInUseError(item.name, existing, "copy");
+        const decision = await Promise.resolve(
+          resolveConflict?.({ source: item, existing, mode: "copy" }),
+        );
+        if (decision === "skip") return null;
+        if (decision !== "replace") throw cancelled;
+        step.action = "replace";
+        step.existingId = existing.id;
+      }
+      if (item.type === "file") files.push(step);
+      else {
+        // The items of a new folder never clash, so they get no folder.
+        step.children = [];
+        for (const child of item.children) {
+          const childStep = await plan(child, step.existingId || null);
+          if (childStep) step.children.push(childStep);
+        }
+      }
+      return step;
+    };
+    const steps = [];
+    try {
+      for (const item of items) {
+        const step = await plan(item, destinationId);
+        if (step) steps.push(step);
+      }
+      for (const [index, step] of files.entries()) {
+        if (options.isCancelled?.()) throw cancelled;
+        step.content = await step.item.read();
+        options.onProgress?.({ completed: index + 1, total: files.length });
+      }
+    } catch (error) {
+      if (error !== cancelled) throw error;
+      return { cancelled: true, results: [] };
+    }
+    // The item with the name may have moved or changed while a question
+    // was open. Then the new item goes in with its own name.
+    const run = (step, parentId) => {
+      const existing = fs.findChild(parentId, step.item.name);
+      const planned =
+        step.action === "replace" && existing?.id === step.existingId
+          ? existing
+          : null;
+      if (step.item.type === "folder") {
+        const folder = planned || createFolder(parentId, step.item.name);
+        step.children.forEach((child) => run(child, folder.id));
+        return folder;
+      }
+      if (planned) fs.destroy(planned.id);
+      return createFile(parentId, step.item.name, {
+        content: step.content,
+        size: step.item.size,
+      });
+    };
+    const results = await fs.transaction(() =>
+      steps.map((step) => run(step, destinationId)),
+    );
+    notify({
+      type: "import",
+      destinationId,
+      ids: results.map((node) => node.id),
+    });
+    return { cancelled: false, results };
+  };
+
+  // The tree of importWithConflicts for files from a file input or a drop
+  // without folders.
+  const importItemsFromFiles = (files) =>
+    [...files].map((file) => ({
+      type: "file",
+      name: file.name,
+      size: file.size,
+      modified: file.lastModified,
+      read: () => readFileContent(file),
+    }));
 
   const emptyRecycleBin = () => fs.emptyRecycleBin();
 
@@ -449,16 +718,20 @@
     copy,
     cut,
     getConflicts,
+    nameInUseError,
     dataUrlFromBlob,
     readFileContent,
     pasteWithConflicts,
+    importWithConflicts,
+    importItemsFromFiles,
     createFolder,
     createFile,
     rename,
+    writeFile,
     removeToBin: (...args) => fs.transaction(() => removeToBin(...args)),
     permanentlyDelete: (...args) =>
       fs.transaction(() => permanentlyDelete(...args)),
-    restore: (...args) => fs.transaction(() => restore(...args)),
+    restore,
     emptyRecycleBin,
     resetForTests,
   };

@@ -29,12 +29,27 @@
       { id: "ok", label: "OK", isDefault: true },
       { id: "cancel", label: "Cancel", isCancel: true },
     ],
+    // XP's Yes/No message box has a gray close button: only Yes or No
+    // closes it.
     yesNo: [
+      { id: "yes", label: "&Yes", isDefault: true },
+      { id: "no", label: "&No" },
+    ],
+    // XP's own Yes/No dialogs, such as Confirm File Delete, close with No
+    // on Esc or the close button.
+    yesNoClosable: [
       { id: "yes", label: "&Yes", isDefault: true },
       { id: "no", label: "&No", isCancel: true },
     ],
     yesNoCancel: [
       { id: "yes", label: "&Yes", isDefault: true },
+      { id: "no", label: "&No" },
+      { id: "cancel", label: "Cancel", isCancel: true },
+    ],
+    // XP's Confirm File Replace and Confirm Folder Replace.
+    yesAllNoCancel: [
+      { id: "yes", label: "&Yes", isDefault: true },
+      { id: "all", label: "Yes to &All" },
       { id: "no", label: "&No" },
       { id: "cancel", label: "Cancel", isCancel: true },
     ],
@@ -69,13 +84,263 @@
     return `${value.toFixed(2)} ${units[unit - 1]} (${grouped} bytes)`;
   };
 
+  // XP's Details view rounds every file up to whole KB: "0 KB", "1 KB",
+  // "28 KB".
+  const formatKilobytes = (bytes) =>
+    `${Math.ceil(Math.max(0, bytes) / 1024).toLocaleString("en-US")} KB`;
+
+  // XP's names for the file types the simulation stores. Other types show
+  // their extension, like "ZIP File", and a file without one shows "File".
+  const XP_FILE_TYPES = {
+    ".bmp": "Bitmap Image",
+    ".game": "Game",
+    ".gif": "GIF Image",
+    ".jpeg": "JPEG Image",
+    ".jpg": "JPEG Image",
+    ".png": "PNG Image",
+    ".txt": "Text Document",
+  };
+  // The extensions that have a program in a new XP SP3, as the "assoc"
+  // command lists them in an XP SP3 virtual machine. The simulation adds
+  // its own ".game".
+  const XP_REGISTERED_EXTENSIONS = new Set(
+    `323 386 aca acf acs acw ai aif aifc aiff ani aps asa ascx asf asm asmx
+    asp aspx asx au audiocd avi bat bfc bin bkf blg bmp bsc c cab cat cda
+    cdf cdx cer cgm chk chm clp cmd cnf com cpl cpp crl crt css csv ctt
+    cur cxx dat db dbg dct def der desklink dib dic diz dl_ dll doc dos
+    dot drv dsn dun dvd dvr-ms emf eml eps ex_ exe exp eyb fif fnd fnt
+    folder fon ghi gif grp gz h hhc hlp hpp hqx ht hta htc htm html htt
+    htw htx hxx icc icm ico idb idl idq iii ilk imc in_ inc inf ini ins
+    inv inx isp its ivf java jbf jfif job jod jpe jpeg jpg js jse latex
+    lib lnk local log lwv m14 m1v m3u man manifest mapimail mdb mht mhtml
+    mid midi mmf mmm mov movie mp2 mp2v mp3 mpa mpe mpeg mpg mpv2 msc msg
+    msi msp msrcincident msstyles mswmm mv mydocs ncb nfo nls nmw nsc nvr
+    nws obj oc_ ocx odc otf p10 p12 p7b p7c p7m p7r p7s pbk pch pdb pds
+    pfm pfx php3 pic pif pko pl plg pma pmc pml pmr pmw pnf png pot pps
+    ppt prf ps psd psw qds rat rc rdp reg res rle rmi rnk rpc rsp rtf sam
+    sbr sc2 scf scp scr sct sdb sed shb shs shtml shw sit snd spc spl sql
+    sr_ sst stl stm swf sy_ sym sys tar text tgz theme tif tiff tlb tsp
+    tsv ttc ttf txt udl uls url vbe vbs vbx vcf vxd wab wav wax wb2 wdp
+    webpnp wht wk4 wll wlt wm wma wmd wmdb wmf wmp wms wmv wmx wmz wpd wpg
+    wpl wri wsc wsf wsh wsz wtx wvx x xbm xix xlb xlc xls xlt xml xsl z
+    z96 zap zfsendtotarget zip game`
+      .split(/\s+/)
+      .map((extension) => `.${extension}`),
+  );
+  // A type that has a program, like ".txt" or ".mp3". XP asks before a
+  // rename changes or removes the extension of a file of such a type.
+  const isKnownFileType = (ext) =>
+    XP_REGISTERED_EXTENSIONS.has(String(ext || "").toLowerCase());
+  const describeFileType = (ext) => {
+    const extension = String(ext || "").toLowerCase();
+    if (!extension) return "File";
+    return (
+      XP_FILE_TYPES[extension] ||
+      `${extension.replace(".", "").toUpperCase()} File`
+    );
+  };
+
+  // XP's short date in Details: "4/14/2008 9:00 AM".
+  const formatDetailsDate = (timestamp) => {
+    const date = new Date(timestamp);
+    const hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
+  };
+
+  // The input types that are not text boxes.
+  const NOT_TEXT_INPUTS = new Set([
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ]);
+  // A control that takes typed text.
+  const isEditable = (target) =>
+    Boolean(target) &&
+    (target.isContentEditable === true ||
+      target.tagName === "TEXTAREA" ||
+      (target.tagName === "INPUT" && !NOT_TEXT_INPUTS.has(target.type)));
+
+  // True on a Mac, an iPhone or an iPad, where Option types characters.
+  const isApplePlatform = () =>
+    /^(?:mac|iphone|ipad|ipod)/i.test(
+      navigator.userAgentData?.platform || navigator.platform,
+    );
+
+  // The letter of a key for a shortcut. Like Windows, a key that types a
+  // Latin letter gives that letter, so AZERTY and Dvorak keep their own
+  // letters. A key that types a letter of another script, such as a
+  // Russian or Greek one, gives the letter of its place on the keyboard,
+  // so Ctrl+S works with each layout. Other keys give their own value.
+  const layoutKeyOf = (event) => {
+    const key = event.key.toLowerCase();
+    if (/^[a-z]$/.test(key)) return key;
+    const place = /^Key([A-Z])$/.exec(event.code);
+    return place && /^\p{L}$/u.test(key) ? place[1].toLowerCase() : key;
+  };
+
+  // The letter of a Ctrl shortcut, such as S in Ctrl+S. Like XP, a
+  // shortcut without Alt does not run while Alt is down. AltGr, which
+  // types characters such as "ś" on Windows, sends Ctrl and Alt together,
+  // so AltGr+S types and never saves. Then the result is "".
+  const shortcutKeyOf = (event) =>
+    event.altKey || event.getModifierState?.("AltGraph")
+      ? ""
+      : layoutKeyOf(event);
+
+  // The characters that each key place types with no modifier and with
+  // Shift, such as "y" and "Y" for KeyY on a US keyboard, but "z" and "Z"
+  // on a German one. The shell learns them from the keys that the user
+  // presses, and from the layout map of the browser when it has one.
+  const plainCharacters = new Map();
+  const addPlainCharacter = (code, character) => {
+    if (!plainCharacters.has(code)) plainCharacters.set(code, new Set());
+    plainCharacters.get(code).add(character.toLowerCase());
+  };
+
+  // Learns the character of a key that is pressed with no modifier or
+  // with Shift only.
+  const learnKey = (event) => {
+    if (
+      !event.code ||
+      event.isComposing ||
+      Array.from(event.key).length !== 1 ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.getModifierState?.("AltGraph") === true
+    )
+      return;
+    addPlainCharacter(event.code, event.key);
+  };
+
+  // Learns each character of a layout map, such as the one of
+  // navigator.keyboard.getLayoutMap().
+  const learnLayout = (layout) => {
+    for (const [code, character] of layout) addPlainCharacter(code, character);
+  };
+
+  // The plain characters of a key place. A place that the shell has not
+  // learned gives its US letter or digit. The key that is pressed can
+  // tell more: on a letter place, a letter that is not Latin, such as
+  // "ф" on a Russian keyboard, is the plain letter of a layout for
+  // another script. AltGr on such a layout types Latin text and signs,
+  // such as "€". (A known limit: Ukrainian AltGr+Г types "ґ", which
+  // counts as plain until the user types Г alone.)
+  const plainCharactersOf = (code, key) => {
+    const known = plainCharacters.get(code);
+    if (known) return known;
+    const place = /^(?:Key([A-Z])|Digit(\d))$/.exec(code ?? "");
+    const plain = new Set(place ? [(place[1] ?? place[2]).toLowerCase()] : []);
+    if (place?.[1] && /^\p{L}$/u.test(key) && !/\p{Script=Latin}/u.test(key))
+      plain.add(key.toLowerCase());
+    return plain;
+  };
+
+  // AltGr types a character, such as "ę" on the E key of a Polish
+  // keyboard. Windows sends it as Ctrl and Alt. Ctrl and Alt together
+  // also send Ctrl and Alt, so the character tells them apart: like
+  // Windows, Ctrl+Alt types only when the key gives a character that its
+  // place does not type with no modifier. So US Ctrl+Alt+A is no AltGr
+  // key, but German AltGr+Q ("@") is. A browser can also send the
+  // AltGraph state with Ctrl and no Alt, or with no Ctrl and no Alt: that
+  // is always AltGr. With Alt and no Ctrl, the key is Alt: some engines
+  // give the AltGraph state for each Alt key. A Mac has no AltGr: its
+  // Option key works like Alt.
+  const isAltGr = (event) => {
+    if (isApplePlatform()) return false;
+    if (event.ctrlKey && event.altKey)
+      return (
+        Array.from(event.key).length === 1 &&
+        !plainCharactersOf(event.code, event.key).has(event.key.toLowerCase())
+      );
+    return !event.altKey && event.getModifierState?.("AltGraph") === true;
+  };
+
+  // True for Alt and a key, which opens a menu or clicks a button, like XP.
+  // Ctrl, the Windows key and AltGr make it no access key.
+  const isAccessKeyPress = (event) =>
+    event.altKey && !event.ctrlKey && !event.metaKey && !isAltGr(event);
+
+  // The character that a key types, or "". A plain key and an AltGr key
+  // type, like XP. A key with Ctrl, Alt or the Windows key types nothing.
+  const typedCharacterOf = (event) => {
+    if (event.isComposing || Array.from(event.key).length !== 1) return "";
+    if (isAltGr(event)) return event.key;
+    return event.ctrlKey || event.altKey || event.metaKey ? "" : event.key;
+  };
+
+  // The letter of an access key, such as F in Alt+F, or "". A key with
+  // Ctrl, the Windows key or AltGr is never an access key, like XP.
+  // In a text box:
+  // - A dead key (Option+E on a Mac starts an accent) is never an access
+  //   key, because it types.
+  // - On a Mac, the key gives only its own character, so Option types that
+  //   character (Option+F types "ƒ").
+  // - On Windows and Linux, the key gives the letter of a Ctrl shortcut: a
+  //   key that types a letter that is not a Latin letter, such as a Greek
+  //   or Russian one, gives the letter of its place on the keyboard, like
+  //   Windows. A punctuation key, such as Dvorak's "." key, gives its own
+  //   character.
+  // Outside a text box nothing types. A key that is not a plain letter or
+  // digit, a dead key too, gives the letter or digit of its place on the
+  // keyboard. So Option works like Alt on a Mac.
+  const accessKeyOf = (event) => {
+    if (event.ctrlKey || event.metaKey || isAltGr(event)) return "";
+    const key = event.key.toLowerCase();
+    if (isEditable(event.target)) {
+      if (event.key === "Dead") return "";
+      return isApplePlatform() ? key : layoutKeyOf(event);
+    }
+    if (/^[a-z0-9]$/.test(key)) return key;
+    const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
+    return place ? (place[1] ?? place[2]).toLowerCase() : key;
+  };
+
+  // A key that an input method takes, such as the Enter that ends a
+  // composition. A text box never acts on it.
+  const isComposingKey = (event) =>
+    event.isComposing === true || event.keyCode === 229;
+
   const hasDOM = typeof document !== "undefined";
   const getFS = () => globalThis.VirtualFS;
 
   if (!hasDOM) {
     // Node: expose only the pure definitions for tests.
-    return { ICONS, BUTTON_SETS, parseAccessKey, formatBytes };
+    return {
+      ICONS,
+      BUTTON_SETS,
+      parseAccessKey,
+      accessKeyOf,
+      isAltGr,
+      learnKey,
+      learnLayout,
+      isAccessKeyPress,
+      typedCharacterOf,
+      shortcutKeyOf,
+      isComposingKey,
+      describeFileType,
+      isKnownFileType,
+      formatBytes,
+      formatDetailsDate,
+      formatKilobytes,
+    };
   }
+
+  // The shell learns the plain character of each key place, so it can
+  // tell AltGr from Ctrl+Alt. The layout map of the browser gives each
+  // place before the user presses it, where the browser has one.
+  document.addEventListener("keydown", learnKey, true);
+  navigator.keyboard
+    ?.getLayoutMap?.()
+    .then(learnLayout)
+    .catch(() => {});
 
   // ---- Dialog stack and shared keyboard handling ----
 
@@ -96,10 +361,260 @@
       (item) => !item.disabled && item.offsetParent !== null,
     );
 
-  // Registered only while a dialog is open, so the stack is never empty here.
-  const handleGlobalKeydown = (e) => dialogStack.at(-1).onKeydown(e);
+  // An open modal dialog keeps the keys, like XP: they go to its control
+  // that had them last, its default button or its first control, never to
+  // a window behind it. It returns false when no modal dialog is open.
+  const takeDialogKeys = (dialog) =>
+    [
+      dialog.lastFocused,
+      dialog.defaultButton,
+      ...focusableItems(dialog.el),
+    ].some((target) => {
+      if (!target?.isConnected || target.disabled) return false;
+      target.focus();
+      return document.activeElement === target;
+    });
+  const takeKeys = () => {
+    const dialog = dialogStack.findLast((entry) => entry.modal);
+    if (!dialog) return false;
+    takeDialogKeys(dialog);
+    return true;
+  };
+
+  // True while a modal dialog is open: an XP dialog that keeps the keys,
+  // or the Log Off or Turn Off Computer dialog. A modeless dialog, such as
+  // Run, is not modal: the windows keep their keys, like XP.
+  const isModalOpen = () =>
+    dialogStack.some((entry) => entry.modal) ||
+    !!document.querySelector(".system-dialog-overlay:not([hidden])");
+
+  // Registered only while a dialog is open. A key goes to the newest modal
+  // dialog, else to the modeless dialog that has the keys, like XP. Two
+  // modeless dialogs, such as Run and Taskbar and Start Menu Properties,
+  // each get only their own keys.
+  const handleGlobalKeydown = (e) =>
+    (
+      dialogStack.findLast((entry) => entry.modal) ||
+      dialogStack.find((entry) => entry.el.contains(e.target))
+    )?.onKeydown(e);
+
+  // Log off closes the modeless dialogs, such as Run, with the windows.
+  const closeModelessDialogs = () =>
+    dialogStack
+      .filter((entry) => !entry.modal)
+      .forEach((entry) => entry.close());
+
+  // Only the dialog that has the keys draws active, like XP. A window or the
+  // desktop that takes the keys makes every dialog draw inactive.
+  const showActiveDialog = (active) =>
+    dialogStack.forEach((entry) =>
+      entry.el.classList.toggle("active", entry === active),
+    );
+  document.addEventListener(
+    "focusin",
+    (event) => {
+      if (!event.target.closest(".xp-dialog")) showActiveDialog(null);
+    },
+    true,
+  );
 
   // ---- Core primitive ----
+
+  // XP's balloon tip under a text box. It closes on the box's next key,
+  // when the box loses the keys, or after 10 seconds.
+  const showBalloon = (anchor, lines) => {
+    document.querySelector(".xp-balloon")?.close();
+    const balloon = document.createElement("div");
+    balloon.className = "xp-balloon";
+    balloon.setAttribute("role", "tooltip");
+    lines.forEach((line) => {
+      const row = document.createElement("div");
+      row.textContent = line;
+      balloon.append(row);
+    });
+    document.body.append(balloon);
+    const rect = anchor.getBoundingClientRect();
+    balloon.style.left = `${Math.round(rect.left)}px`;
+    balloon.style.top = `${Math.round(rect.bottom) + 10}px`;
+    const timer = setTimeout(() => balloon.close(), 10000);
+    balloon.close = () => {
+      clearTimeout(timer);
+      balloon.remove();
+      anchor.removeEventListener("keydown", balloon.close);
+      anchor.removeEventListener("blur", balloon.close);
+    };
+    anchor.addEventListener("keydown", balloon.close);
+    anchor.addEventListener("blur", balloon.close);
+    return balloon;
+  };
+
+  // Puts text in place of start..end. The browser's own edit keeps the
+  // change in the box's undo, so Ctrl+Z works like in XP's edit box. A
+  // browser without it changes the text directly.
+  const replaceText = (input, start, end, text) => {
+    input.setSelectionRange(start, end);
+    if (document.execCommand?.(text ? "insertText" : "delete", false, text))
+      return;
+    input.setRangeText(text, start, end);
+    input.setSelectionRange(start + text.length, start + text.length);
+  };
+
+  // A one-line text box, like XP's edit boxes: each input that takes typed
+  // text, a number box too. The paste, Ctrl+A and drop rules use it.
+  const isOneLineBox = (target) =>
+    target?.tagName === "INPUT" && isEditable(target);
+
+  // The check of each box that refuses some characters, such as a file
+  // name box. A paste and typed text go through the same check.
+  const textChecks = new WeakMap();
+
+  // Like an XP edit box, a one-line text box keeps only the first line of
+  // pasted text. Each browser does a different thing with the line breaks,
+  // so the box puts in the first line itself. A box with a check, such as
+  // a file name box, puts in only the characters that the check keeps. A
+  // box with its own paste, such as the Command Prompt, has
+  // data-own-paste.
+  document.addEventListener(
+    "paste",
+    (event) => {
+      const input = event.target;
+      if (
+        !isOneLineBox(input) ||
+        input.readOnly ||
+        input.disabled ||
+        input.dataset.ownPaste !== undefined
+      )
+        return;
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      const firstLine = text.split(/\r\n|\r|\n/)[0];
+      const check = textChecks.get(input);
+      const kept = check ? check.keep(firstLine) : firstLine;
+      if (kept === text) return;
+      event.preventDefault();
+      const { selectionStart, selectionEnd } = input;
+      // A box without a caret position, such as a number box, takes the
+      // text at its own selection.
+      if (selectionStart === null) {
+        if (kept && !document.execCommand?.("insertText", false, kept))
+          input.value = kept;
+        return;
+      }
+      // An empty first line takes the place of the selected text. Text with
+      // only refused characters leaves the box as it is.
+      if (kept || (!firstLine && selectionStart !== selectionEnd))
+        replaceText(input, selectionStart, selectionEnd, kept);
+      if (kept !== firstLine) check.refuse();
+    },
+    true,
+  );
+
+  // XP's one-line edit boxes do not select all on Ctrl+A. Multi-line boxes,
+  // such as Notepad's, keep it.
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        shortcutKeyOf(event) === "a" &&
+        isOneLineBox(event.target)
+      )
+        event.preventDefault();
+    },
+    true,
+  );
+
+  // An Explorer drag carries the ids of its items as JSON in this type.
+  const ITEM_DRAG_TYPE = "application/x-astro-vfs-ids";
+  // True when a drag carries one of the types.
+  const takesItemDrag = (event, types) =>
+    types.some((type) => event.dataTransfer?.types?.includes(type));
+  // The item ids of a drop. A bad list gives no ids.
+  const droppedItemIds = (event) => {
+    try {
+      const ids = JSON.parse(event.dataTransfer.getData(ITEM_DRAG_TYPE));
+      return Array.isArray(ids) ? ids : [];
+    } catch {
+      return [];
+    }
+  };
+  // A drag that no folder, window or dialog takes is refused, like XP. This
+  // listener comes after the targets, so it sees what they did: a target
+  // that takes the drag, such as Notepad for a file or Run for text,
+  // prevents the default. So the browser opens no file from the computer in
+  // place of the desktop, and XP's edit boxes, one-line and multi-line,
+  // take no dropped text or items.
+  const refusesDrag = (event) =>
+    !event.defaultPrevented &&
+    !!event.dataTransfer &&
+    (event.dataTransfer.types.includes("Files") || isEditable(event.target));
+  ["dragenter", "dragover", "drop"].forEach((type) =>
+    document.addEventListener(type, (event) => {
+      if (!refusesDrag(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+    }),
+  );
+
+  // A file name box takes no character that Windows refuses in a name.
+  // Like XP's rename box, it drops the character and shows a balloon. Typed
+  // and pasted text never gets in. Text from an input method gets in while
+  // it is composed, and the box removes the bad characters when the
+  // composition ends. Undo and Redo skip each state with a bad character,
+  // so they never bring one back.
+  const guardFileName = (input) => {
+    const invalid = new RegExp(fs().INVALID_NAME_CHARACTERS.source, "g");
+    const hasInvalid = (text) => new RegExp(invalid.source).test(text);
+    const warn = () =>
+      showBalloon(input, [
+        "A file name cannot contain any of the following characters:",
+        '\\ / : * ? " < > |',
+      ]);
+    textChecks.set(input, {
+      keep: (text) => text.replace(invalid, ""),
+      refuse: warn,
+    });
+    input.addEventListener("beforeinput", (event) => {
+      if (event.isComposing || !hasInvalid(event.data || "")) return;
+      event.preventDefault();
+      const kept = event.data.replace(invalid, "");
+      if (kept)
+        replaceText(input, input.selectionStart, input.selectionEnd, kept);
+      warn();
+    });
+    const clean = () => {
+      const { value, selectionStart } = input;
+      const bad = [...value.matchAll(invalid)];
+      const start = bad[0].index;
+      const end = bad.at(-1).index + 1;
+      const caret = value.slice(0, selectionStart).replace(invalid, "").length;
+      replaceText(
+        input,
+        start,
+        end,
+        value.slice(start, end).replace(invalid, ""),
+      );
+      input.setSelectionRange(caret, caret);
+    };
+    input.addEventListener("compositionend", () => {
+      if (!hasInvalid(input.value)) return;
+      clean();
+      warn();
+    });
+    input.addEventListener("input", (event) => {
+      const step = { historyUndo: "undo", historyRedo: "redo" }[
+        event.inputType
+      ];
+      if (!step || !hasInvalid(input.value)) return;
+      // The state came from an input method before its bad characters
+      // went away. The next step in the same direction is the state
+      // before or after it. With no such step, the characters go away
+      // here.
+      const before = input.value;
+      document.execCommand?.(step);
+      if (input.value === before) clean();
+    });
+  };
 
   // Builds a modal dialog with XP window chrome. Options:
   //   title    - title bar text
@@ -108,6 +623,9 @@
   //   onCancel - Escape/title-close behavior (default: close with null)
   //   help     - add the title bar ? button for "What's This?" help
   //   systemMenu - false for dialogs without a close button (default: true)
+  //   closable - false for a gray close button, like XP's Yes/No message
+  //              box: the close button, Esc and Alt+F4 do nothing
+  //              (default: true)
   // Returns { el, body, close, onResult }.
   // XP's "What's This?" help: the title bar ? button arms help mode, and the
   // next click on a control shows its help text. Controls without help get
@@ -173,6 +691,8 @@
     onCancel = null,
     help = false,
     systemMenu = true,
+    closable = true,
+    owner = null,
   } = {}) => {
     const previouslyFocused = document.activeElement;
 
@@ -198,6 +718,7 @@
     closeBtn.className = "tb-btn close-btn";
     closeBtn.title = "Close";
     closeBtn.setAttribute("aria-label", "Close");
+    closeBtn.disabled = !closable;
     closeBtn.addEventListener("click", () => dialog.cancel());
     if (systemMenu) titleButtons.appendChild(closeBtn);
     titleBar.append(titleText, titleButtons);
@@ -208,12 +729,53 @@
     el.append(titleBar, body);
     overlay.appendChild(el);
     if (help) addWhatsThisHelp(el, body);
+    el.addEventListener("focusin", (event) => {
+      dialog.lastFocused = event.target;
+      showActiveDialog(dialog);
+    });
+    // A modeless dialog is a window among the windows, like XP's Run: a
+    // press or the keys bring it to the top, and a window that is used
+    // after it goes above it. A dialog with an owner window, such as
+    // Calculator's Statistics Box, stays above that window.
+    const raise = () => {
+      if (!modal) overlay.style.zIndex = globalThis.nextWindowLayer();
+    };
+    el.addEventListener("pointerdown", raise, true);
+    el.addEventListener("focusin", raise);
+    if (owner) overlay.dataset.owner = owner;
 
     let resultCallback = null;
+
+    // The keys go back to the control that had them. A control that is
+    // gone or hidden, like the item of a closed menu, cannot take them.
+    // Then a modal dialog, a dialog under this one, the active window or
+    // the desktop gets them, like XP. They never stay on the page.
+    const giveKeysBack = () => {
+      // A window that went behind another one while the dialog was open,
+      // such as behind a program that Run started, does not come back to
+      // the top. The window in front has the keys.
+      if (globalThis.XPShell?.keepsKeysForLater(previouslyFocused)) return;
+      if (
+        previouslyFocused !== document.body &&
+        previouslyFocused.isConnected &&
+        !previouslyFocused.closest("[hidden]")
+      ) {
+        previouslyFocused.focus();
+        if (document.activeElement === previouslyFocused) return;
+      }
+      if (takeKeys()) return;
+      (
+        dialogStack.at(-1)?.defaultButton ||
+        document.querySelector(".xp-window.active:not(.xp-dialog)") ||
+        document.getElementById("desktop-icons")
+      ).focus();
+    };
 
     const dialog = {
       el,
       body,
+      modal,
+      lastFocused: null,
       defaultButton: null,
       accessKeys: new Map(),
       onResult(callback) {
@@ -222,18 +784,17 @@
       close(result = null) {
         if (!dialogStack.includes(dialog)) return;
         dialogStack.splice(dialogStack.indexOf(dialog), 1);
-        dialogStack.at(-1)?.el.classList.add("active");
         overlay.remove();
         if (!dialogStack.length) {
           document.removeEventListener("keydown", handleGlobalKeydown, true);
         }
-        if (previouslyFocused && previouslyFocused.isConnected) {
-          previouslyFocused.focus();
-        }
+        giveKeysBack();
         if (resultCallback) resultCallback(result);
       },
       cancel: onCancel || (() => dialog.close(null)),
       onKeydown(e) {
+        // The keys of an input method stay in its text box.
+        if (isComposingKey(e)) return;
         // An open drop-down list or menu in the dialog takes keys first.
         if (dialog.popupKeydown?.(e)) return;
         if (
@@ -247,12 +808,26 @@
           if (modal) trapFocus(e);
           return;
         }
+        // A box with its own Enter and Esc, such as a rename box, keeps
+        // them.
+        if (
+          (e.key === "Escape" || e.key === "Enter") &&
+          e.target?.dataset?.ownKeys !== undefined
+        )
+          return;
         if (e.key === "Escape") {
           e.preventDefault();
           // Escape leaves "What's This?" mode before it closes the dialog.
           if (el.classList.contains("whats-this"))
             el.classList.remove("whats-this");
-          else dialog.cancel();
+          else if (closable) dialog.cancel();
+          return;
+        }
+        // Alt+F4 closes the dialog like its close button. A dialog with a
+        // gray close button stays open.
+        if (e.altKey && e.key === "F4") {
+          e.preventDefault();
+          if (closable && systemMenu) dialog.cancel();
           return;
         }
         if (e.key === "Enter") {
@@ -302,12 +877,14 @@
 
     // Alt+key always works; the bare key works outside text fields.
     const handleAccessKey = (e) => {
-      if (e.ctrlKey || e.metaKey || e.key.length !== 1) return;
+      // AltGr types, so its keys are no access keys.
+      const letter = accessKeyOf(e);
+      if (letter.length !== 1) return;
       const inTextField = /^(INPUT|TEXTAREA|SELECT)$/.test(
         document.activeElement?.tagName,
       );
       if (!e.altKey && inTextField) return;
-      const button = dialog.accessKeys.get(e.key.toLowerCase());
+      const button = dialog.accessKeys.get(letter);
       if (button && !button.disabled) {
         e.preventDefault();
         button.click();
@@ -317,11 +894,25 @@
     if (!dialogStack.length) {
       document.addEventListener("keydown", handleGlobalKeydown, true);
     }
-    // Only the newest dialog is active; the ones behind it draw inactive.
-    dialogStack.at(-1)?.el.classList.remove("active");
+    // The new dialog is active; the ones behind it draw inactive.
     dialogStack.push(dialog);
-    overlay.style.zIndex = (modal ? BASE_Z_INDEX : 6900) + dialogStack.length;
-    document.body.appendChild(overlay);
+    showActiveDialog(dialog);
+    // A modal dialog stays above everything. A modeless one lives among the
+    // windows on the desktop.
+    if (modal) {
+      overlay.style.zIndex = BASE_Z_INDEX + dialogStack.length;
+      document.body.appendChild(overlay);
+    } else {
+      raise();
+      document.getElementById("desktop").appendChild(overlay);
+    }
+
+    // Brings the dialog to the top and gives it the keys, like XP when Run
+    // opens again while it is open.
+    dialog.activate = () => {
+      raise();
+      takeDialogKeys(dialog);
+    };
 
     // Dialogs start centered. Moving or resizing one pins it at explicit
     // overlay coordinates first, so it does not re-center.
@@ -444,14 +1035,16 @@
           ? definition.id === defaultButton
           : definition.isDefault,
       }));
+      // Like XP's message box, a box with no Cancel answer, such as Yes and
+      // No, has a gray close button, and Esc and Alt+F4 do nothing. A box
+      // with one button is an OK box: closing it gives that button.
+      const cancel =
+        resolvedButtons.find((b) => b.isCancel) ||
+        (resolvedButtons.length === 1 ? resolvedButtons[0] : null);
       const dialog = createDialog({
         title,
-        onCancel: () => {
-          const cancel =
-            resolvedButtons.find((b) => b.isCancel) ||
-            resolvedButtons.find((b) => b.isDefault);
-          dialog.close(cancel ? cancel.id : null);
-        },
+        closable: !!cancel,
+        onCancel: () => dialog.close(cancel.id),
       });
       dialog.onResult(resolve);
       dialog.el.classList.add("xp-message-box");
@@ -476,9 +1069,73 @@
   const alert = (text, title = "Message", icon = "info") =>
     message({ title, text, icon, buttons: BUTTON_SETS.ok });
 
-  const confirm = (text, title = "Confirm", icon = "question") =>
-    message({ title, text, icon, buttons: BUTTON_SETS.yesNo }).then(
-      (result) => result === "yes",
+  // A Yes/No question. It resolves true for Yes. The buttons are a
+  // message box's by default; XP's own dialogs pass yesNoClosable.
+  const confirm = (
+    text,
+    title = "Confirm",
+    icon = "question",
+    buttons = BUTTON_SETS.yesNo,
+  ) =>
+    message({ title, text, icon, buttons }).then((result) => result === "yes");
+
+  // Explorer, the Desktop and the file dialogs check a rename the same way.
+  // The name that a rename box gives, like XP: spaces and periods at the end
+  // go away. An empty name, or a device name such as "con" with no
+  // extension, keeps the old name with no message: the result is null.
+  const renameBoxName = (value) => {
+    const name = value.replace(/[.\s]+$/, "");
+    try {
+      fs().validateName(name);
+    } catch (error) {
+      if (
+        error.code === "name-required" ||
+        (error.code === "name-reserved" && !name.includes("."))
+      )
+        return null;
+    }
+    return name;
+  };
+
+  // XP's text for a name that a rename box cannot use. A name in use and a
+  // device name with an extension, such as "con.txt", get the same text. It
+  // names the item without its extension.
+  const renameErrorText = (error, node) => {
+    const dot = node.type === "file" ? node.name.lastIndexOf(".") : -1;
+    const shown = dot > 0 ? node.name.slice(0, dot) : node.name;
+    if (error.code === "name-exists" || error.code === "name-reserved")
+      return `Cannot rename ${shown}: A file with the name you specified already exists. Specify a different file name.`;
+    if (error.code === "name-invalid")
+      return 'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |';
+    return error.message || "The file operation failed.";
+  };
+
+  // Like XP, a rename that changes or drops the extension of a file of a
+  // type with a program, such as ".txt" or ".mp3", asks first. A folder, a
+  // file with no extension and a file of a type with no program, such as
+  // ".xyz", never ask. It resolves true to go on.
+  const confirmExtensionChange = async (node, name) => {
+    const extension = fs().extractExtension(node.name);
+    if (
+      node.type !== "file" ||
+      !isKnownFileType(extension) ||
+      fs().extractExtension(name) === extension
+    )
+      return true;
+    const answer = await message({
+      title: "Rename",
+      text: "If you change a file name extension, the file may become unusable.\n\nAre you sure you want to change it?",
+      icon: "warning",
+      buttons: BUTTON_SETS.yesNo,
+    });
+    return answer === "yes";
+  };
+
+  const alertRenameError = (error, node) =>
+    alert(
+      renameErrorText(error, node),
+      "Error Renaming File or Folder",
+      "error",
     );
 
   // ---- Progress dialog ----
@@ -564,34 +1221,84 @@
     return icon;
   };
 
+  // Folders that show only their own icon in Thumbnails view, like XP.
+  const plainThumbnailFolders = () => [
+    fs().MY_COMPUTER,
+    fs().RECYCLE_BIN,
+    fs().DRIVE_C,
+    fs().DRIVE_D,
+    fs().DRIVE_F,
+  ];
+  // A folder's thumbnail shows its first 4 pictures by name, like XP.
+  const FOLDER_PREVIEW_COUNT = 4;
+  const folderPreviewUrls = (folderId) =>
+    fs()
+      .getChildren(folderId)
+      .filter((child) => child.type !== "folder")
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((child) => fs().getPictureUrl(child.id))
+      .filter(Boolean)
+      .slice(0, FOLDER_PREVIEW_COUNT);
+
   // Thumbnails view shows a picture file as the picture itself, scaled to
-  // fit the frame, like XP. Other items, and pictures that fail to load,
-  // show their icon.
-  const createThumbnail = (node) => {
-    const icon = createNodeIcon(node);
+  // fit the frame, like XP. A folder with pictures shows up to 4 of them on
+  // a large folder. Other items keep `icon`. A picture that fails to load
+  // gets a new icon from `createIcon`, and a folder preview drops it.
+  const fillThumbnail = (icon, node, createIcon) => {
+    if (node.type === "folder") {
+      if (plainThumbnailFolders().includes(node.id)) return icon;
+      const urls = folderPreviewUrls(node.id);
+      if (!urls.length) return icon;
+      const folder = document.createElement("span");
+      folder.className = "folder-thumbnail";
+      const pictures = document.createElement("span");
+      pictures.className = "folder-thumbnail-pictures";
+      urls.forEach((url) => {
+        const cell = document.createElement("span");
+        const preview = document.createElement("img");
+        preview.alt = "";
+        preview.decoding = "async";
+        // A folder whose previews all fail shows its plain icon.
+        preview.addEventListener(
+          "error",
+          () => {
+            cell.remove();
+            if (!pictures.childElementCount) icon.replaceWith(createIcon(node));
+          },
+          { once: true },
+        );
+        preview.src = url;
+        cell.appendChild(preview);
+        pictures.appendChild(cell);
+      });
+      folder.appendChild(pictures);
+      icon.replaceChildren(folder);
+      return icon;
+    }
     const url = fs().getPictureUrl(node.id);
     if (!url) return icon;
     const preview = document.createElement("img");
-    preview.className = "dlg-thumbnail-picture";
+    preview.className = "thumbnail-picture";
     preview.alt = "";
     preview.decoding = "async";
     preview.addEventListener(
       "error",
-      () => icon.replaceWith(createNodeIcon(node)),
+      () => icon.replaceWith(createIcon(node)),
       { once: true },
     );
     preview.src = url;
     icon.replaceChildren(preview);
     return icon;
   };
+  const createThumbnail = (node) =>
+    fillThumbnail(createNodeIcon(node), node, createNodeIcon);
 
   const describeNodeType = (node) => {
     if (node.id === fs().DRIVE_C) return "Local Disk";
     if (node.id === fs().DRIVE_D) return "Local Disk";
     if (node.id === fs().DRIVE_F) return "Removable Disk";
-    if (node.type === "folder") return "File folder";
-    if (!node.ext) return "File";
-    return `${node.ext.replace(".", "").toUpperCase()} File`;
+    if (node.type === "folder") return "File Folder";
+    return describeFileType(node.ext);
   };
 
   // ---- Properties dialog ----
@@ -710,7 +1417,7 @@
     return icon;
   };
 
-  // XP's Views menu, in its order. My Pictures opens in Thumbnails.
+  // XP's Views menu, in its order.
   const FILE_VIEWS = [
     ["thumbnails", "T&humbnails"],
     ["tiles", "Tile&s"],
@@ -718,15 +1425,19 @@
     ["list", "&List"],
     ["details", "&Details"],
   ];
-  const defaultFileView = (folderId) => {
+  // Explorer and the file dialogs open My Pictures, and every folder in it,
+  // in Thumbnails view, like XP.
+  const isPictureFolder = (folderId) => {
     for (
       let node = fs().getNode(folderId);
       node;
       node = fs().getNode(node.parent)
     )
-      if (node.id === fs().MY_PICTURES) return "thumbnails";
-    return "list";
+      if (node.id === fs().MY_PICTURES) return true;
+    return false;
   };
+  const defaultFileView = (folderId) =>
+    isPictureFolder(folderId) ? "thumbnails" : "list";
 
   // File names typed into Open and Save As, newest first, for the File
   // name drop-down. They last for the session.
@@ -742,8 +1453,9 @@
   // A drop-down list or menu that belongs to a dialog. Only one is open at
   // a time. While it is open it gets the dialog's keys first, and a click
   // outside it and its owner closes it. The owner's own click toggles it.
-  // Tab and Alt+key close it and then work as usual. Other typed keys stay
-  // with it, so they never press a dialog button behind it.
+  // Tab and Alt+key close a list and then work as usual. Tab does nothing in
+  // a menu, like XP. Other typed keys stay with it, so they never press a
+  // dialog button behind it.
   const attachPopup = (dialog, popup, owner, { onKeydown, onClose }) => {
     dialog.closePopup?.();
     popup.hidden = false;
@@ -766,13 +1478,16 @@
         return true;
       }
       if (onKeydown(event, close)) return true;
-      // AltGr sends Ctrl+Alt, and its characters type as usual.
-      if (event.key === "Tab" || (event.altKey && !event.ctrlKey)) {
+      if (event.key === "Tab" && popup.getAttribute("role") === "menu") {
+        event.preventDefault();
+        return true;
+      }
+      // AltGr types its characters as usual.
+      if (event.key === "Tab" || isAccessKeyPress(event)) {
         close();
         return false;
       }
-      if (event.key.length !== 1 || event.ctrlKey || event.metaKey)
-        return false;
+      if (!typedCharacterOf(event)) return false;
       // Outside a text box a typed key does nothing, so Space does not
       // click the box under the list.
       if (event.target.tagName !== "INPUT") event.preventDefault();
@@ -809,15 +1524,15 @@
         if (row) choose(row);
         return true;
       }
-      if (
-        !letterOf ||
-        event.key.length !== 1 ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey
-      )
-        return false;
-      const letter = event.key.toLowerCase();
+      // A menu matches its access keys by their place on the keyboard,
+      // and a list matches the typed character.
+      // An AltGr character, such as "ą", is typed like a plain one.
+      const letter = chooseLetter
+        ? event.altKey
+          ? ""
+          : accessKeyOf(event)
+        : typedCharacterOf(event).toLowerCase();
+      if (!letterOf || letter.length !== 1) return false;
       const index = all
         .map((row, offset) => (getIndex() + 1 + offset) % all.length)
         .find((rowIndex) => letterOf(all[rowIndex]) === letter);
@@ -1090,11 +1805,13 @@
         "new-folder",
         "Create New Folder",
         "assets/xp/icons/NewFolder.png",
-        () => {
+        async () => {
+          // Like XP, the new folder gets a rename box in the list. The
+          // File name box keeps its text.
+          const folderId = currentFolderId;
+          let folder;
           try {
-            const folder = fs().createFolder(currentFolderId, "New Folder");
-            renderList();
-            nameInput.value = folder.name;
+            folder = await fs().createFolder(folderId, "New Folder");
           } catch (error) {
             message({
               title,
@@ -1102,9 +1819,85 @@
               icon: "error",
               buttons: BUTTON_SETS.ok,
             });
+            return;
           }
+          // A dialog that closed or went to another folder shows no box.
+          if (!dialogStack.includes(dialog) || currentFolderId !== folderId)
+            return;
+          renderList();
+          renameInList(folder.id);
         },
       );
+      // Like XP, a new folder cannot go in My Computer or the Recycle Bin.
+      const takesNewFolder = (folderId) =>
+        folderId !== fs().MY_COMPUTER && !fs().isInRecycleBin(folderId);
+
+      // The rename box of an item in the list, like XP's. A new folder and
+      // F2 open it. Enter or a click elsewhere gives the name. Esc keeps the
+      // old name. The rules and the texts are the rename box's in Explorer.
+      // Like XP, the File name box keeps its text.
+      const renameInList = (nodeId) => {
+        const item = list.querySelector(
+          `.dlg-file-item[data-node-id="${CSS.escape(nodeId)}"]`,
+        );
+        // F2 in the box reaches the item too. A second start keeps the
+        // open box, like Explorer.
+        if (item.querySelector(".dlg-file-rename")) return;
+        const node = fs().getNode(nodeId);
+        const label = item.querySelector(".dlg-file-item-name");
+        const input = document.createElement("input");
+        input.className = "dlg-file-rename";
+        input.dataset.ownKeys = "";
+        input.setAttribute("aria-label", "Name");
+        input.value = node.name;
+        list
+          .querySelectorAll(".selected")
+          .forEach((el) => el.classList.remove("selected"));
+        item.classList.add("selected");
+        label.replaceWith(input);
+        guardFileName(input);
+        input.focus();
+        input.select();
+        let finished = false;
+        // Enter and Esc give the keys back to the item. A click elsewhere
+        // keeps them where the user put them.
+        const finish = async (commit, refocus) => {
+          if (finished) return;
+          finished = true;
+          const name = commit ? renameBoxName(input.value) : null;
+          const changed = name !== null && name !== node.name;
+          // Like XP, the box keeps the new name while the question shows. No
+          // opens the box again with the old name, all selected.
+          if (changed && !(await confirmExtensionChange(node, name))) {
+            input.replaceWith(label);
+            if (dialogStack.includes(dialog) && item.isConnected)
+              renameInList(nodeId);
+            return;
+          }
+          input.replaceWith(label);
+          if (refocus) item.focus();
+          if (!changed) return;
+          try {
+            await fs().rename(nodeId, name);
+            renderList();
+          } catch (error) {
+            await alertRenameError(error, node);
+            // Like XP, the box opens again with the old name, all selected.
+            if (item.isConnected) renameInList(nodeId);
+          }
+        };
+        input.addEventListener("keydown", (event) => {
+          if (isComposingKey(event)) return;
+          if (event.key !== "Enter" && event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          finish(event.key === "Enter", true);
+        });
+        input.addEventListener("blur", () => finish(true, false));
+        // The box is in a list button. Its clicks stay in the box.
+        input.addEventListener("click", (event) => event.stopPropagation());
+        input.addEventListener("dblclick", (event) => event.stopPropagation());
+      };
 
       // Views opens XP's menu of list views; the open one has a bullet.
       const viewsMenu = document.createElement("div");
@@ -1211,6 +2004,9 @@
       const list = document.createElement("div");
       list.className = "dlg-file-list";
       list.setAttribute("role", "listbox");
+      // An empty folder's list still takes the keys, like XP, but Tab does
+      // not stop on the list itself.
+      list.tabIndex = -1;
 
       // File name is an editable drop-down of the names typed before.
       const nameInput = document.createElement("input");
@@ -1303,6 +2099,7 @@
         });
       typeSelect.addEventListener("change", () => {
         activeFilter = typeSelect.value ? typeSelect.value.split(",") : null;
+        namePattern = null;
         renderList();
       });
 
@@ -1358,10 +2155,14 @@
       );
       onDialog?.(dialog, { nameInput });
 
+      // A name with * or ? in the name box filters the list, like XP. A
+      // choice in the type box ends it.
+      let namePattern = null;
       const matchesFilter = (node) =>
         node.type === "folder" ||
-        !activeFilter ||
-        activeFilter.includes(node.ext);
+        (namePattern
+          ? namePattern.test(node.name)
+          : !activeFilter || activeFilter.includes(node.ext));
 
       const navigate = (folderId) => {
         if (!folderId || folderId === currentFolderId) return;
@@ -1370,50 +2171,150 @@
         renderList();
       };
 
+      // The folder that the typed folders name, from the open folder, like
+      // XP: "Sub", "..", "C:". Null when one of them is not a folder.
+      // A path starts in the open folder. A drive such as "C:" starts it at
+      // the top of that drive, and a "\" at the start at the top of the
+      // drive of the open folder, like Windows. Like Windows, ".."
+      // stops at the top of a drive, and goes from My Computer to the
+      // Desktop.
+      const folderOfPath = (segments) => {
+        let id = currentFolderId;
+        for (const [index, segment] of segments.entries()) {
+          const top = index === 0 && (!segment || /^[a-z]:$/i.test(segment));
+          if (!top && (!segment || segment === ".")) continue;
+          const node = top
+            ? fs().getNode(
+                fs().resolvePath(
+                  `${segment || fs().driveOf(currentFolderId)}\\`,
+                ),
+              )
+            : segment === ".."
+              ? fs().getNode(id).parent === fs().MY_COMPUTER
+                ? fs().getNode(id)
+                : fs().getParent(id) || fs().getNode(fs().DESKTOP)
+              : findChildByName(id, segment);
+          if (node?.type !== "folder") return null;
+          id = node.id;
+        }
+        return id;
+      };
+      const warn = (text) =>
+        message({ title, text, icon: "warning", buttons: BUTTON_SETS.ok });
+
       const accept = () => {
         // A message box must not open behind a drop-down list.
         dialog.closePopup?.();
         const typed = nameInput.value.trim();
-        const name = typed && completeName(typed, activeFilter);
-        // Like XP, a folder's name opens that folder instead.
-        const folder = [typed, name]
-          .map((candidate) => findChildByName(currentFolderId, candidate))
-          .find((node) => node?.type === "folder");
-        if (folder) {
-          nameInput.value = "";
-          navigate(folder.id);
-          nameInput.focus();
+        // An empty name is for onAccept to refuse or take.
+        if (!typed) return finish(currentFolderId, "");
+        // A path names a file in another folder. A path that ends with a
+        // folder part, such as "..", "C:" or "\", opens that folder.
+        const segments = typed.replace(/\//g, "\\").split("\\");
+        const last = segments.at(-1);
+        const opensFolder =
+          ["", ".", ".."].includes(last) ||
+          (segments.length === 1 && /^[a-z]:$/i.test(last));
+        const folderId = folderOfPath(
+          opensFolder ? segments : segments.slice(0, -1),
+        );
+        if (!folderId) {
+          warn(`${typed}\nPath does not exist.\nCheck the path and try again.`);
           return;
         }
-        const context = { folderId: currentFolderId, name };
-        Promise.resolve(onAccept(context)).then((result) => {
+        // A name with * or ? shows only the files that match it. Like the
+        // XP dialog, "?" is exactly one character, and a ".*" at the end
+        // also takes a name with no extension, so "*.*" shows all files.
+        const pattern = last.replace(/[*?]/g, "");
+        if (pattern !== last && !fs().INVALID_NAME_CHARACTERS.test(pattern)) {
+          // Like XP, the pattern of a type in the type box, such as "*.*"
+          // or "*.TXT", chooses that type instead.
+          const typeOption = [...typeSelect.options].find(
+            (option) =>
+              (option.value
+                ? option.value
+                    .split(",")
+                    .map((ext) => `*${ext}`)
+                    .join(";")
+                : "*.*") === last.toLowerCase(),
+          );
+          if (typeOption) {
+            typeSelect.value = typeOption.value;
+            activeFilter = typeOption.value
+              ? typeOption.value.split(",")
+              : null;
+            namePattern = null;
+          } else {
+            const anyExtension = last.endsWith(".*");
+            const source = (anyExtension ? last.slice(0, -2) : last)
+              .replace(/[.+^${}()[\]\\]/g, "\\$&")
+              .replace(/\*/g, ".*")
+              .replace(/\?/g, ".");
+            namePattern = new RegExp(
+              `^${source}${anyExtension ? "(\\..*)?" : ""}$`,
+              "i",
+            );
+          }
+          nameInput.value = last;
+          if (folderId === currentFolderId) renderList();
+          else navigate(folderId);
+          nameInput.select();
+          return;
+        }
+        const name = completeName(last, activeFilter);
+        // Like XP, a folder's name opens that folder instead.
+        const folder = opensFolder
+          ? fs().getNode(folderId)
+          : [last, name]
+              .map((candidate) => findChildByName(folderId, candidate))
+              .find((node) => node?.type === "folder");
+        // The typed text stays in the box, all selected, like XP.
+        if (folder) {
+          navigate(folder.id);
+          nameInput.focus();
+          nameInput.select();
+          return;
+        }
+        // The file system's own name rules, so a name that it refuses never
+        // closes the dialog.
+        try {
+          fs().validateName(name);
+        } catch (error) {
+          warn(
+            error.code === "name-reserved"
+              ? `${name}\nThis file name is reserved for use by Windows.\nChoose another name and try again.`
+              : `${name}\nThe above file name is invalid.`,
+          );
+          return;
+        }
+        finish(folderId, name);
+      };
+      const finish = (folderId, name) =>
+        Promise.resolve(onAccept({ folderId, name })).then((result) => {
           if (result === false) return;
           rememberFileName(name);
           dialog.close(result);
         });
-      };
 
       // Details and Tiles also show each item's type, size and date.
       const itemDetails = (node) => {
         const type = describeNodeType(node);
-        const size =
-          node.type === "folder"
-            ? ""
-            : `${Math.max(1, Math.ceil(node.size / 1024)).toLocaleString("en-US")} KB`;
-        const date = new Date(node.modified).toLocaleString("en-US", {
-          dateStyle: "short",
-          timeStyle: "short",
-        });
+        const size = node.type === "folder" ? "" : formatKilobytes(node.size);
+        const date = formatDetailsDate(node.modified);
         return { type, size, date };
       };
 
       const renderList = () => {
+        // The list keeps the keys when it is drawn again, like XP.
+        const keys = document.activeElement;
+        const listHadKeys = list.contains(keys);
         const folder = fs().getNode(currentFolderId);
         const view = chosenView || defaultFileView(currentFolderId);
         list.dataset.view = view;
         renderFolders();
         upBtn.disabled = !folder.parent;
         backBtn.disabled = !history.length;
+        newFolderBtn.disabled = !takesNewFolder(folder.id);
         list.replaceChildren();
         if (view === "details") {
           const header = document.createElement("div");
@@ -1440,6 +2341,7 @@
             item.type = "button";
             item.className = "dlg-file-item";
             item.setAttribute("role", "option");
+            item.dataset.nodeId = child.id;
             const label = document.createElement("span");
             label.className = "dlg-file-item-name";
             label.textContent = child.name;
@@ -1467,6 +2369,21 @@
               item.classList.add("selected");
               if (child.type === "file") nameInput.value = child.name;
             });
+            // Like XP, F2 renames the item. A drive and a system folder
+            // keep their names.
+            item.addEventListener("keydown", (event) => {
+              if (
+                event.key !== "F2" ||
+                event.altKey ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                child.protected
+              )
+                return;
+              event.preventDefault();
+              renameInList(child.id);
+            });
             item.addEventListener("dblclick", () => {
               if (child.type === "folder") {
                 navigate(child.id);
@@ -1477,6 +2394,17 @@
             });
             list.appendChild(item);
           });
+        // The same item gets the keys back, else the first one, else the
+        // empty list. Back or Up One Level that turns gray with the keys
+        // gives them to the list too.
+        if (!listHadKeys && !([backBtn, upBtn].includes(keys) && keys.disabled))
+          return;
+        const items = [...list.querySelectorAll(".dlg-file-item")];
+        (
+          items.find((item) => item.dataset.nodeId === keys.dataset.nodeId) ||
+          items[0] ||
+          list
+        ).focus();
       };
 
       // Accept and Cancel sit beside the file name and type fields.
@@ -1562,6 +2490,15 @@
         withDefaultExtension(name, defaultExtension, activeFilter),
       onAccept: ({ folderId, name }) => {
         if (!name) return false;
+        // Like XP, My Computer takes no files. The dialog stays open for
+        // another folder. The dialog cannot open the Recycle Bin.
+        if (folderId === fs().MY_COMPUTER)
+          return message({
+            title: "Save As",
+            text: "You cannot save in the folder you specified. Please choose another location.",
+            icon: "warning",
+            buttons: BUTTON_SETS.ok,
+          }).then(() => false);
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,
@@ -1569,8 +2506,9 @@
           existingId: existing ? existing.id : null,
         };
         if (!existing) return result;
+        // Like XP, the question has the dialog's own title.
         return message({
-          title: "Confirm Save As",
+          title,
           text: `${name} already exists.\nDo you want to replace it?`,
           icon: "warning",
           buttons: BUTTON_SETS.yesNo,
@@ -1583,8 +2521,34 @@
     ICONS,
     BUTTON_SETS,
     parseAccessKey,
+    accessKeyOf,
+    isAltGr,
+    learnKey,
+    learnLayout,
+    isAccessKeyPress,
+    typedCharacterOf,
+    shortcutKeyOf,
+    isModalOpen,
+    closeModelessDialogs,
+    isComposingKey,
+    ITEM_DRAG_TYPE,
+    takesItemDrag,
+    droppedItemIds,
+    fillThumbnail,
+    describeFileType,
+    describeNodeType,
+    isKnownFileType,
     formatBytes,
+    formatDetailsDate,
+    formatKilobytes,
+    isPictureFolder,
     createDialog,
+    takeKeys,
+    showBalloon,
+    guardFileName,
+    renameBoxName,
+    confirmExtensionChange,
+    alertRenameError,
     addWhatsThisHelp,
     createDialogButton,
     addButtonRow,

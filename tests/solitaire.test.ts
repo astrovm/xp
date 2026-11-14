@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 import { face, recordCardCanvas } from "./helpers/card-canvas";
 
 afterEach(cleanupShells);
@@ -375,6 +376,8 @@ test("the winning cards bounce until done, then Deal Again? asks", async () => {
   await h.key("2", { altKey: true, shiftKey: true, code: "Digit2" });
   for (let wait = 0; wait < 40 && !h.dialog(); wait += 1) await h.settle(4);
   expect(h.dialog().textContent).toContain("Deal Again?");
+  // Like XP's message box, Yes and No has a gray close button.
+  expect(h.dialog().querySelector(".close-btn").disabled).toBeTrue();
   expect(h.help()).toBe("");
   await h.answer("no");
   // The game is over: presses do nothing.
@@ -482,13 +485,20 @@ test("menus show sol.exe's help in the status bar, About, and Exit", async () =>
     new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
   );
   h.win.querySelector('[data-solitaire-menu="help"]').click();
+  // A press on a title keeps the menus; one on the bar's empty part closes
+  // them, like XP.
+  h.win
+    .querySelector('[data-solitaire-menu="help"]')
+    .dispatchEvent(
+      new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  expect(h.win.querySelector(".tm-menu")).not.toBeNull();
   h.win
     .querySelector(".cards-menu-bar")
     .dispatchEvent(
       new h.s.window.PointerEvent("pointerdown", { bubbles: true }),
     );
-  expect(h.win.querySelector(".tm-menu")).not.toBeNull();
-  h.win.querySelector('[data-solitaire-menu="help"]').click();
+  expect(h.win.querySelector(".tm-menu")).toBeNull();
   await h.menu("help", "about");
   expect(h.dialog().textContent).toContain(
     "Developed for Microsoft by Wes Cherry",
@@ -621,4 +631,15 @@ test("without saved settings, sol.exe's defaults and a random back apply", async
   expect(frames.at(-1).find(([, x, y]) => x === 11 && y === 5)[0]).toBe(
     "assets/xp/cards/backs/65.png",
   );
+});
+
+test("Solitaire's menus follow XP's menu bar rules", async () => {
+  const h = await open();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.win.querySelector(".xp-solitaire"),
+    accessKey: "g",
+    settle: flushShell,
+  });
 });

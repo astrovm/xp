@@ -124,7 +124,9 @@ test("renaming desktop files and system icons commits, cancels, and reports erro
   await flushShell();
   const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
   expect(error.textContent).toContain("Error Renaming File or Folder");
-  expect(error.textContent).toContain("invalid characters");
+  expect(error.textContent).toContain(
+    "A file name cannot contain any of the following characters:",
+  );
   expect(fs.getNode(file.id).name).toBe("blurred.txt");
   error.querySelector('[data-action="ok"]').click();
   await flushShell();
@@ -219,7 +221,7 @@ test("uploading desktop files reports invalid names", async () => {
   await settle();
   expect(
     [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
-  ).toContain("invalid characters");
+  ).toContain("A file name cannot contain any of the following characters:");
 });
 
 test("legacy icon positions yield to a position the desktop file already has", async () => {

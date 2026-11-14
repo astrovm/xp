@@ -1088,9 +1088,8 @@ describe("Windows XP shell", () => {
     expect(output.textContent).toStartWith(
       "Microsoft Windows XP [Version 5.1.2600]",
     );
-    expect(prompt.textContent).toBe(
-      "C:\\Documents and Settings\\Administrator>",
-    );
+    // Like XP, the prompt starts in the profile of the user, astro.
+    expect(prompt.textContent).toBe("C:\\Documents and Settings\\astro>");
 
     commandWindow
       .querySelector<HTMLElement>(".title-bar")!
@@ -1106,7 +1105,7 @@ describe("Windows XP shell", () => {
 
     await run('cd "My Documents"');
     expect(prompt.textContent).toBe(
-      "C:\\Documents and Settings\\Administrator\\My Documents>",
+      "C:\\Documents and Settings\\astro\\My Documents>",
     );
     await run("echo Hello XP>note.txt");
     const note = shell.window.VirtualFS.findChild(

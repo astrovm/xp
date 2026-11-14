@@ -129,6 +129,7 @@ const toolbarMenu = (anchor, actions) => {
           submenu.style.top = `${Math.min(getViewportHeight() - submenu.offsetHeight - 2, rect.top)}px`;
         };
         const close = () => {
+          giveKeysBackFrom(submenu);
           submenu.hidden = true;
           item.setAttribute("aria-expanded", "false");
         };
@@ -240,7 +241,7 @@ const activateTaskbarToolbar = (element, id) => {
   element.classList.add("active");
   const layout = toolbarLayout(id);
   if (layout.floating && !layout.onTop)
-    element.style.zIndex = String(++zIndexCounter);
+    element.style.zIndex = String(nextWindowLayer());
 };
 const wireToolbarDrag = (handle, element, id, resize = false) => {
   handle.addEventListener("keydown", (event) => {
@@ -534,6 +535,15 @@ const renderTaskbarToolbars = () => {
   toolbarObserver?.disconnect();
   const settings = getTaskbarSettings(),
     host = document.getElementById("taskbar-toolbars");
+  // A toolbar control with the keys keeps them, else Start takes them.
+  const giveKeysBack = holdKeys(document.body, (keys) => {
+    const toolbar = keys.closest(".taskbar-toolbar");
+    if (!toolbar) return null;
+    const control = keys.dataset.shortcut
+      ? `[data-shortcut="${CSS.escape(keys.dataset.shortcut)}"]`
+      : `.${keys.classList[0]}`;
+    return `.taskbar-toolbar[data-toolbar-id="${CSS.escape(toolbar.dataset.toolbarId)}"] ${control}`;
+  });
   host.replaceChildren();
   document
     .querySelectorAll(".taskbar-toolbar.floating")
@@ -570,7 +580,7 @@ const renderTaskbarToolbars = () => {
     );
     if (layout.floating) {
       toolbar.style.height = `${layout.height}px`;
-      toolbar.style.zIndex = layout.onTop ? "8000" : String(++zIndexCounter);
+      toolbar.style.zIndex = layout.onTop ? "8000" : String(nextWindowLayer());
     }
     const grip = document.createElement("button");
     grip.className = "toolbar-grip";
@@ -675,6 +685,7 @@ const renderTaskbarToolbars = () => {
     } else host.append(toolbar);
   }
   host.hidden = !host.children.length;
+  giveKeysBack(document.getElementById("start-button"));
   const fit = () =>
     document.querySelectorAll(".taskbar-toolbar").forEach(fitToolbarItems);
   requestAnimationFrame(fit);

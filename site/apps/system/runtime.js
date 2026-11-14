@@ -1,13 +1,19 @@
+import { encodeCanvas } from "../paint/file-formats.js";
 import { createControlPanel } from "./control-panel.js";
 
 export const createSystemRuntime = (context) => {
   const {
+    EXPLORER_VIEWS,
     XPDialogs,
+    canRotatePicture,
     closeGameWindow,
     confirmRecycleDelete,
     confirmRecycleBinDelete,
     explorerBack,
     explorerForward,
+    explorerFilmstripNode,
+    explorerViewFor,
+    explorerViewsFor,
     fileOps,
     fs,
     navigateExplorer,
@@ -21,9 +27,81 @@ export const createSystemRuntime = (context) => {
     selectedExplorerNodes,
     renderExplorerSelection,
     setAccessKeyText,
+    setExplorerView,
     startExplorerRename,
+    focusExplorerList,
+    stepExplorerFilmstrip,
     wireProjectSettings,
   } = context;
+
+  // The folder that the Address bar names. Like XP, a full path counts
+  // "." and ".." by its text. A "\" at the start is the top of the drive
+  // of the open folder, as in the XP VM. Other text starts at the open
+  // folder: ".." is the folder above it, and each name must be a folder in
+  // the one before it. XP finds no folder for ".", for a "/" at the start
+  // or for "\\", which it then takes as a web or network address.
+  const addressFolderOf = (text, from) => {
+    const value = text.trim();
+    if (/^(?:\/|\\\\)/.test(value)) return null;
+    if (value.startsWith("\\"))
+      return fs.resolvePath(`${fs.driveOf(from)}${value}`);
+    const full = fs.resolvePath(text);
+    if (full) return full;
+    const parts = text
+      .trim()
+      .split(/[\\/]+/)
+      .filter(Boolean);
+    if (!parts.length) return null;
+    let id = from;
+    for (const part of parts) {
+      id =
+        part === ".."
+          ? fs.getParent(id)?.id
+          : part === "."
+            ? null
+            : fs.findChild(id, part)?.id;
+      if (!id) return null;
+    }
+    return id;
+  };
+
+  const EXPLORER_VIEW_LABELS = {
+    filmstrip: "Filmstrip",
+    thumbnails: "Thumbnails",
+    tiles: "Tiles",
+    icons: "Icons",
+    list: "List",
+    details: "Details",
+  };
+
+  const loadPicture = (url) =>
+    new Promise((resolve, reject) => {
+      const image = document.createElement("img");
+      image.addEventListener("load", () => resolve(image), { once: true });
+      image.addEventListener(
+        "error",
+        () => reject(new Error("Windows cannot read this picture.")),
+        { once: true },
+      );
+      image.src = url;
+    });
+
+  // Turns the picture a quarter turn and saves it in its own type, like
+  // XP's Filmstrip.
+  const rotatePicture = async (node, clockwise) => {
+    const content = fs.getContent(node.id);
+    const image = await loadPicture(fs.getPictureUrl(node.id));
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalHeight;
+    canvas.height = image.naturalWidth;
+    const context2d = canvas.getContext("2d");
+    if (clockwise) context2d.setTransform(0, 1, -1, 0, canvas.width, 0);
+    else context2d.setTransform(0, -1, 1, 0, 0, canvas.height);
+    context2d.drawImage(image, 0, 0);
+    await fs.setContent(node.id, await encodeCanvas(canvas, node.name), {
+      expectedContent: content,
+    });
+  };
 
   const controlPanel = createControlPanel(context);
 
@@ -226,7 +304,7 @@ export const createSystemRuntime = (context) => {
                     <div class="explorer-menu-bar" role="menubar"><button>File</button><button>Edit</button><button>View</button><button>Favorites</button><button>Tools</button><button>Help</button></div>
                     <div class="explorer-brand" aria-hidden="true"><img src="assets/xp/WindowsFlag.png" alt=""></div>
                 </div>
-                <div class="explorer-toolbar">
+                <div class="explorer-toolbar" data-mouse-keeps-focus>
                     <button disabled><img src="assets/xp/explorer/toolbar-back.png" alt=""> Back <span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
                     <button disabled aria-label="Forward"><img src="assets/xp/explorer/toolbar-forward.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
                     <button disabled aria-label="Up"><img src="assets/xp/explorer/toolbar-up.png" alt=""></button>
@@ -320,6 +398,10 @@ export const createSystemRuntime = (context) => {
         "Details",
       );
 
+      // XP's task pane takes no focus from the mouse. The Folders tree does.
+      [tasksSection, placesSection, detailsSection].forEach(
+        (section) => (section.dataset.mouseKeepsFocus = ""),
+      );
       sidebar.append(tasksSection, placesSection, detailsSection);
       const treeSection = document.createElement("section");
       treeSection.className = "explorer-tree-section";
@@ -348,16 +430,67 @@ export const createSystemRuntime = (context) => {
       const items = document.createElement("div");
       items.className = "explorer-items";
       items.tabIndex = 0;
+      // The window gives the list the focus when it becomes active.
+      items.dataset.defaultFocus = "";
       main.appendChild(items);
-      // Clicking empty space clears the selection, like XP.
+      // Clicking empty space clears the selection, like XP. The Filmstrip
+      // preview and its buttons keep it.
       main.addEventListener("pointerdown", (event) => {
-        if (!event.target.closest(".explorer-item")) {
+        if (!event.target.closest(".explorer-item, .explorer-filmstrip")) {
           items.focus({ preventScroll: true });
           items
             .querySelectorAll(".explorer-item.selected")
             .forEach((item) => item.classList.remove("selected"));
           renderExplorerSelection(win);
         }
+      });
+
+      // Rotations of one window run one after another, so each one starts
+      // from the picture the last one saved.
+      let rotation = Promise.resolve();
+      const runFilmstripAction = (action) => {
+        if (action === "previous") stepExplorerFilmstrip(win, -1);
+        if (action === "next") stepExplorerFilmstrip(win, 1);
+        if (!action.startsWith("rotate")) return;
+        // The rotation acts on the picture shown when the user asked for it,
+        // even if the user moves on before an earlier rotation ends.
+        const nodeId = explorerFilmstripNode(win)?.id;
+        if (!nodeId) return;
+        rotation = rotation.then(async () => {
+          const node = fs.getNode(nodeId);
+          if (!node || !canRotatePicture(node)) return;
+          try {
+            await rotatePicture(node, action === "rotate-clockwise");
+          } catch (error) {
+            await XPDialogs.alert(
+              error.message || "Windows cannot rotate this picture.",
+              "Windows Picture and Fax Viewer",
+              "error",
+            );
+          }
+        });
+      };
+      main.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-filmstrip-action]");
+        if (button && !button.disabled)
+          runFilmstripAction(button.dataset.filmstripAction);
+      });
+      const filmstripKeys = {
+        ArrowLeft: "previous",
+        ArrowRight: "next",
+        k: "rotate-clockwise",
+        l: "rotate-counterclockwise",
+      };
+      main.addEventListener("keydown", (event) => {
+        // The rename box keeps its own keys.
+        if (main.dataset.view !== "filmstrip") return;
+        const key =
+          event.key.length === 1 ? XPDialogs.shortcutKeyOf(event) : event.key;
+        const action = filmstripKeys[key];
+        const wantsCtrl = action?.startsWith("rotate");
+        if (!action || event.altKey || event.ctrlKey !== !!wantsCtrl) return;
+        event.preventDefault();
+        runFilmstripAction(action);
       });
 
       const chrome = document.createElement("div");
@@ -367,7 +500,7 @@ export const createSystemRuntime = (context) => {
             <div class="explorer-menu-bar" role="menubar"><button data-explorer-menu="file">File</button><button data-explorer-menu="edit">Edit</button><button data-explorer-menu="view">View</button><button data-explorer-menu="help">Help</button></div>
             <div class="explorer-brand" aria-hidden="true"><img src="assets/xp/WindowsFlag.png" alt=""></div>
         </div>
-        <div class="explorer-toolbar">
+        <div class="explorer-toolbar" data-mouse-keeps-focus>
             <button data-explorer-action="back"><img src="assets/xp/explorer/toolbar-back.png" alt=""> Back <span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
             <button data-explorer-action="forward" aria-label="Forward"><img src="assets/xp/explorer/toolbar-forward.png" alt=""><span class="toolbar-drop-arrow" aria-hidden="true">▾</span></button>
             <button data-explorer-action="up" aria-label="Up"><img src="assets/xp/explorer/toolbar-up.png" alt=""></button>
@@ -407,6 +540,67 @@ export const createSystemRuntime = (context) => {
       const explorerMenuButtons = [
         ...chrome.querySelectorAll("[data-explorer-menu]"),
       ];
+      // The menu bar and the Views toolbar button open the same menu.
+      const viewsButton = chrome.querySelector('[data-explorer-action="view"]');
+      viewsButton.setAttribute("aria-haspopup", "menu");
+      viewsButton.setAttribute("aria-expanded", "false");
+      const explorerMenuOwners = [...explorerMenuButtons, viewsButton];
+      // True while the open menu belongs to a button that the mouse pressed
+      // without taking the keys, such as Views. Escape then gives the keys
+      // back to where they were, like XP.
+      let menuOpenedAway = false;
+      // Keys in a menu that closes go back to their control first, so a
+      // close never leaves them on the page, like XP.
+      const hideExplorerMenus = () => {
+        const active = document.activeElement;
+        if (explorerMenu.contains(active) || explorerSubmenu.contains(active))
+          leaveExplorerMenus();
+        menuOpenedAway = false;
+        explorerMenu.hidden = true;
+        explorerSubmenu.hidden = true;
+        explorerMenuOwners.forEach((button) =>
+          button.setAttribute("aria-expanded", "false"),
+        );
+      };
+      const inExplorerMenus = (element) =>
+        explorerMenu.contains(element) ||
+        explorerSubmenu.contains(element) ||
+        explorerMenuOwners.includes(element);
+      // The control that had the focus before the menus gets it back, like
+      // XP.
+      let menuReturnFocus = null;
+      // A focusin whose target already lost the focus is skipped. The
+      // window sends a press on a toolbar or title-bar button back to its
+      // control, before this listener runs.
+      // XP closes a window's menus when another element outside the
+      // window takes the keys, such as after Alt+Esc or Ctrl+Esc. A render
+      // that removes the focused item has no new target and keeps them.
+      win.el.addEventListener("focusout", (event) => {
+        if (event.relatedTarget && !win.el.contains(event.relatedTarget))
+          hideExplorerMenus();
+      });
+      win.el.addEventListener("focusin", (event) => {
+        if (
+          event.target === document.activeElement &&
+          !inExplorerMenus(event.target)
+        )
+          menuReturnFocus = event.target;
+      });
+      const leaveExplorerMenus = () => {
+        if (menuReturnFocus?.isConnected && win.el.contains(menuReturnFocus))
+          menuReturnFocus.focus({ preventScroll: true });
+        else focusExplorerList(win);
+      };
+      // A press outside the menu bar closes the menus through the shell,
+      // which uses this close, so the keys come back too.
+      explorerMenu.closeMenus = hideExplorerMenus;
+      // When a menu closes for a command, the focus goes back, unless it is
+      // already somewhere else.
+      const focusListAfterMenu = () => {
+        const active = document.activeElement;
+        if (active === document.body || inExplorerMenus(active))
+          leaveExplorerMenus();
+      };
       const explorerSubmenus = {
         "folder-menu": [
           { label: "Search...", action: "search-current" },
@@ -527,6 +721,15 @@ export const createSystemRuntime = (context) => {
           win.currentFolderId,
         );
         const currentFolderName = fs.getNode(win.currentFolderId).name;
+        const currentView = explorerViewFor(win.currentFolderId);
+        const viewEntries = explorerViewsFor(win.currentFolderId).map(
+          (action) => ({
+            label: EXPLORER_VIEW_LABELS[action],
+            action,
+            radio: true,
+            checked: currentView === action,
+          }),
+        );
         const actions = {
           file: [
             {
@@ -586,36 +789,7 @@ export const createSystemRuntime = (context) => {
           view: [
             { label: "Explorer Bar", action: "explorer-bar", submenu: true },
             { separator: true },
-            {
-              label: "Thumbnails",
-              action: "thumbnails",
-              radio: true,
-              checked: win.explorerView === "thumbnails",
-            },
-            {
-              label: "Tiles",
-              action: "tiles",
-              radio: true,
-              checked: win.explorerView === "tiles",
-            },
-            {
-              label: "Icons",
-              action: "icons",
-              radio: true,
-              checked: win.explorerView === "icons",
-            },
-            {
-              label: "List",
-              action: "list",
-              radio: true,
-              checked: win.explorerView === "list",
-            },
-            {
-              label: "Details",
-              action: "details",
-              radio: true,
-              checked: win.explorerView === "details",
-            },
+            ...viewEntries,
             { separator: true },
 
             { separator: true },
@@ -624,6 +798,8 @@ export const createSystemRuntime = (context) => {
             { label: "Refresh", action: "refresh" },
           ],
 
+          // The Views toolbar button.
+          views: viewEntries,
           help: [
             { separator: true },
 
@@ -634,7 +810,10 @@ export const createSystemRuntime = (context) => {
         renderExplorerMenuEntries(explorerMenu, actions, "explorerCommand");
         explorerSubmenu.hidden = true;
         explorerMenu.hidden = false;
-        explorerMenuButtons.forEach((entry) =>
+        menuOpenedAway =
+          Boolean(button.closest("[data-mouse-keeps-focus]")) &&
+          document.activeElement !== button;
+        explorerMenuOwners.forEach((entry) =>
           entry.setAttribute("aria-expanded", String(entry === button)),
         );
         explorerMenu.style.left = `${button.offsetLeft}px`;
@@ -658,6 +837,10 @@ export const createSystemRuntime = (context) => {
               return;
             }
             const selected = selectedExplorerNodes(win);
+            // The menu closes first, so a dialog that the command opens
+            // gives the focus back to the list when it closes.
+            hideExplorerMenus();
+            focusListAfterMenu();
             if (command === "close") closeGameWindow(win.gameId);
             if (command === "cut") fileOps.cut(selected);
             if (command === "copy") fileOps.copy(selected);
@@ -679,32 +862,23 @@ export const createSystemRuntime = (context) => {
                 "info",
               );
             if (command === "rename") startExplorerRename(win, selected[0]);
-            if (
-              ["thumbnails", "tiles", "icons", "list", "details"].includes(
-                command,
-              )
-            ) {
-              win.explorerView = command;
-              renderExplorerItems(win);
-            }
+            if (EXPLORER_VIEWS.includes(command))
+              setExplorerView(win.currentFolderId, command);
             if (command === "properties-current")
               openShellProperties(selected[0] || win.currentFolderId);
-            if (command === "select-all")
+            if (command === "select-all" || command === "invert-selection") {
               win.el
                 .querySelectorAll(".explorer-item")
-                .forEach((item) => item.classList.add("selected"));
-            if (command === "invert-selection")
-              win.el
-                .querySelectorAll(".explorer-item")
-                .forEach((item) => item.classList.toggle("selected"));
+                .forEach((item) =>
+                  command === "select-all"
+                    ? item.classList.add("selected")
+                    : item.classList.toggle("selected"),
+                );
+              renderExplorerSelection(win);
+            }
             if (command === "refresh") renderExplorerItems(win);
 
             if (command === "about-windows") openAboutWindows();
-            explorerMenu.hidden = true;
-            explorerSubmenu.hidden = true;
-            explorerMenuButtons.forEach((button) =>
-              button.setAttribute("aria-expanded", "false"),
-            );
             return;
           }
           const subcommandButton = event.target.closest(
@@ -712,6 +886,8 @@ export const createSystemRuntime = (context) => {
           );
           const subcommand = subcommandButton?.dataset.explorerSubcommand;
           if (subcommand) {
+            hideExplorerMenus();
+            focusListAfterMenu();
             if (subcommand === "search-current") openSearchDialog();
             if (subcommand === "folders-bar") {
               content.classList.add("folders-visible");
@@ -724,17 +900,16 @@ export const createSystemRuntime = (context) => {
               navigateExplorer(win, fs.MY_COMPUTER);
             if (subcommand === "properties-current")
               openShellProperties(win.currentFolderId);
-
-            explorerMenu.hidden = true;
-            explorerSubmenu.hidden = true;
-            explorerMenuButtons.forEach((button) =>
-              button.setAttribute("aria-expanded", "false"),
-            );
             return;
           }
           const actionButton = event.target.closest("[data-explorer-action]");
           const action = actionButton?.dataset.explorerAction;
           if (!action) return;
+          // A toolbar button closes the open menu. The Views button
+          // toggles its menu, like XP.
+          const viewsOpen =
+            viewsButton.getAttribute("aria-expanded") === "true";
+          hideExplorerMenus();
           if (action === "back") explorerBack(win);
           if (action === "forward") explorerForward(win);
           if (action === "up") navigateUp();
@@ -742,18 +917,19 @@ export const createSystemRuntime = (context) => {
             const foldersVisible = content.classList.toggle("folders-visible");
             actionButton.setAttribute("aria-pressed", String(foldersVisible));
           }
-          if (action === "view") {
-            const views = ["tiles", "thumbnails", "icons", "list", "details"];
-            win.explorerView =
-              views[(views.indexOf(win.explorerView) + 1) % views.length];
-            renderExplorerItems(win);
-          }
+          if (action === "view" && !viewsOpen)
+            showExplorerMenu("views", actionButton, false);
           if (action === "search") openSearchDialog();
           if (action === "go") {
             const input = chrome.querySelector(".explorer-address input");
             // Explorer opens only folders, never one in the Recycle Bin.
             // Otherwise the address goes back to the open folder.
-            if (!navigateExplorer(win, fs.resolvePath(input.value)))
+            if (
+              !navigateExplorer(
+                win,
+                addressFolderOf(input.value, win.currentFolderId),
+              )
+            )
               input.value = fs.getPath(win.currentFolderId);
           }
         } catch (error) {
@@ -765,6 +941,17 @@ export const createSystemRuntime = (context) => {
         }
       });
       explorerMenu.addEventListener("pointerover", (event) => {
+        // Keys in the submenu move to the item under the pointer before the
+        // submenu closes or changes, like XP. A disabled item cannot take
+        // them, so they go to the submenu's own item.
+        const item = event.target.closest(".game-menu-item");
+        if (item && explorerSubmenu.contains(document.activeElement))
+          (item.disabled
+            ? explorerMenu.querySelector(
+                `[data-explorer-command="${CSS.escape(explorerSubmenu.dataset.parentCommand)}"]`,
+              )
+            : item
+          ).focus();
         const parentItem = event.target.closest(".has-submenu");
         if (parentItem)
           showExplorerSubmenu(
@@ -776,35 +963,78 @@ export const createSystemRuntime = (context) => {
           explorerSubmenu.hidden = true;
       });
       chrome.querySelector("input").addEventListener("change", (event) => {
-        const destination = fs.resolvePath(event.target.value);
+        const destination = addressFolderOf(
+          event.target.value,
+          win.currentFolderId,
+        );
         if (destination && fs.getNode(destination)?.type === "folder")
           navigateExplorer(win, destination);
         else event.target.value = fs.getPath(win.currentFolderId);
       });
+      // Alt and a menu's letter open that menu, like XP.
+      const openExplorerMenuByAccessKey = (event) => {
+        const target = explorerMenuButtons.find(
+          (button) => button.dataset.accessKey === XPDialogs.accessKeyOf(event),
+        );
+        if (!target) return;
+        event.preventDefault();
+        showExplorerMenu(target.dataset.explorerMenu, target, true);
+      };
+      // The access keys work from anywhere in the window, also the list.
+      win.el.addEventListener("keydown", (event) => {
+        // The menu bar and a context menu keep their own keys.
+        if (
+          chrome.contains(event.target) ||
+          event.target.closest(".explorer-context-menu")
+        )
+          return;
+        // AltGr types. Like XP, it opens no menu.
+        if (event.altKey) {
+          if (XPDialogs.isAccessKeyPress(event))
+            openExplorerMenuByAccessKey(event);
+          return;
+        }
+        // A menu that the mouse opened, such as Views, leaves the keys on
+        // the list. Escape still closes it, and an arrow key moves into it,
+        // like XP. Keys with Ctrl or the Windows key stay with the shell,
+        // such as Ctrl+Shift+Esc.
+        if (explorerMenu.hidden || event.ctrlKey || event.metaKey) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          hideExplorerMenus();
+          return;
+        }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const commands = [
+            ...explorerMenu.querySelectorAll("button:not(:disabled)"),
+          ];
+          (event.key === "ArrowDown" ? commands[0] : commands.at(-1)).focus();
+        }
+      });
       chrome.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
-          const activeButton = explorerMenuButtons.find(
+          const activeButton = explorerMenuOwners.find(
             (button) => button.getAttribute("aria-expanded") === "true",
           );
-          explorerMenu.hidden = true;
-          explorerSubmenu.hidden = true;
-          explorerMenuButtons.forEach((button) =>
-            button.setAttribute("aria-expanded", "false"),
-          );
-          activeButton?.focus();
+          const away = menuOpenedAway;
+          hideExplorerMenus();
+          // A first Escape closes the menu and keeps its heading active. A
+          // second one leaves the menu bar, like XP. A menu that the mouse
+          // opened away from the keys gives them back at once.
+          if (activeButton && away) leaveExplorerMenus();
+          else if (activeButton) activeButton.focus();
+          else if (explorerMenuOwners.includes(document.activeElement))
+            leaveExplorerMenus();
           return;
         }
         const heading = document.activeElement?.closest?.(
           "[data-explorer-menu]",
         );
+        // AltGr types in the Address bar, and opens no menu, like XP.
         if (event.altKey) {
-          const target = explorerMenuButtons.find(
-            (button) => button.dataset.accessKey === event.key.toLowerCase(),
-          );
-          if (target) {
-            event.preventDefault();
-            showExplorerMenu(target.dataset.explorerMenu, target, true);
-          }
+          if (XPDialogs.isAccessKeyPress(event))
+            openExplorerMenuByAccessKey(event);
           return;
         }
         if (

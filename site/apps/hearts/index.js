@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import {
   CARD_HEIGHT,
   CARD_WIDTH,
@@ -597,33 +598,18 @@ const mountHearts = (context) => {
   });
 
   // ---- Menus ----
-  const menuButtons = [];
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuButtons.forEach((button) =>
-      button.setAttribute("aria-expanded", "false"),
-    );
-  };
-  MENUS.forEach(([label, items]) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("role", "menuitem");
-    button.setAttribute("aria-expanded", "false");
-    button.dataset.heartsMenu = label.replace(/&/g, "").toLowerCase();
-    context.setAccessKeyText(button, label);
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
-      items.forEach((item) => {
+  const menuItems = new Map();
+  const menus = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = document.createElement("div");
+      menu.className = "tm-menu";
+      menu.setAttribute("role", "menu");
+      menu.style.left = `${button.offsetLeft}px`;
+      menuItems.get(button).forEach((item) => {
         if (item === "-") {
-          openMenu.insertAdjacentHTML(
+          menu.insertAdjacentHTML(
             "beforeend",
             '<div class="tm-menu-separator"></div>',
           );
@@ -644,21 +630,27 @@ const mountHearts = (context) => {
         key.textContent = shortcut;
         entry.append(text, key);
         entry.addEventListener("click", () => {
-          closeMenu();
+          menus.close();
           run(command);
         });
-        openMenu.append(entry);
+        menu.append(entry);
       });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
-    });
-    menuButtons.push(button);
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
+  MENUS.forEach(([label, items]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.dataset.heartsMenu = label.replace(/&/g, "").toLowerCase();
+    context.setAccessKeyText(button, label);
+    menuItems.set(button, items);
     menuBar.append(button);
   });
-  const closeMenusOutside = (event) => {
-    if (openMenu && !menuBar.contains(event.target)) closeMenu();
-  };
-  document.addEventListener("pointerdown", closeMenusOutside);
 
   // ---- Dialogs ----
   const template = (options) => {
@@ -923,19 +915,20 @@ const mountHearts = (context) => {
   };
 
   const handleKeydown = (event) => {
-    if (event.defaultPrevented || document.querySelector(".xp-dialog-overlay"))
-      return;
+    if (event.defaultPrevented || globalThis.XPDialogs.isModalOpen()) return;
     const commands = { F7: "options", F8: "sound", F9: "score" };
     if (commands[event.key]) {
+      // The name question of the welcome is modal, so these keys wait
+      // until the name is in.
       event.preventDefault();
-      if (phase !== "welcome") run(commands[event.key]);
+      run(commands[event.key]);
       return;
     }
     // Esc closes an open menu; otherwise it hides the game, mshearts.exe's
-    // boss key.
-    if (event.key === "Escape") {
+    // boss key. Ctrl+Esc and Alt+Esc belong to the shell.
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
-      if (openMenu) closeMenu();
+      if (menus.isOpen()) menus.close();
       else context.minimize();
       return;
     }
@@ -973,7 +966,6 @@ const mountHearts = (context) => {
       timers.forEach(clearTimeout);
       clearTimeout(flashTimer);
       stopSound();
-      document.removeEventListener("pointerdown", closeMenusOutside);
       context.windowElement.removeEventListener("keydown", handleKeydown);
     },
   };

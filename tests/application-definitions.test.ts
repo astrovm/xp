@@ -34,6 +34,24 @@ describe("application definitions", () => {
     ).toThrow("Application title must be a non-empty string");
   });
 
+  test("require a group title for a program with many windows", () => {
+    const mount = () => ({ element });
+    expect(() =>
+      defineApplication({ ...metadata, mount, window: { manyWindows: true } }),
+    ).toThrow("Application groupTitle must be a non-empty string");
+    expect(
+      defineApplication({
+        ...metadata,
+        mount,
+        groupTitle: "Example Processor",
+        window: { manyWindows: true },
+      }).groupTitle,
+    ).toBe("Example Processor");
+    expect(
+      defineApplication({ ...metadata, mount }).groupTitle,
+    ).toBeUndefined();
+  });
+
   test("normalize file types and supply a default unmount", () => {
     const application = defineApplication({
       ...metadata,

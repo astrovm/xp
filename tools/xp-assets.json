@@ -1912,6 +1912,36 @@
       "output": "site/assets/xp/icons/TextDocument.png"
     },
     {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 14,
+      "resourceId": 2,
+      "width": 32,
+      "height": 32,
+      "bitDepth": 32,
+      "output": "site/assets/xp/icons/BitmapImage.png"
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 14,
+      "resourceId": 3,
+      "width": 32,
+      "height": 32,
+      "bitDepth": 32,
+      "output": "site/assets/xp/icons/ImageDocument.png"
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 14,
+      "resourceId": 4,
+      "width": 32,
+      "height": 32,
+      "bitDepth": 32,
+      "output": "site/assets/xp/icons/JpegImage.png"
+    },
+    {
       "member": "EXPLORER.EX_",
       "expandedName": "explorer.exe",
       "resourceType": 14,
@@ -9946,6 +9976,58 @@
         "top": 0,
         "width": 24,
         "height": 24
+      }
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 2,
+      "resourceId": 105,
+      "output": "site/assets/xp/explorer/filmstrip-previous.png",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 2,
+      "resourceId": 105,
+      "output": "site/assets/xp/explorer/filmstrip-next.png",
+      "crop": {
+        "left": 16,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 2,
+      "resourceId": 105,
+      "output": "site/assets/xp/explorer/filmstrip-rotate-counterclockwise.png",
+      "crop": {
+        "left": 176,
+        "top": 0,
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "member": "SHIMGVW.DL_",
+      "expandedName": "shimgvw.dll",
+      "resourceType": 2,
+      "resourceId": 105,
+      "output": "site/assets/xp/explorer/filmstrip-rotate-clockwise.png",
+      "crop": {
+        "left": 192,
+        "top": 0,
+        "width": 16,
+        "height": 16
       }
     },
     {

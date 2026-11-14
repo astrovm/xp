@@ -36,10 +36,15 @@ async function setup() {
     });
     el.dispatchEvent(event);
   };
-  const file = (name, text = "contents", type = "text/plain") => ({
+  const file = (
+    name,
+    text = "contents",
+    type = "text/plain",
+    lastModified,
+  ) => ({
     isFile: true,
     name,
-    file: (ok) => ok(new s.window.File([text], name, { type })),
+    file: (ok) => ok(new s.window.File([text], name, { type, lastModified })),
   });
   const folder = (name, batches) => ({
     isDirectory: true,
@@ -54,7 +59,7 @@ async function setup() {
       [...s.document.querySelectorAll(".xp-dialog")]
         .filter(
           (dialog) =>
-            action === "ok" || dialog.textContent.includes("already exists"),
+            action === "ok" || dialog.textContent.includes("already contains"),
         )
         .at(-1)
         ?.querySelector(`[data-action="${action}"]`);
@@ -90,7 +95,9 @@ test("dropping directory entries imports all reader batches and nested text/bina
     size: 5,
   });
 });
-for (const choice of ["replace", "rename", "cancel"]) {
+// XP asks with Yes, Yes to All, No and Cancel. No keeps the old item and
+// goes on. Cancel keeps the old item and stops.
+for (const choice of ["yes", "no", "cancel"]) {
   test(`external file conflict ${choice} preserves the chosen content`, async () => {
     const h = await setup();
     const old = h.fs.createFile(h.target.id, "duplicate.txt", {
@@ -100,15 +107,14 @@ for (const choice of ["replace", "rename", "cancel"]) {
     await h.choose(choice);
     await settle(() => !h.s.document.querySelector(".xp-dialog"));
     const children = h.fs.getChildren(h.target.id);
-    if (choice === "replace") {
+    if (choice === "yes") {
       expect(h.fs.getNode(old.id)).toBeNull();
       expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("new");
     } else {
       expect(h.fs.getNode(old.id).content).toBe("old");
-      expect(children.some((node) => node.content === "new")).toBe(
-        choice === "rename",
-      );
+      expect(children.some((node) => node.content === "new")).toBe(false);
     }
+    expect(children.some((node) => node.name.includes("(2)"))).toBe(false);
     expect(Boolean(h.fs.findChild(h.target.id, "after.txt"))).toBe(
       choice !== "cancel",
     );
@@ -116,18 +122,71 @@ for (const choice of ["replace", "rename", "cancel"]) {
   test(`external folder conflict ${choice} applies to the directory tree`, async () => {
     const h = await setup();
     const old = h.fs.createFolder(h.target.id, "Tree");
-    h.fs.createFile(old.id, "old.txt", { content: "old" });
+    const kept = h.fs.createFile(old.id, "old.txt", { content: "old" });
     h.drop([h.folder("Tree", [[h.file("new.txt")]])]);
     await h.choose(choice);
     await settle(() => !h.s.document.querySelector(".xp-dialog"));
-    expect(Boolean(h.fs.getNode(old.id))).toBe(choice !== "replace");
-    const dirs = h.fs.getChildren(h.target.id);
-    expect(dirs.length).toBe(choice === "rename" ? 2 : 1);
-    expect(dirs.some((dir) => h.fs.findChild(dir.id, "new.txt"))).toBe(
-      choice !== "cancel",
-    );
+    // A Yes puts the new items in the folder that is there.
+    expect(h.fs.getChildren(h.target.id).map((node) => node.id)).toEqual([
+      old.id,
+    ]);
+    expect(h.fs.getNode(kept.id).content).toBe("old");
+    expect(Boolean(h.fs.findChild(old.id, "new.txt"))).toBe(choice === "yes");
   });
 }
+test("Yes to All replaces each later file without a question", async () => {
+  const h = await setup();
+  const old = h.fs.createFolder(h.target.id, "Tree");
+  h.fs.createFile(old.id, "a.txt", { content: "old a" });
+  h.fs.createFile(old.id, "b.txt", { content: "old b" });
+  h.drop([
+    h.folder("Tree", [[h.file("a.txt", "new a"), h.file("b.txt", "new b")]]),
+  ]);
+  const question = () =>
+    [...h.s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+      dialog.textContent.includes("already contains"),
+    );
+  await settle(question);
+  const dialog = question();
+  expect(dialog.querySelector(".title-text").textContent).toBe(
+    "Confirm Folder Replace",
+  );
+  expect(
+    [...dialog.querySelectorAll("button[data-action]")].map(
+      (button) => button.textContent,
+    ),
+  ).toEqual(["Yes", "Yes to All", "No", "Cancel"]);
+  await h.choose("all");
+  await settle(() => h.fs.findChild(old.id, "b.txt")?.content === "new b");
+  expect(h.fs.findChild(old.id, "a.txt").content).toBe("new a");
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
+});
+test("a file cannot take the name of a folder, and a folder cannot take the name of a file", async () => {
+  const h = await setup();
+  h.fs.createFolder(h.target.id, "item");
+  h.drop([h.file("item", "new")]);
+  await settle(() =>
+    h.s.document
+      .querySelector(".xp-dialog")
+      ?.textContent.includes(
+        "Cannot copy item: A folder with the name you specified already exists.",
+      ),
+  );
+  await h.choose("ok");
+  h.fs.createFile(h.target.id, "box");
+  h.drop([h.folder("box", [[h.file("inside.txt")]])]);
+  await settle(() =>
+    h.s.document
+      .querySelector(".xp-dialog")
+      ?.textContent.includes(
+        "Cannot copy box: A file with the name you specified already exists.",
+      ),
+  );
+  expect(h.fs.getChildren(h.target.id).map((node) => node.name)).toEqual([
+    "item",
+    "box",
+  ]);
+});
 test("directory reader failures remove the partial import and report the error", async () => {
   const h = await setup();
   h.drop([
@@ -176,4 +235,73 @@ test("invalid internal drag data reports an error without changing destination",
       ?.textContent.includes("Invalid dropped item list"),
   );
   expect(h.fs.getChildren(h.target.id)).toEqual([]);
+});
+// The open question about a name in use.
+const question = (h) =>
+  [...h.s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+    dialog.textContent.includes("already contains"),
+  );
+// Like XP, a drop asks every question before it changes anything, so
+// Cancel on a later question leaves out the earlier files too.
+test("Cancel on a later question imports none of the dropped files", async () => {
+  const h = await setup();
+  h.fs.createFile(h.target.id, "duplicate.txt", { content: "old" });
+  h.drop([h.file("first.txt"), h.file("duplicate.txt", "new")]);
+  await h.choose("cancel");
+  await settle(() => !h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.getChildren(h.target.id).map((node) => node.name)).toEqual([
+    "duplicate.txt",
+  ]);
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("old");
+});
+// The old file can get a new name while the question is open. Yes then
+// keeps that file, and the dropped file takes the free name.
+test("Yes never destroys a file that left the name while the question was open", async () => {
+  const h = await setup();
+  const old = h.fs.createFile(h.target.id, "duplicate.txt", {
+    content: "old",
+  });
+  h.drop([h.file("duplicate.txt", "new")]);
+  await settle(() => question(h));
+  h.fs.rename(old.id, "kept.txt");
+  await h.choose("yes");
+  await settle(() => h.fs.findChild(h.target.id, "duplicate.txt"));
+  expect(h.fs.getNode(old.id)).toMatchObject({
+    name: "kept.txt",
+    content: "old",
+  });
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("new");
+});
+// Like XP, one file asks Confirm File Replace with only Yes and No.
+test("one dropped file asks Confirm File Replace with Yes and No", async () => {
+  const h = await setup();
+  h.fs.createFile(h.target.id, "duplicate.txt", { content: "old" });
+  // The dropped file was saved on Friday, January 2, 2026.
+  h.drop([
+    h.file(
+      "duplicate.txt",
+      "new",
+      "text/plain",
+      new Date(2026, 0, 2, 13, 5, 9).getTime(),
+    ),
+  ]);
+  await settle(() => question(h));
+  const dialog = question(h);
+  expect(dialog.textContent).toContain(
+    "with this one?\n\n3 bytes\nmodified: Friday, January 2, 2026, 1:05:09 PM",
+  );
+  expect(dialog.querySelector(".title-text").textContent).toBe(
+    "Confirm File Replace",
+  );
+  expect(
+    [...dialog.querySelectorAll("button[data-action]")].map(
+      (button) => button.textContent,
+    ),
+  ).toEqual(["Yes", "No"]);
+  expect(dialog.textContent).toContain("3 bytes\nmodified: Today, ");
+  // Unlike a message box, XP's Confirm File Replace closes with Esc as No.
+  expect(dialog.querySelector(".close-btn").disabled).toBeFalse();
+  dialog.querySelector(".close-btn").click();
+  await settle(() => !h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("old");
 });

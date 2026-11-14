@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import { localRules } from "./tools/lint-rules.mjs";
 
 const projectDirectory = dirname(fileURLToPath(import.meta.url));
 const indexHtml = readFileSync(
@@ -33,6 +34,9 @@ const sharedDeclarationPattern = `^(?:${[...sharedDeclarations]
   .map((name) => name.replaceAll("$", "\\$"))
   .join("|")})$`;
 
+// The test files. The test lint rules check each of them.
+export const TEST_FILES = ["tests/**/*.ts", "scripts/**/*.test.ts"];
+
 export default defineConfig(
   {
     ignores: [
@@ -44,11 +48,13 @@ export default defineConfig(
       // A build stages its output here before it replaces dist/.
       ".dist-build-*/",
       "site/iframe/inside-the-firewall/",
+      // Emscripten builds this file. SOURCES.json names its source.
+      "site/apps/pinball/runtime/",
       "site/vendor/",
     ],
   },
   {
-    files: ["eslint.config.mjs"],
+    files: ["eslint.config.mjs", "tools/**/*.mjs"],
     extends: [js.configs.recommended],
     languageOptions: {
       globals: globals.node,
@@ -83,17 +89,7 @@ export default defineConfig(
     },
   },
   {
-    files: [
-      "site/apps/index.js",
-      "site/apps/catalog/**/*.js",
-      "site/apps/core/**/*.js",
-      "site/apps/programs/**/*.js",
-      "site/apps/system/**/*.js",
-      "site/apps/notepad/**/*.js",
-      "site/apps/task-manager/**/*.js",
-      "site/apps/paint/index.js",
-      "site/apps/pinball/index.js",
-    ],
+    files: ["site/apps/**/*.js"],
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: "latest",
@@ -119,6 +115,7 @@ export default defineConfig(
   {
     files: [
       "catalog/**/*.ts",
+      "scripts/**/*.ts",
       "tests/**/*.ts",
       "tools/**/*.ts",
       "worker/**/*.ts",
@@ -144,10 +141,17 @@ export default defineConfig(
     },
   },
   {
-    files: ["tests/**/*.ts"],
+    // Every file that bun test runs, in tests/ and next to the scripts.
+    files: TEST_FILES,
+    plugins: { local: localRules },
     rules: {
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/no-explicit-any": "off",
+      // An expect(...) with no matcher passes and checks nothing.
+      "local/expect-needs-matcher": "error",
+      // A .rejects or .resolves check that the test does not wait for
+      // checks nothing in time.
+      "local/await-async-expect": "error",
     },
   },
   prettier,

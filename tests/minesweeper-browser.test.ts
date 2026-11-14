@@ -10,6 +10,7 @@ import {
   login,
   flushShell,
 } from "./helpers/shell-harness";
+import { checkMenuBar } from "./helpers/menu-bar";
 afterEach(cleanupShells);
 async function setup(initialStorage = {}) {
   const s = await login(await loadShell({ initialStorage }));
@@ -230,4 +231,44 @@ test("Minesweeper restores a custom field, chords only with matching flags, and 
   );
   h.root.remove();
   await h.s.advanceTime(1000);
+});
+
+test("Minesweeper's menus follow XP's menu bar rules", async () => {
+  const h = await setup();
+  await checkMenuBar({
+    s: h.s,
+    win: h.win,
+    control: h.root,
+    accessKey: "g",
+    settle: flushShell,
+  });
+  // Choosing an item closes the menu and gives the keys back first.
+  h.root.focus();
+  h.root.dispatchEvent(
+    new h.s.window.KeyboardEvent("keydown", {
+      key: "g",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  h.command("expert");
+  expect(h.win.querySelector(".minesweeper-popup:not([hidden])")).toBeNull();
+  expect(h.s.document.activeElement === h.root).toBeTrue();
+  expect(h.cells()).toHaveLength(480);
+});
+
+test("Minesweeper keeps the keys on the same square of a new game", async () => {
+  const h = await setup();
+  const square = h.cells()[5];
+  square.focus();
+  square.dispatchEvent(
+    new h.s.window.KeyboardEvent("keydown", { key: "F2", bubbles: true }),
+  );
+  expect(square.isConnected).toBeFalse();
+  expect(h.s.document.activeElement === h.cells()[5]).toBeTrue();
+  // A smaller field gives them to its last square.
+  h.command("intermediate");
+  h.cells()[200].focus();
+  h.command("beginner");
+  expect(h.s.document.activeElement === h.cells().at(-1)).toBeTrue();
 });

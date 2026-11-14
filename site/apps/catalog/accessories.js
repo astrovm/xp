@@ -10,6 +10,8 @@ export const accessoryApplications = [
     "CommandPrompt.png",
     "terminal",
     {
+      // XP names a taskbar group by the description of the program file.
+      groupTitle: "Windows Command Processor",
       window: {
         width: 668,
         height: 338,
@@ -18,6 +20,8 @@ export const accessoryApplications = [
         resizable: true,
         maximizable: true,
         className: "xp-command-prompt-window",
+        // Each Command Prompt is its own window, like XP.
+        manyWindows: true,
       },
     },
   ),

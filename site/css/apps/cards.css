@@ -22,9 +22,11 @@
 }
 
 .cards-menu-bar > button:hover,
+.cards-menu-bar > button:focus-visible,
 .cards-menu-bar > button[aria-expanded="true"] {
   background: var(--sys-highlight);
   color: var(--sys-highlight-text);
+  outline: 0;
 }
 
 /* Menu items use the menu font, not the browser's button font. */

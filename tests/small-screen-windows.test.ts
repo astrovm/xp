@@ -32,7 +32,7 @@ const openPhone = async () => {
 const runCommand = async (s, command) => {
   clickStartAction(s, "run");
   const dialog = s.document.querySelector(".run-dialog");
-  dialog.querySelector("#run-command").value = command;
+  dialog.querySelector(".run-command").value = command;
   dialog.querySelector('[data-action="run"]').click();
   await settle();
 };

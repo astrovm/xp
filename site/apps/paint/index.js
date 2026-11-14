@@ -1,6 +1,7 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
 import { showXPAboutDialog } from "../core/about-dialog.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import { createCanvasEngine } from "./canvas-engine.js";
 import {
   showAttributesDialog,
@@ -111,7 +112,12 @@ const TOOLS = [
 ];
 
 const separator = ["separator"];
-const disabled = (command, label, shortcut = "") => [command, label, shortcut];
+const disabled = (command, label, shortcut = "") => [
+  command,
+  label,
+  shortcut,
+  { disabled: true },
+];
 const check = (command, label, shortcut = "") => [
   command,
   label,
@@ -163,21 +169,28 @@ const MENU_ITEMS = {
   Help: [["help", "Help Topics", "F1"], separator, ["about", "About Paint"]],
 };
 
-const createMenuBar = (run, panelVisible) => {
+const createMenuBar = (shell, run, panelVisible) => {
   const bar = document.createElement("div");
   bar.className = "paint-menu-bar";
   bar.setAttribute("role", "menubar");
-  const closeMenus = () =>
-    bar.querySelectorAll(".paint-menu").forEach((menu) => {
-      menu.hidden = true;
-    });
+  const menus = wireMenuBar({
+    windowElement: shell.windowElement,
+    bar,
+    showMenu: (trigger) => {
+      const menu = trigger.nextElementSibling;
+      menu.hidden = false;
+      return menu;
+    },
+  });
   for (const [name, items] of Object.entries(MENU_ITEMS)) {
     const group = document.createElement("div");
     group.className = "paint-menu-group";
     const trigger = document.createElement("button");
     trigger.type = "button";
-    trigger.textContent = name;
+    shell.setAccessKeyText(trigger, `&${name}`);
+    trigger.setAttribute("role", "menuitem");
     trigger.setAttribute("aria-haspopup", "menu");
+    trigger.setAttribute("aria-expanded", "false");
     const menu = document.createElement("div");
     menu.className = "paint-menu";
     menu.hidden = true;
@@ -190,6 +203,7 @@ const createMenuBar = (run, panelVisible) => {
       const item = document.createElement("button");
       item.type = "button";
       item.dataset.paintCommand = command;
+      item.setAttribute("role", "menuitem");
       item.disabled = options.disabled || false;
       item.innerHTML = `<span class="paint-menu-check"></span><span></span><span></span>`;
       item.children[1].textContent = label;
@@ -197,22 +211,14 @@ const createMenuBar = (run, panelVisible) => {
       if (options.check && panelVisible(command))
         item.children[0].textContent = "✓";
       item.addEventListener("click", () => {
-        closeMenus();
+        menus.close();
         run(command);
       });
       menu.appendChild(item);
     }
-    trigger.addEventListener("click", () => {
-      const opening = menu.hidden;
-      closeMenus();
-      menu.hidden = !opening;
-    });
     group.append(trigger, menu);
     bar.appendChild(group);
   }
-  document.addEventListener("pointerdown", (event) => {
-    if (!bar.contains(event.target)) closeMenus();
-  });
   return bar;
 };
 
@@ -248,6 +254,8 @@ const mountPaint = (shell, instance) => {
   canvas.className = "paint-canvas";
   canvas.setAttribute("aria-label", "Drawing canvas");
   canvas.tabIndex = 0;
+  // The canvas gets the keys when the window becomes active.
+  canvas.dataset.defaultFocus = "";
   canvas.getContext("2d").fillStyle = "#ffffff";
   canvas.getContext("2d").fillRect(0, 0, canvas.width, canvas.height);
   let fileId = null;
@@ -433,7 +441,7 @@ const mountPaint = (shell, instance) => {
     // to save it, like Save As.
     const canSaveInPlace = fileId && canWriteType && shell.folderOf(fileId);
     let destination =
-      canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
+      canSaveInPlace && !saveAs ? { inPlace: true, name: fileName } : null;
     if (!destination) {
       // The dialog adds .bmp unless a type Paint saves is typed. A new
       // picture, or one of a type Paint cannot write, starts without one.
@@ -452,12 +460,15 @@ const mountPaint = (shell, instance) => {
     try {
       const revisionToSave = editRevision;
       const content = await encodeCanvas(canvas, destination.name);
-      const file = destination.existingId
-        ? await shell.setFileContent(destination.existingId, content, {
-            expectedContent:
-              destination.existingId === fileId ? savedContent : undefined,
+      // Save writes the open picture, and stops if another window changed
+      // it. Save As finds the file again when Paint writes, after the
+      // Replace question and the encoding. Like Notepad's, it writes the
+      // file the user agreed to replace.
+      const file = destination.inPlace
+        ? await shell.setFileContent(fileId, content, {
+            expectedContent: savedContent,
           })
-        : await shell.createFile(
+        : await shell.writeFile(
             destination.parentId,
             destination.name,
             content,
@@ -573,7 +584,7 @@ const mountPaint = (shell, instance) => {
     }
   };
 
-  root.append(createMenuBar(run, (command) => panelState[command]));
+  root.append(createMenuBar(shell, run, (command) => panelState[command]));
   root.append(body, colors, status);
   updateFileCommandState();
   const removeScrollbars = installPaintScrollbars(
@@ -583,7 +594,7 @@ const mountPaint = (shell, instance) => {
   );
   root.addEventListener("keydown", (event) => {
     const modifier = event.ctrlKey || event.metaKey;
-    const key = event.key.toLowerCase();
+    const key = globalThis.XPDialogs.shortcutKeyOf(event);
     const command = modifier
       ? {
           n: "new",
@@ -617,8 +628,15 @@ const mountPaint = (shell, instance) => {
   return {
     element: root,
     beforeClose: confirmSaveChanges,
+    // The picture can go away or move while Paint asks to save. Paint then
+    // looks for it at its old path, and does not find it, like XP.
     async openFile(file) {
+      const path = shell.pathOf(file.id);
       if (!(await confirmSaveChanges())) return false;
+      if (shell.pathOf(file.id) !== path) {
+        await shell.dialogs.alert(`${path} was not found.`, "Paint", "warning");
+        return false;
+      }
       await loadFile(file);
       return true;
     },

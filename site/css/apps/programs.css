@@ -19,6 +19,10 @@
 .xp-dialog-modeless {
   pointer-events: none;
 }
+/* A dialog of a minimized window hides with it. */
+.xp-dialog-overlay[hidden] {
+  display: none;
+}
 .xp-dialog-modeless > .xp-dialog {
   pointer-events: auto;
 }
@@ -1730,7 +1734,20 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
   color: #000;
 }
 
+/* The rename box of a new folder, like the rename box in Explorer. */
+.dlg-file-rename {
+  width: 120px;
+  padding: 0 1px;
+  border: 1px solid #000;
+  font: inherit;
+}
+
 /* List: small icons in columns that flow left to right. */
+/* The items show where the keys are, so the list draws no ring. */
+.dlg-file-list:focus {
+  outline: none;
+}
+
 .dlg-file-list[data-view="list"] {
   display: flex;
   flex-direction: column;
@@ -1775,8 +1792,10 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-file-item {
+  gap: 5px;
   width: 112px;
-  margin: 8px 4px 2px;
+  /* A 125px pitch, the same as Explorer's: XP uses one list view for both. */
+  margin: 8px 6.5px 2px;
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-node-icon {
@@ -1784,14 +1803,15 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 100px;
-  height: 100px;
-  border: 1px solid #d0d0bf;
+  width: 96px;
+  height: 96px;
+  border: 1px solid #ece9d8;
   background: #fff;
 }
 
+/* XP rings a selected frame in blue. */
 .dlg-file-list[data-view="thumbnails"] .dlg-file-item.selected .dlg-node-icon {
-  border: 2px solid var(--sys-highlight, #316ac5);
+  outline: 3px solid var(--sys-highlight, #316ac5);
 }
 
 .dlg-file-list[data-view="thumbnails"] .dlg-node-icon img {
@@ -1800,13 +1820,11 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
 }
 
 /* A picture keeps its shape inside the frame, like XP's thumbnails. */
-.dlg-file-list[data-view="thumbnails"]
-  .dlg-node-icon
-  img.dlg-thumbnail-picture {
+.dlg-file-list[data-view="thumbnails"] .dlg-node-icon img.thumbnail-picture {
   width: auto;
   height: auto;
-  max-width: 96px;
-  max-height: 96px;
+  max-width: 94px;
+  max-height: 94px;
 }
 
 /* Tiles: a large icon beside the name, type and size. */
@@ -2033,6 +2051,48 @@ html[data-xp-appearance="classic"] .dlg-file-name-arrow {
     11px Tahoma,
     "Segoe UI",
     sans-serif;
+}
+
+/* XP's balloon tip, with its tail at the top left, under a text box. */
+.xp-balloon {
+  position: fixed;
+  z-index: 9900;
+  max-width: 320px;
+  padding: 8px 10px;
+  border: 1px solid #000;
+  border-radius: 7px;
+  background: #ffffe1;
+  box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.35);
+  color: #000;
+  font:
+    11px Tahoma,
+    "Segoe UI",
+    sans-serif;
+}
+
+.xp-balloon > div + div {
+  padding-left: 24px;
+}
+
+.xp-balloon::before,
+.xp-balloon::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  border: solid transparent;
+  border-width: 0 0 10px 10px;
+}
+
+.xp-balloon::before {
+  top: -10px;
+  border-bottom-color: #000;
+}
+
+.xp-balloon::after {
+  top: -8px;
+  left: 17px;
+  border-width: 0 0 9px 9px;
+  border-bottom-color: #ffffe1;
 }
 
 /* Customize Start Menu, positioned from the XP SP3 dialog at 1024×768. */

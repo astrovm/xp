@@ -55,6 +55,9 @@ html[data-xp-appearance="silver"] {
   align-items: stretch;
   background: transparent;
   isolation: isolate;
+  /* A press on the empty taskbar gives it the keys, like XP. It shows no
+     focus ring. */
+  outline: none;
 }
 
 #taskbar::before {

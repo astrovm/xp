@@ -1,3 +1,4 @@
+import { wireMenuBar } from "../../core/menu-bar.js";
 import { createProgramRoot } from "../ui.js";
 
 // sndvol32's mixer, laid out as XP SP3 shows it with the reference VM's
@@ -125,32 +126,18 @@ export const renderVolume = (context) => {
   // Menus, styled like Task Manager's. Advanced Controls stays gray: the
   // device has no tone controls.
   const menuBar = content.querySelector(".tm-menu-bar");
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuBar
-      .querySelectorAll(":scope > button")
-      .forEach((button) => button.setAttribute("aria-expanded", "false"));
-  };
-  MENUS.forEach(([label, items]) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("role", "menuitem");
-    button.setAttribute("aria-expanded", "false");
-    button.dataset.tmMenu = label.replace(/&/g, "").toLowerCase();
-    context.setAccessKeyText(button, label);
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
-      items.forEach((item) => {
+  const menuItems = new Map();
+  const menus = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = document.createElement("div");
+      menu.className = "tm-menu";
+      menu.setAttribute("role", "menu");
+      menu.style.left = `${button.offsetLeft}px`;
+      menuItems.get(button).forEach((item) => {
         if (item === "-") {
-          openMenu.insertAdjacentHTML(
+          menu.insertAdjacentHTML(
             "beforeend",
             '<div class="tm-menu-separator"></div>',
           );
@@ -166,14 +153,25 @@ export const renderVolume = (context) => {
         context.setAccessKeyText(text, itemLabel);
         entry.append(text, document.createElement("kbd"));
         entry.addEventListener("click", () => {
-          closeMenu();
+          menus.close();
           commands[command]();
         });
-        openMenu.append(entry);
+        menu.append(entry);
       });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
-    });
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
+  MENUS.forEach(([label, items]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.dataset.tmMenu = label.replace(/&/g, "").toLowerCase();
+    context.setAccessKeyText(button, label);
+    menuItems.set(button, items);
     menuBar.append(button);
   });
 

@@ -189,8 +189,13 @@ const renderTrayVisibility = () => {
     taskbarTrayExpanded ? "Hide inactive icons" : "Show hidden icons",
   );
   expand.setAttribute("aria-expanded", String(taskbarTrayExpanded));
-  document.getElementById("tray-volume-button").hidden =
-    hidden && !taskbarTrayExpanded;
+  const volume = document.getElementById("tray-volume-button");
+  const hideVolume = hidden && !taskbarTrayExpanded;
+  // A control that hides loses the keys to the page. The arrow next to it
+  // takes them instead.
+  if (hideVolume && document.activeElement === volume)
+    expand.focus({ preventScroll: true });
+  volume.hidden = hideVolume;
 };
 
 const applyTaskbarSettings = () => {
@@ -342,14 +347,19 @@ const openNewTaskbarToolbar = () => {
       },
     ),
     XPDialogs.createDialogButton({ id: "ok", label: "OK" }, () => {
+      // Like XP, the box takes no "." or ".." in a path, also where the
+      // path is full.
+      const dots = path.value
+        .split(/[\\/]/)
+        .some((part) => part.trim() === "." || part.trim() === "..");
       const id =
         path.value === fs.getNode(selected)?.name
           ? selected
-          : fs.resolvePath(path.value);
+          : !dots && fs.resolvePath(path.value);
       if (fs.getNode(id)?.type !== "folder") {
         void XPDialogs.alert(
-          "The folder could not be found.",
-          "New Toolbar",
+          `Cannot find '${path.value}'. Make sure the path or Internet address is correct.`,
+          "Toolbar",
           "error",
         );
         return;

@@ -1,6 +1,8 @@
 // @ts-nocheck -- Exercise Paint's real menus and dialogs with browser/storage boundaries.
 import { afterEach, expect, test } from "bun:test";
 import { cleanupShells, loadShell, flushShell } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
+import { checkMenuBar } from "./helpers/menu-bar";
 afterEach(cleanupShells);
 async function setup() {
   const s = await loadShell(),
@@ -42,10 +44,32 @@ async function setup() {
       });
     return element;
   };
+  // The paths of the pictures that a test moved.
+  const paths = new Map();
+  // Paint's window, as the shell gives it.
+  const windowElement = s.document.createElement("div");
+  windowElement.className = "xp-window";
+  windowElement.tabIndex = -1;
+  s.document.body.append(windowElement);
   const context = {
+    windowElement,
+    // The shell's access key text: the letter after & is underlined.
+    setAccessKeyText: (element, label) => {
+      const marker = label.indexOf("&");
+      const key = s.document.createElement("span");
+      key.className = "menu-accesskey";
+      key.textContent = label[marker + 1];
+      element.replaceChildren(
+        label.slice(0, marker),
+        key,
+        label.slice(marker + 2),
+      );
+    },
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
     pictureUrl: (file) => file.content || null,
+    // A test moves a picture by changing its path here.
+    pathOf: (id) => paths.get(id) ?? `C:\\Pictures\\${id}`,
     // "anim" and "deleted" stand for pictures in the Recycle Bin.
     folderOf: (id) =>
       id === "other"
@@ -66,7 +90,7 @@ async function setup() {
       name: "image.png",
       content: "image-data",
     }),
-    createFile: async (...args) => {
+    writeFile: async (...args) => {
       writes.push(args);
       return { id: "saved", name: args[1] };
     },
@@ -80,7 +104,7 @@ async function setup() {
     {},
   );
   const root = mounted.element;
-  s.document.body.append(root);
+  windowElement.append(root);
   const command = async (name) => {
     root.querySelector(`[data-paint-command="${name}"]`).click();
     await flushShell();
@@ -89,9 +113,10 @@ async function setup() {
     s.document.querySelector(`.xp-dialog [data-action="${id}"]`).click();
     await flushShell();
   };
-  const key = async (key, ctrlKey = false) => {
+  const key = async (key, ctrlKey = false, code = undefined) => {
     const event = new s.window.KeyboardEvent("keydown", {
       key,
+      code,
       ctrlKey,
       bubbles: true,
       cancelable: true,
@@ -102,9 +127,11 @@ async function setup() {
   };
   return {
     s,
+    windowElement,
     root,
     mounted,
     context,
+    paths,
     titles,
     messages,
     writes,
@@ -143,7 +170,11 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
+  // Save As finds the file when it writes, and the Replace answer is the
+  // only check, like Notepad's.
+  expect(h.writes[0]).toHaveLength(3);
   await h.command("save");
+  expect(h.writes[1][0]).toBe("saved");
   expect(h.writes[1][2]).toEqual({ expectedContent: h.writes[0][2] });
   await h.command("wallpaper-tiled");
   await h.command("wallpaper-centered");
@@ -154,9 +185,17 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   h.context.saveFile = async () => null;
   await h.command("save-as");
   expect(h.writes.length).toBe(2);
-  h.context.saveFile = async () => ({ existingId: "other", name: "other.png" });
+  h.context.saveFile = async () => ({
+    parentId: "pictures",
+    name: "other.png",
+    existingId: "other",
+  });
   await h.command("save-as");
-  expect(h.writes[2][2]).toEqual({ expectedContent: undefined });
+  expect(h.writes[2][0]).toBe("pictures");
+  expect(h.writes[2][1]).toBe("other.png");
+  // Save As onto the open picture writes it as it is now. Only Save checks
+  // that another window did not change it.
+  expect(h.writes[2]).toHaveLength(3);
   h.context.setFileContent = async () => {
     throw new Error("Document changed elsewhere");
   };
@@ -178,7 +217,7 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
 test("Paint does not close after new edits arrive while a save is pending", async () => {
   const h = await setup();
   let finish;
-  h.context.createFile = () =>
+  h.context.writeFile = () =>
     new Promise((resolve) => {
       finish = resolve;
     });
@@ -323,10 +362,30 @@ test("Paint tools, palette, menu checks and keyboard controls stay synchronized"
   expect(
     h.root.querySelector('[data-paint-panel="toolbox"]').hidden,
   ).toBeTrue();
-  await h.key("l", true);
+  // Like Windows, a Russian layout gives the letter of the key's place:
+  // its L key types "д".
+  await h.key("д", true, "KeyL");
   expect(
     h.root.querySelector('[data-paint-panel="colorbox"]').hidden,
   ).toBeTrue();
+  // AltGr types characters, such as "ł" on the L key of a Polish
+  // keyboard. Like XP, it runs no Ctrl shortcut, also from the text tool's
+  // box.
+  const box = h.s.document.createElement("textarea");
+  h.root.append(box);
+  for (const [key, code] of [
+    ["ł", "KeyL"],
+    ["ś", "KeyS"],
+    ["ą", "KeyA"],
+  ])
+    for (const event of pressAltGr(h.s.window, box, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  box.remove();
+  await flushShell();
+  expect(
+    h.root.querySelector('[data-paint-panel="colorbox"]').hidden,
+  ).toBeTrue();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
   await h.key("f", true);
   expect(h.root.classList.contains("paint-bitmap-view")).toBeTrue();
   await h.command("view-bitmap");
@@ -404,4 +463,43 @@ test("Paint accepts and cancels attributes, transformations and custom color dia
     await flushShell();
     expect(h.s.document.querySelectorAll(".xp-dialog").length).toBe(0);
   }
+});
+
+test("Paint's menus follow XP's menu bar rules", async () => {
+  const h = await setup();
+  await checkMenuBar({
+    s: h.s,
+    win: h.windowElement,
+    control: h.canvas,
+    accessKey: "f",
+    settle: flushShell,
+  });
+  // XP's gray items stay gray, so they never run another command.
+  for (const command of ["paste-from", "text-toolbar", "zoom"])
+    expect(
+      h.root.querySelector(`[data-paint-command="${command}"]`).disabled,
+    ).toBeTrue();
+});
+
+test("Paint does not open a picture that moved while it asked to save, like XP", async () => {
+  const h = await setup();
+  await h.command("clear-image");
+  const opening = h.mounted.openFile({
+    id: "moving",
+    name: "moving.png",
+    content: "data",
+  });
+  await flushShell();
+  h.paths.set("moving", "C:\\Elsewhere\\moving.png");
+  await h.answer("no");
+  const message = h.s.document.querySelectorAll(".xp-dialog");
+  expect(message[message.length - 1].textContent).toContain(
+    "C:\\Pictures\\moving was not found.",
+  );
+  expect(
+    message[message.length - 1].querySelector(".title-text").textContent,
+  ).toBe("Paint");
+  await h.answer("ok");
+  expect(await opening).toBeFalse();
+  expect(h.titles.at(-1)).toBe("untitled - Paint");
 });

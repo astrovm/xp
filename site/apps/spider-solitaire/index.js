@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import { createRandom } from "../freecell/game.js";
 import {
   CARD_HEIGHT,
@@ -693,49 +694,18 @@ const mountSpider = (context) => {
     return true;
   };
   const menuButtons = [];
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuButtons.forEach((button) =>
-      button.setAttribute("aria-expanded", "false"),
-    );
-  };
-  const refreshMenuBar = () => {
-    menuButtons.forEach((button) => {
-      if (button.dataset.command)
-        button.classList.toggle("disabled", !enabled(button.dataset.command));
-    });
-  };
-  MENUS.forEach(([label, items]) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("role", "menuitem");
-    button.dataset.spiderMenu = label.replace(/[&!]/g, "").toLowerCase();
-    context.setAccessKeyText(button, label);
-    if (typeof items === "string") {
-      // Deal! runs straight from the menu bar.
-      button.dataset.command = items;
-      button.addEventListener("click", () => {
-        closeMenu();
-        if (enabled(items)) void run(items);
-      });
-      menuButtons.push(button);
-      menuBar.append(button);
-      return;
-    }
-    button.setAttribute("aria-expanded", "false");
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
-      items.forEach((item) => {
+  const menuItems = new Map();
+  const menus = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = document.createElement("div");
+      menu.className = "tm-menu";
+      menu.setAttribute("role", "menu");
+      menu.style.left = `${button.offsetLeft}px`;
+      menuItems.get(button).forEach((item) => {
         if (item === "-") {
-          openMenu.insertAdjacentHTML(
+          menu.insertAdjacentHTML(
             "beforeend",
             '<div class="tm-menu-separator"></div>',
           );
@@ -753,21 +723,43 @@ const mountSpider = (context) => {
         key.textContent = shortcut;
         entry.append(text, key);
         entry.addEventListener("click", () => {
-          closeMenu();
+          menus.close();
           void run(command);
         });
-        openMenu.append(entry);
+        menu.append(entry);
       });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
+  const refreshMenuBar = () => {
+    menuButtons.forEach((button) => {
+      if (button.dataset.command)
+        button.classList.toggle("disabled", !enabled(button.dataset.command));
     });
+  };
+  MENUS.forEach(([label, items]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.dataset.spiderMenu = label.replace(/[&!]/g, "").toLowerCase();
+    context.setAccessKeyText(button, label);
     menuButtons.push(button);
     menuBar.append(button);
+    if (typeof items === "string") {
+      // Deal! runs straight from the menu bar.
+      button.dataset.command = items;
+      button.addEventListener("click", () => {
+        menus.close();
+        if (enabled(items)) void run(items);
+      });
+      return;
+    }
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    menuItems.set(button, items);
   });
-  const closeMenusOutside = (event) => {
-    if (openMenu && !menuBar.contains(event.target)) closeMenu();
-  };
-  document.addEventListener("pointerdown", closeMenusOutside);
 
   // ---- Message boxes, with spider.exe's buttons and defaults ----
   const ask = (text, buttons, defaultButton, icon = "question") =>
@@ -778,9 +770,10 @@ const mountSpider = (context) => {
         draw();
         return result;
       });
+  // Like XP's message box, Yes/No has a gray close button.
   const YES_NO = [
     { id: "yes", label: "&Yes" },
-    { id: "no", label: "&No", isCancel: true },
+    { id: "no", label: "&No" },
   ];
   const YES_NO_CANCEL = [
     { id: "yes", label: "&Yes" },
@@ -1745,27 +1738,30 @@ const mountSpider = (context) => {
     else if (command === "exit") context.close();
   };
 
-  // spider.exe's accelerators.
+  // spider.exe's accelerators. A letter follows the keyboard layout, like
+  // Windows.
+  const letter = (event) => globalThis.XPDialogs.shortcutKeyOf(event);
   const KEYS = [
     [(event) => event.key === "F1", "contents"],
     [(event) => event.key === "F2", "new"],
-    [(event) => event.ctrlKey && event.code === "KeyN", "new"],
+    [(event) => event.ctrlKey && letter(event) === "n", "new"],
     [(event) => event.key === "F3", "difficulty"],
     [(event) => event.key === "F4" && !event.altKey, "statistics"],
     [(event) => event.key === "F5", "options"],
-    [(event) => event.ctrlKey && event.code === "KeyZ", "undo"],
-    [(event) => event.ctrlKey && event.code === "KeyS", "save"],
-    [(event) => event.ctrlKey && event.code === "KeyO", "open"],
-    [(event) => event.code === "KeyD", "deal"],
-    [(event) => event.code === "KeyM", "hint"],
+    [(event) => event.ctrlKey && letter(event) === "z", "undo"],
+    [(event) => event.ctrlKey && letter(event) === "s", "save"],
+    [(event) => event.ctrlKey && letter(event) === "o", "open"],
+    [(event) => letter(event) === "d", "deal"],
+    [(event) => letter(event) === "m", "hint"],
   ];
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay")) return;
-    if (openMenu) {
-      if (event.key === "Escape") closeMenu();
+    if (globalThis.XPDialogs.isModalOpen()) return;
+    if (menus.isOpen()) {
+      if (event.key === "Escape") menus.close();
       return;
     }
-    if (event.key === "Escape") {
+    // Ctrl+Esc and Alt+Esc belong to the shell.
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {
       // Esc hides Spider, the boss key.
       event.preventDefault();
       context.minimize();
@@ -1827,7 +1823,6 @@ const mountSpider = (context) => {
       if (fireworks) fireworks.stop = true;
       currentSound?.pause();
       resizeObserver.disconnect();
-      document.removeEventListener("pointerdown", closeMenusOutside);
       document.removeEventListener("mouseup", releaseOffBoard);
       context.windowElement.removeEventListener("keydown", handleKeydown);
     },

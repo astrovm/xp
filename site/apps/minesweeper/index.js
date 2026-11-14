@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import {
   MINESWEEPER_LEVELS,
   adjacentMineCount,
@@ -107,14 +108,16 @@ const readSettings = () => {
   }
 };
 
-const createMenu = (label, items) => {
+const createMenu = (label, items, setAccessKeyText) => {
   const group = document.createElement("div");
   group.className = "minesweeper-menu-group";
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "minesweeper-menu-trigger";
-  trigger.textContent = label;
+  setAccessKeyText(trigger, label);
+  trigger.setAttribute("role", "menuitem");
   trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-expanded", "false");
   const popup = document.createElement("div");
   popup.className = "minesweeper-popup";
   popup.hidden = true;
@@ -133,32 +136,19 @@ const createMenu = (label, items) => {
     button.innerHTML = `<span data-check></span><span>${item.label}</span><kbd>${item.key || ""}</kbd>`;
     popup.appendChild(button);
   }
-  const close = () => {
-    popup.hidden = true;
-    trigger.classList.remove("open");
-  };
-  trigger.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const open = popup.hidden;
-    document
-      .querySelectorAll(".minesweeper-popup:not([hidden])")
-      .forEach((menu) => {
-        menu.hidden = true;
-      });
-    popup.hidden = !open;
-    trigger.classList.toggle("open", open);
-  });
-  popup.addEventListener("click", close);
   group.append(trigger, popup);
-  return { group, popup, close };
+  return { group, popup };
 };
 
 const mountMinesweeper = (context, instance) => {
   const root = document.createElement("div");
   root.className = "xp-native-program xp-minesweeper";
   root.tabIndex = 0;
+  // The board gets the keys when the window becomes active.
+  root.dataset.defaultFocus = "";
   const menuBar = document.createElement("div");
   menuBar.className = "minesweeper-menu-bar";
+  menuBar.setAttribute("role", "menubar");
   const content = document.createElement("section");
   content.className = "minesweeper-content";
   const scorePanel = document.createElement("div");
@@ -346,6 +336,8 @@ const mountMinesweeper = (context, instance) => {
     setCounter(mineCounter, level.mines);
     setCounter(timeCounter, 0);
     setFace("normal");
+    // A cell with the keys gives them to the same cell of the new game.
+    const keysIndex = [...board.children].indexOf(document.activeElement);
     board.replaceChildren();
     board.style.gridTemplateColumns = `repeat(${level.columns}, 16px)`;
     root.classList.toggle("monochrome", !color);
@@ -368,6 +360,8 @@ const mountMinesweeper = (context, instance) => {
       });
       board.appendChild(cell);
     }
+    if (keysIndex >= 0)
+      (board.children[keysIndex] || board.lastElementChild).focus();
     resizeWindow();
     updateMenuChecks();
     saveSettings();
@@ -419,33 +413,51 @@ const mountMinesweeper = (context, instance) => {
     ]);
   };
 
-  const gameMenu = createMenu("Game", [
-    { label: "New", command: "new", key: "F2" },
-    { separator: true },
-    { label: "Beginner", command: "beginner" },
-    { label: "Intermediate", command: "intermediate" },
-    { label: "Expert", command: "expert" },
-    { label: "Custom...", command: "custom" },
-    { separator: true },
-    { label: "Marks (?)", command: "marks" },
-    { label: "Color", command: "color" },
-    { label: "Sound", command: "sound" },
-    { separator: true },
-    { label: "Best Times...", command: "best-times" },
-    { separator: true },
-    { label: "Exit", command: "exit" },
-  ]);
-  const helpMenu = createMenu("Help", [
-    { label: "Contents", command: "contents", key: "F1" },
-    { label: "Search for Help on...", command: "search-help" },
-    { label: "Using Help", command: "using-help" },
-    { separator: true },
-    { label: "About Minesweeper...", command: "about" },
-  ]);
+  const gameMenu = createMenu(
+    "&Game",
+    [
+      { label: "New", command: "new", key: "F2" },
+      { separator: true },
+      { label: "Beginner", command: "beginner" },
+      { label: "Intermediate", command: "intermediate" },
+      { label: "Expert", command: "expert" },
+      { label: "Custom...", command: "custom" },
+      { separator: true },
+      { label: "Marks (?)", command: "marks" },
+      { label: "Color", command: "color" },
+      { label: "Sound", command: "sound" },
+      { separator: true },
+      { label: "Best Times...", command: "best-times" },
+      { separator: true },
+      { label: "Exit", command: "exit" },
+    ],
+    context.setAccessKeyText,
+  );
+  const helpMenu = createMenu(
+    "&Help",
+    [
+      { label: "Contents", command: "contents", key: "F1" },
+      { label: "Search for Help on...", command: "search-help" },
+      { label: "Using Help", command: "using-help" },
+      { separator: true },
+      { label: "About Minesweeper...", command: "about" },
+    ],
+    context.setAccessKeyText,
+  );
   menuBar.append(gameMenu.group, helpMenu.group);
+  const menus = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (trigger) => {
+      const popup = trigger.nextElementSibling;
+      popup.hidden = false;
+      return popup;
+    },
+  });
   gameMenu.popup.addEventListener("click", (event) => {
     const command = event.target.closest("[data-command]")?.dataset.command;
     if (!command) return;
+    menus.close();
     if (command === "new") initialize();
     else if (MINESWEEPER_LEVELS[command]) initialize(command);
     else if (command === "custom") showCustomDialog();
@@ -477,12 +489,14 @@ const mountMinesweeper = (context, instance) => {
   });
   helpMenu.popup.addEventListener("click", (event) => {
     const command = event.target.closest("[data-command]")?.dataset.command;
+    if (!command) return;
+    menus.close();
     if (command === "about") {
       context.showMessage(
         "About Minesweeper",
         "Minesweeper\nCopyright © 1981-2001 Microsoft Corporation",
       );
-    } else if (command) {
+    } else {
       context.showMessage(
         "Minesweeper Help",
         "Uncover every square that does not contain a mine. Use the numbers to determine where mines are hidden.",
@@ -490,13 +504,6 @@ const mountMinesweeper = (context, instance) => {
     }
   });
   reset.addEventListener("click", () => initialize());
-  const closeMenus = (event) => {
-    if (!root.contains(event.target)) {
-      gameMenu.close();
-      helpMenu.close();
-    }
-  };
-  document.addEventListener("pointerdown", closeMenus);
   const handleKeydown = (event) => {
     if (event.key === "F2") {
       event.preventDefault();
@@ -515,7 +522,6 @@ const mountMinesweeper = (context, instance) => {
     element: root,
     unmount() {
       stopTimer();
-      document.removeEventListener("pointerdown", closeMenus);
     },
   };
 };

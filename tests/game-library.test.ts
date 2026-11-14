@@ -684,12 +684,18 @@ describe("game library browser integration", () => {
           throw new Error("the existing store must be reused");
         },
         transaction() {
-          // Each outcome fires once transactionDone listens for it.
+          // Each outcome fires once transactionDone listens for it. Like a
+          // browser, an error event comes from the failed request, and the
+          // transaction has no error yet.
           const fire = (event, callback) => {
             if ((transaction.event ?? "complete") !== event) return;
             setTimeout(() => {
-              tx.error = transaction.error;
-              callback();
+              if (event === "error")
+                callback({ target: { error: transaction.error } });
+              else {
+                tx.error = transaction.error;
+                callback();
+              }
             });
           };
           const tx = {

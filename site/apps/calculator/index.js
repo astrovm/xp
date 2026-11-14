@@ -1,5 +1,6 @@
 import { applicationMetadata } from "./metadata.js";
 import { defineApplication } from "../core/application.js";
+import { wireMenuBar } from "../core/menu-bar.js";
 import {
   dialogUnitsX,
   dialogUnitsY,
@@ -226,10 +227,20 @@ const CONTROL_KEYS = {
   d: "s",
 };
 
+// The command of a typed character, such as "@" for x^2.
+const characterCommand = (key) =>
+  /^[a-z]$/i.test(key)
+    ? LETTER_KEYS[key.toUpperCase()] || null
+    : CHARACTER_KEYS[key] || null;
+
 const commandForKey = (event) => {
+  // AltGr types a character, such as "@" on a German keyboard, and the
+  // character works like a typed one, like XP.
+  if (globalThis.XPDialogs.isAltGr(event))
+    return characterCommand(globalThis.XPDialogs.typedCharacterOf(event));
   if (event.altKey || event.metaKey) return null;
   if (event.ctrlKey) {
-    const letter = event.key.toLowerCase();
+    const letter = globalThis.XPDialogs.shortcutKeyOf(event);
     if (event.key === "Insert") return "copy";
     if (event.shiftKey) return letter === "k" ? "about" : null;
     if (letter === "c") return "copy";
@@ -237,9 +248,7 @@ const commandForKey = (event) => {
   }
   if (event.shiftKey && event.key === "Insert") return "paste";
   if (NAMED_KEYS[event.key]) return NAMED_KEYS[event.key];
-  if (/^[a-z]$/i.test(event.key))
-    return LETTER_KEYS[event.key.toUpperCase()] || null;
-  return CHARACTER_KEYS[event.key] || null;
+  return characterCommand(event.key);
 };
 
 const readSettings = () => {
@@ -601,33 +610,18 @@ const mountCalculator = (context) => {
       ["&Help", [["&About Calculator", "about", ""]]],
     ];
   };
-  const menuButtons = [];
-  let openMenu = null;
-  const closeMenu = () => {
-    openMenu?.remove();
-    openMenu = null;
-    menuButtons.forEach((button) =>
-      button.setAttribute("aria-expanded", "false"),
-    );
-  };
-  menus().forEach(([label], index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.setAttribute("role", "menuitem");
-    button.setAttribute("aria-expanded", "false");
-    button.dataset.calculatorMenu = label.replace(/&/g, "").toLowerCase();
-    context.setAccessKeyText(button, label);
-    button.addEventListener("click", () => {
-      const wasOpen = Boolean(openMenu);
-      closeMenu();
-      if (wasOpen) return;
-      openMenu = document.createElement("div");
-      openMenu.className = "tm-menu";
-      openMenu.setAttribute("role", "menu");
-      openMenu.style.left = `${button.offsetLeft}px`;
+  const menuControl = wireMenuBar({
+    windowElement: context.windowElement,
+    bar: menuBar,
+    showMenu: (button) => {
+      const menu = document.createElement("div");
+      menu.className = "tm-menu";
+      menu.setAttribute("role", "menu");
+      menu.style.left = `${button.offsetLeft}px`;
+      const index = [...menuBar.children].indexOf(button);
       menus()[index][1].forEach((item) => {
         if (item === "-") {
-          openMenu.insertAdjacentHTML(
+          menu.insertAdjacentHTML(
             "beforeend",
             '<div class="tm-menu-separator"></div>',
           );
@@ -645,22 +639,26 @@ const mountCalculator = (context) => {
         shortcutText.textContent = shortcut;
         entry.append(text, shortcutText);
         entry.addEventListener("click", () => {
-          closeMenu();
+          menuControl.close();
           run(command);
         });
-        openMenu.append(entry);
+        menu.append(entry);
       });
-      menuBar.append(openMenu);
-      button.setAttribute("aria-expanded", "true");
-    });
-    menuButtons.push(button);
+      menuBar.append(menu);
+      return menu;
+    },
+    hideMenu: (menu) => menu.remove(),
+  });
+  menus().forEach(([label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", "false");
+    button.dataset.calculatorMenu = label.replace(/&/g, "").toLowerCase();
+    context.setAccessKeyText(button, label);
     menuBar.append(button);
   });
-  const closeMenusOutside = (event) => {
-    if (openMenu && !menuBar.contains(event.target)) closeMenu();
-  };
-  document.addEventListener("pointerdown", closeMenusOutside);
-
   const setView = (scientific) => {
     if (scientific === settings.scientific) return;
     // Changing the view closes the Statistics Box.
@@ -696,14 +694,14 @@ const mountCalculator = (context) => {
     setTimeout(() => button.classList.remove("pressed"), 20);
   };
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay:not(.xp-dialog-modeless)"))
-      return;
+    if (globalThis.XPDialogs.isModalOpen()) return;
     // Ctrl+V arrives as a paste event, with the clipboard's text.
-    if (event.ctrlKey && event.key.toLowerCase() === "v") return;
+    if (event.ctrlKey && globalThis.XPDialogs.shortcutKeyOf(event) === "v")
+      return;
     const command = commandForKey(event);
     if (!command) return;
     event.preventDefault();
-    closeMenu();
+    menuControl.close();
     flash(command);
     run(command);
   };
@@ -730,7 +728,6 @@ const mountCalculator = (context) => {
     element: root,
     unmount() {
       closeStatistics();
-      document.removeEventListener("pointerdown", closeMenusOutside);
       context.windowElement.removeEventListener("keydown", handleKeydown);
       context.windowElement.removeEventListener("paste", handlePaste);
     },

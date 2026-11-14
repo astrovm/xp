@@ -18,6 +18,9 @@
 })(globalThis, function (root) {
   const STORAGE_KEY = "virtualFileSystem";
   const FS_VERSION = 1;
+  // The one user account. Its profile folder in Documents and Settings has
+  // its name, and every program that shows the user takes it from here.
+  const USER_NAME = "astro";
 
   const WELL_KNOWN = {
     MY_COMPUTER: "my-computer",
@@ -115,27 +118,39 @@
   const INVALID_NAME_CHARACTERS = /[<>:"/\\\\|?*\u0000-\u001f]/;
   const RESERVED_DEVICE_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
+  // A refused name throws an error with a code: "name-required",
+  // "name-invalid" (a character, or a period or space at the end) or
+  // "name-reserved" (a DOS device name).
+  const nameError = (code, message) =>
+    Object.assign(new Error(message), { code });
   const validateName = (name) => {
     if (typeof name !== "string" && typeof name !== "number") {
-      throw new Error("VirtualFS: a name is required");
+      throw nameError("name-required", "You must type a file name.");
     }
 
     const rawName = String(name);
     const normalizedName = rawName.trim();
     if (!normalizedName) {
-      throw new Error("VirtualFS: a name is required");
+      throw nameError("name-required", "You must type a file name.");
     }
     if (INVALID_NAME_CHARACTERS.test(rawName)) {
-      throw new Error(`VirtualFS: "${rawName}" contains invalid characters`);
+      throw nameError(
+        "name-invalid",
+        'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |',
+      );
     }
     if (/[.\s]$/.test(rawName)) {
-      throw new Error(
-        `VirtualFS: "${rawName}" cannot end with a period or space`,
+      throw nameError(
+        "name-invalid",
+        `${rawName}\nThe above file name is invalid.`,
       );
     }
     const baseName = normalizedName.split(".")[0].trimEnd();
     if (RESERVED_DEVICE_NAMES.test(baseName)) {
-      throw new Error(`VirtualFS: "${rawName}" is a reserved device name`);
+      throw nameError(
+        "name-reserved",
+        `${rawName}\nThis file name is reserved for use by Windows.\nChoose another name and try again.`,
+      );
     }
     return normalizedName;
   };
@@ -174,7 +189,11 @@
       "Documents and Settings",
       WELL_KNOWN.DRIVE_C,
     );
-    folder(WELL_KNOWN.USER_PROFILE, "astro", WELL_KNOWN.DOCUMENTS_AND_SETTINGS);
+    folder(
+      WELL_KNOWN.USER_PROFILE,
+      USER_NAME,
+      WELL_KNOWN.DOCUMENTS_AND_SETTINGS,
+    );
     folder(
       WELL_KNOWN.ALL_USERS,
       "All Users",
@@ -233,11 +252,21 @@
     seedFolders.forEach((seedNode) => {
       const existing = nodes[seedNode.id];
       if (existing) {
-        existing.type = "folder";
-        existing.name = seedNode.name;
-        existing.protected = true;
-        existing.hidden = seedNode.hidden;
-        existing.parent = seedNode.parent;
+        // Each seed field except the dates and the children comes back.
+        // A stored app, for example, would give the folder another icon.
+        Object.assign(existing, {
+          type: "folder",
+          name: seedNode.name,
+          protected: true,
+          hidden: seedNode.hidden,
+          parent: seedNode.parent,
+          size: seedNode.size,
+          ext: seedNode.ext,
+          content: seedNode.content,
+          app: seedNode.app,
+          originalParent: seedNode.originalParent,
+          originalName: seedNode.originalName,
+        });
         existing.children = Array.isArray(existing.children)
           ? existing.children.filter((childId) => nodes[childId])
           : [];
@@ -394,11 +423,23 @@
       currentId = WELL_KNOWN.RECYCLE_BIN;
       segments.shift();
     } else {
+      // A path with no drive has no folder to start from, so "." and ".."
+      // have no meaning in it. XP finds no folder for them.
+      if (segments.some((segment) => segment === "." || segment === ".."))
+        return null;
       currentId = WELL_KNOWN.MY_COMPUTER;
     }
 
+    // Like Windows, "." is the folder itself and ".." is the folder above
+    // it, by the text of the path, before any name is looked up. ".." stops
+    // at the top, such as the root of a drive.
+    const names = [];
     for (const segment of segments) {
-      const match = findChild(currentId, segment);
+      if (segment === "..") names.pop();
+      else if (segment !== ".") names.push(segment);
+    }
+    for (const name of names) {
+      const match = findChild(currentId, name);
       if (!match) return null;
       currentId = match.id;
     }
@@ -479,7 +520,9 @@
   const requireNode = (id) => {
     const node = nodes[id];
     if (!node) {
-      throw new Error(`VirtualFS: item "${id}" not found`);
+      throw new Error(
+        "Cannot find the file or folder. Make sure the path and file name are correct.",
+      );
     }
     return node;
   };
@@ -487,7 +530,7 @@
   const requireFolder = (id) => {
     const node = requireNode(id);
     if (!isFolder(node)) {
-      throw new Error(`VirtualFS: "${node.name}" is not a folder`);
+      throw new Error(`${node.name} is not a folder.`);
     }
     return node;
   };
@@ -500,6 +543,72 @@
       );
       touch(parent.id);
     }
+  };
+
+  // XP's titles for a failed change. The Explorer and the desktop show
+  // them on their error boxes.
+  const ERROR_TITLES = {
+    delete: "Error Deleting File or Folder",
+    move: "Error Moving File or Folder",
+    rename: "Error Renaming File or Folder",
+  };
+
+  // An error with XP's text and title. Its code lets the Command Prompt
+  // show its own text.
+  const changeError = (verb, text, code) => {
+    const error = new Error(text);
+    error.code = code;
+    error.title = ERROR_TITLES[verb];
+    return error;
+  };
+
+  const accessDenied = (verb, node) =>
+    changeError(
+      verb,
+      `Cannot ${verb} ${node.name}: Access is denied.\n\nMake sure the disk is not full or write-protected and that the file is not currently in use.`,
+      "access-denied",
+    );
+
+  const IN_USE_TEXT =
+    "It is being used by another person or program.\n\nClose any programs that might be using the file and try again.";
+
+  // The folders that programs are in, such as the folder of a Command
+  // Prompt. XP locks each of them and every folder above them.
+  const foldersInUse = new Map();
+
+  const useFolder = (owner, id) => {
+    foldersInUse.set(owner, id);
+  };
+
+  const releaseFolder = (owner) => {
+    foldersInUse.delete(owner);
+  };
+
+  // Throws XP's error when an item cannot be deleted, moved or renamed. A
+  // protected item and a folder above a folder in use are "access denied".
+  // The folder in use itself is "in use". A move of either names the
+  // folder in use, because XP copies the items first and then cannot
+  // remove that folder.
+  const checkChange = (verb, id) => {
+    const node = requireNode(id);
+    if (node.protected) throw accessDenied(verb, node);
+    const usedId = [...foldersInUse.values()].find(
+      (folderId) => folderId === id || isDescendantOf(id, folderId),
+    );
+    if (!usedId) return;
+    const code = usedId === id ? "in-use" : "access-denied";
+    if (verb === "move")
+      throw changeError(
+        verb,
+        `Cannot remove folder ${nodes[usedId].name}: ${IN_USE_TEXT}`,
+        code,
+      );
+    if (code === "access-denied") throw accessDenied(verb, node);
+    throw changeError(
+      verb,
+      `Cannot ${verb} ${node.name}: ${IN_USE_TEXT}`,
+      code,
+    );
   };
 
   const createNode = (parentId, name, type, options = {}) => {
@@ -540,16 +649,25 @@
   const createFile = (parentId, name, options) =>
     createNode(parentId, name, "file", options);
 
+  // A rename to the same name changes nothing, so like XP nothing checks
+  // that the item can change.
   const rename = (id, newName) => {
     const node = requireNode(id);
-    if (node.protected) {
-      throw new Error(`Cannot rename "${node.name}": access is denied`);
-    }
     const validName = validateName(newName);
     if (node.name === validName) return node;
-    node.name = node.parent
-      ? dedupeName(node.parent, validName, false, id)
-      : validName;
+    checkChange("rename", id);
+    // Like XP, a rename never takes the name of another item in its folder.
+    if (
+      node.parent &&
+      dedupeName(node.parent, validName, false, id) !== validName
+    ) {
+      const error = new Error(
+        `Cannot rename ${node.name}: A file with the name you specified already exists. Specify a different file name.`,
+      );
+      error.code = "name-exists";
+      throw error;
+    }
+    node.name = validName;
     if (node.type === "file") {
       node.ext = extractExtension(node.name);
     }
@@ -559,16 +677,18 @@
     return node;
   };
 
+  // An item that is already in the target folder stays, and like XP
+  // nothing checks it, so a folder in use does not show an error.
   const move = (id, targetParentId) => {
     const node = requireNode(id);
     const target = requireFolder(targetParentId);
-    if (node.protected) {
-      throw new Error(`Cannot move "${node.name}": access is denied`);
-    }
-    if (id === targetParentId || isDescendantOf(id, targetParentId)) {
-      throw new Error(`Cannot move "${node.name}" into itself`);
-    }
     if (node.parent === targetParentId) return node;
+    checkChange("move", id);
+    if (id === targetParentId || isDescendantOf(id, targetParentId)) {
+      throw new Error(
+        `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
+      );
+    }
 
     detach(node);
     node.name = dedupeName(targetParentId, node.name);
@@ -588,7 +708,9 @@
     const node = requireNode(id);
     requireFolder(targetParentId);
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
-      throw new Error(`Cannot copy "${node.name}" into itself`);
+      throw new Error(
+        `Cannot copy ${node.name}: The destination folder is a subfolder of the source folder.`,
+      );
     }
 
     const cloneRecursive = (sourceId, parentId, forcedName) => {
@@ -627,9 +749,7 @@
   const destroy = (id) => {
     const node = nodes[id];
     if (!node) return;
-    if (node.protected) {
-      throw new Error(`Cannot delete "${node.name}": access is denied`);
-    }
+    checkChange("delete", id);
     const erase = (nodeId) => {
       const current = nodes[nodeId];
       [...current.children].forEach(erase);
@@ -644,9 +764,7 @@
   // in the Recycle Bin destroys it permanently.
   const remove = (id) => {
     const node = requireNode(id);
-    if (node.protected) {
-      throw new Error(`Cannot delete "${node.name}": access is denied`);
-    }
+    checkChange("delete", id);
     if (isInRecycleBin(id)) {
       destroy(id);
       return;
@@ -664,15 +782,18 @@
     emitChange();
   };
 
-  const restore = (id) => {
+  // An item goes back to targetId, or else to the folder it was deleted
+  // from. If that folder is gone or in the bin, it goes to the Desktop.
+  const restore = (id, targetId = null) => {
     const node = requireNode(id);
     if (node.parent !== WELL_KNOWN.RECYCLE_BIN) {
-      throw new Error("Only items in the Recycle Bin can be restored");
+      throw new Error("Only items in the Recycle Bin can be restored.");
     }
-    const targetId =
-      node.originalParent &&
-      isFolder(nodes[node.originalParent]) &&
-      !isInRecycleBin(node.originalParent)
+    const usable = (folderId) =>
+      isFolder(nodes[folderId]) && !isInRecycleBin(folderId);
+    targetId = usable(targetId)
+      ? targetId
+      : usable(node.originalParent)
         ? node.originalParent
         : WELL_KNOWN.DESKTOP;
     const restoredName = node.originalName || node.name;
@@ -708,7 +829,7 @@
   const setContent = (id, content, { name, expectedContent } = {}) => {
     const node = requireNode(id);
     if (node.type !== "file") {
-      throw new Error(`VirtualFS: "${node.name}" is not a file`);
+      throw new Error(`${node.name} is not a file.`);
     }
     if (expectedContent !== undefined && node.content !== expectedContent) {
       throw new Error(
@@ -753,27 +874,32 @@
     folderHandler = handler;
   };
 
-  const open = (id) => {
+  // Opens an item with its handler. It gives false when no handler opens
+  // it, else { folder, result }: result is what the handler gives, such as
+  // the window that opens.
+  const launch = (id) => {
     const node = requireNode(id);
-    if (node.type === "folder") {
-      if (!folderHandler) return false;
-      folderHandler(node);
-      return true;
-    }
-    const handler =
-      (node.app && fileTypeHandlers.get(`app:${node.app}`)) ||
-      fileTypeHandlers.get((node.ext || "").toLowerCase()) ||
-      fileTypeHandlers.get("*");
-    if (!handler) return false;
-    handler(node);
-    return true;
+    const folder = node.type === "folder";
+    const handler = folder
+      ? folderHandler
+      : (node.app && fileTypeHandlers.get(`app:${node.app}`)) ||
+        fileTypeHandlers.get((node.ext || "").toLowerCase()) ||
+        fileTypeHandlers.get("*");
+    return handler ? { folder, result: handler(node) } : false;
   };
+
+  const open = (id) => launch(id) !== false;
+
+  // The drive of an item, such as "C:". An item that is on no drive, such
+  // as My Computer, has the drive of Windows, like XP.
+  const driveOf = (id) => /^[a-z]:/i.exec(getPath(id) ?? "")?.[0] ?? "C:";
 
   // ---- Testing hook ----
 
   const resetForTests = () => {
     storage.removeItem(STORAGE_KEY);
     nodes = seedNodes();
+    foldersInUse.clear();
     listeners.clear();
     fileTypeHandlers.clear();
     folderHandler = null;
@@ -987,6 +1113,7 @@
     },
     ...WELL_KNOWN,
     WELL_KNOWN,
+    USER_NAME,
     transaction,
     close: () => {
       channel?.close();
@@ -1003,8 +1130,12 @@
     isDescendantOf,
     isInRecycleBin,
     isProtected,
+    checkChange,
+    useFolder,
+    releaseFolder,
     getSize,
     validateName,
+    INVALID_NAME_CHARACTERS,
     extractExtension,
     createFolder: mutate(createFolder),
     createFile: mutate(createFile),
@@ -1021,6 +1152,8 @@
     getPictureUrl,
     setContent: mutate(setContent),
     registerFileType,
+    launch,
+    driveOf,
     registerFolderHandler,
     open,
     resetForTests,

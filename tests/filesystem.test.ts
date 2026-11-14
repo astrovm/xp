@@ -74,6 +74,24 @@ describe("virtual filesystem", () => {
     expect(fs.resolvePath("F:\\")).toBe(fs.DRIVE_F);
   });
 
+  // A path with no drive has no folder to start from, so "." and ".."
+  // in it find nothing, like XP's Explorer and New Toolbar. A full path
+  // counts them by its text.
+  test("finds no folder for . and .. in a path with no drive", () => {
+    for (const path of [
+      ".",
+      "..",
+      "x\\..",
+      ".\\My Documents",
+      "My Computer\\..",
+    ])
+      expect([path, fs.resolvePath(path)]).toEqual([path, null]);
+    expect(fs.resolvePath("C:\\nope\\..\\Documents and Settings\\.")).toBe(
+      fs.resolvePath("C:\\Documents and Settings"),
+    );
+    expect(fs.resolvePath("C:\\..\\..")).toBe(fs.DRIVE_C);
+  });
+
   test("resolves the paths it gives to Recycle Bin items", () => {
     const file = fs.createFile(fs.MY_DOCUMENTS, "binned.txt");
     fs.remove(file.id);
@@ -103,12 +121,36 @@ describe("virtual filesystem", () => {
       expect(
         () => fs.validateName(name),
         `rejects ${JSON.stringify(name)}`,
-      ).toThrow(/VirtualFS:/);
+      ).toThrow(
+        /You must type a file name|cannot contain|file name is invalid|reserved for use by Windows/,
+      );
+      expect(
+        () => fs.validateName(name),
+        `rejects ${JSON.stringify(name)} without a module name`,
+      ).not.toThrow(/VirtualFS|FileOperations/);
     });
 
     expect(() => fs.createFolder(fs.MY_DOCUMENTS, "invalid?folder")).toThrow(
-      /invalid characters/,
+      /cannot contain any of the following characters/,
     );
+  });
+
+  test("gives each refused name a code, so callers can choose their message", () => {
+    const code = (name) => {
+      try {
+        fs.validateName(name);
+      } catch (error) {
+        return error.code;
+      }
+      return null;
+    };
+    expect(code(null)).toBe("name-required");
+    expect(code("  ")).toBe("name-required");
+    expect(code("a?b")).toBe("name-invalid");
+    expect(code("trailing.")).toBe("name-invalid");
+    expect(code("con")).toBe("name-reserved");
+    expect(code("Lpt1.txt")).toBe("name-reserved");
+    expect(code("console.txt")).toBeNull();
   });
 
   test("creates folders and files with timestamps and sizes", () => {
@@ -131,13 +173,35 @@ describe("virtual filesystem", () => {
 
     fs.rename(file.id, "todo.txt");
     expect(fs.getNode(file.id).name).toBe("todo.txt");
-    expect(() => fs.rename(file.id, "AUX.txt")).toThrow(/reserved device name/);
+    expect(() => fs.rename(file.id, "AUX.txt")).toThrow(
+      /reserved for use by Windows/,
+    );
     expect(
       fs.getNode(file.id).name,
       "invalid rename leaves node unchanged",
     ).toBe("todo.txt");
     const duplicate = fs.createFile(folder.id, "todo.txt");
     expect(duplicate.name).toBe("todo (2).txt");
+  });
+
+  test("refuses a rename to the name of another item, like XP", () => {
+    const { folder, file } = createTestFolder();
+    const other = fs.createFile(folder.id, "other.txt");
+    let refused;
+    try {
+      fs.rename(other.id, "NOTES.TXT");
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused.code).toBe("name-exists");
+    expect(refused.message).toBe(
+      "Cannot rename other.txt: A file with the name you specified already exists. Specify a different file name.",
+    );
+    expect(fs.getNode(other.id).name).toBe("other.txt");
+    // An item can still change the case of its own name.
+    expect(fs.rename(file.id, file.name.toUpperCase()).name).toBe(
+      file.name.toUpperCase(),
+    );
   });
 
   test('copies folders recursively, naming same-folder copies "Copy of"', () => {
@@ -158,9 +222,15 @@ describe("virtual filesystem", () => {
     const { folder } = createTestFolder();
     const subFolder = fs.createFolder(folder.id, "Sub");
 
-    expect(() => fs.move(folder.id, subFolder.id)).toThrow(/into itself/);
-    expect(() => fs.move(folder.id, folder.id)).toThrow(/into itself/);
-    expect(() => fs.copy(folder.id, subFolder.id)).toThrow(/into itself/);
+    expect(() => fs.move(folder.id, subFolder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
+    expect(() => fs.move(folder.id, folder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
+    expect(() => fs.copy(folder.id, subFolder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
     fs.move(subFolder.id, fs.MY_PICTURES);
     expect(fs.getNode(subFolder.id).parent).toBe(fs.MY_PICTURES);
   });
@@ -168,11 +238,11 @@ describe("virtual filesystem", () => {
   test("denies changes to protected system items", () => {
     const { folder } = createTestFolder();
 
-    expect(() => fs.remove(fs.MY_DOCUMENTS)).toThrow(/access is denied/);
-    expect(() => fs.destroy(fs.DESKTOP)).toThrow(/access is denied/);
-    expect(() => fs.rename(fs.DRIVE_C, "X")).toThrow(/access is denied/);
+    expect(() => fs.remove(fs.MY_DOCUMENTS)).toThrow(/Access is denied/);
+    expect(() => fs.destroy(fs.DESKTOP)).toThrow(/Access is denied/);
+    expect(() => fs.rename(fs.DRIVE_C, "X")).toThrow(/Access is denied/);
     expect(() => fs.move(fs.MY_PICTURES, folder.id)).toThrow(
-      /access is denied/,
+      /Access is denied/,
     );
     expect(fs.isProtected(fs.RECYCLE_BIN)).toBeTruthy();
   });
@@ -434,13 +504,18 @@ describe("virtual filesystem edge cases", () => {
     expect(fs.getParent(fs.MY_COMPUTER)).toBeNull();
     expect(fs.getChildren("missing")).toEqual([]);
     expect(fs.getPath("missing")).toBeNull();
+    // An item that is on no drive, or that is gone, has the drive of
+    // Windows, like XP.
+    expect(fs.driveOf("missing")).toBe("C:");
+    expect(fs.driveOf(fs.MY_COMPUTER)).toBe("C:");
+    expect(fs.driveOf(fs.DRIVE_D)).toBe("D:");
     expect(fs.getSize("missing")).toBe(0);
     expect(fs.resolvePath(null)).toBeNull();
     expect(fs.resolvePath("   ")).toBeNull();
     expect(fs.resolvePath("\\\\")).toBeNull();
     expect(fs.resolvePath("Recycle Bin")).toBe(fs.RECYCLE_BIN);
     expect(() => fs.createFolder(fs.DESKTOP, null)).toThrow(
-      "a name is required",
+      "You must type a file name.",
     );
     expect(fs.createFolder(fs.DESKTOP, 2026).name).toBe("2026");
     expect(fs.createFile(fs.DESKTOP, "README").ext).toBe("");
@@ -499,12 +574,14 @@ describe("virtual filesystem edge cases", () => {
     installMemoryStorage();
     const fs = loadFilesystem();
     const file = fs.createFile(fs.DESKTOP, "note.txt");
-    expect(() => fs.rename("missing", "x")).toThrow('item "missing" not found');
+    expect(() => fs.rename("missing", "x")).toThrow(
+      "Cannot find the file or folder.",
+    );
     expect(() => fs.createFile(file.id, "child.txt")).toThrow(
-      "is not a folder",
+      "is not a folder.",
     );
     expect(() => fs.restore(file.id)).toThrow("Only items in the Recycle Bin");
-    expect(() => fs.setContent(fs.DESKTOP, "text")).toThrow("is not a file");
+    expect(() => fs.setContent(fs.DESKTOP, "text")).toThrow("is not a file.");
     expect(fs.getContent(fs.DESKTOP)).toBeNull();
     expect(fs.move(file.id, fs.DESKTOP)).toBe(fs.getNode(file.id));
     expect(fs.destroy("missing")).toBeUndefined();
