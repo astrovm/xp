@@ -999,6 +999,162 @@ describe("file operations", () => {
     expect(fs.isInRecycleBin(deep.id)).toBe(false);
   });
 
+  // Like XP, an item that goes back where an item of the same restore went
+  // is a question too. Yes replaces the item that went back first.
+  test("restore asks about two items that go back to the same name", async () => {
+    const first = operations.createFile(fs.MY_DOCUMENTS, "twin.txt", {
+      content: "first",
+    });
+    operations.removeToBin([first.id]);
+    const second = operations.createFile(fs.MY_DOCUMENTS, "TWIN.txt", {
+      content: "second",
+    });
+    operations.removeToBin([second.id]);
+    const asked = [];
+    const answer =
+      (decision) =>
+      ({ source, existing }) => {
+        asked.push([source.id, existing.id, existing.name]);
+        return decision;
+      };
+    // No: the second item stays in the bin.
+    let result = await operations.restore(
+      [first.id, second.id],
+      answer("skip"),
+    );
+    expect(asked).toEqual([[second.id, first.id, "twin.txt"]]);
+    expect(result.results.map((node) => node.id)).toEqual([first.id]);
+    expect(fs.getNode(first.id).parent).toBe(fs.MY_DOCUMENTS);
+    expect(fs.isInRecycleBin(second.id)).toBe(true);
+    // Cancel: both stay in the bin.
+    operations.removeToBin([first.id]);
+    asked.length = 0;
+    result = await operations.restore([first.id, second.id], answer("cancel"));
+    expect(result.cancelled).toBe(true);
+    expect(fs.isInRecycleBin(first.id)).toBe(true);
+    expect(fs.isInRecycleBin(second.id)).toBe(true);
+    // Yes: the second item replaces the first.
+    result = await operations.restore([first.id, second.id], answer("replace"));
+    expect(result.results.map((node) => node.id)).toEqual([second.id]);
+    expect(fs.getNode(first.id)).toBeNull();
+    expect(fs.getNode(second.id)).toMatchObject({
+      parent: fs.MY_DOCUMENTS,
+      name: "TWIN.txt",
+    });
+    expect(
+      fs.getChildren(fs.MY_DOCUMENTS).filter((node) => /twin/i.test(node.name)),
+    ).toHaveLength(1);
+  });
+
+  test("restore joins two folders of the same restore that have one name", async () => {
+    const one = operations.createFolder(fs.MY_DOCUMENTS, "Pair");
+    const a = operations.createFile(one.id, "a.txt");
+    const clash = operations.createFile(one.id, "same.txt");
+    operations.removeToBin([one.id]);
+    const two = operations.createFolder(fs.MY_DOCUMENTS, "Pair");
+    const b = operations.createFile(two.id, "b.txt");
+    const same = operations.createFile(two.id, "same.txt");
+    operations.removeToBin([two.id]);
+    const asked = [];
+    await operations.restore([one.id, two.id], ({ existing }) => {
+      asked.push(existing.name);
+      return "replace";
+    });
+    expect(asked).toEqual(["Pair", "same.txt"]);
+    expect(fs.getNode(one.id).parent).toBe(fs.MY_DOCUMENTS);
+    expect(fs.getNode(two.id)).toBeNull();
+    expect(
+      fs
+        .getChildren(one.id)
+        .map((node) => node.id)
+        .sort(),
+    ).toEqual([a.id, b.id, same.id].sort());
+    expect(fs.getNode(clash.id)).toBeNull();
+  });
+
+  // A folder inside a joined folder joins the folder with its name too. An
+  // item from it goes back there, not to the Desktop.
+  test("restore sends an item to a folder that joined inside a joined folder", async () => {
+    const top = operations.createFolder(fs.MY_DOCUMENTS, "Top");
+    const inner = operations.createFolder(top.id, "Inner");
+    const deep = operations.createFolder(inner.id, "Deep");
+    const file = operations.createFile(deep.id, "file.txt");
+    const moved = operations.createFile(inner.id, "moved.txt");
+    operations.removeToBin([file.id]);
+    operations.removeToBin([top.id]);
+    const newTop = operations.createFolder(fs.MY_DOCUMENTS, "Top");
+    const newInner = operations.createFolder(newTop.id, "Inner");
+    const newDeep = operations.createFolder(newInner.id, "Deep");
+    const asked = [];
+    const { results } = await operations.restore(
+      [top.id, file.id],
+      ({ existing }) => {
+        asked.push(existing.name);
+        return "replace";
+      },
+    );
+    expect(asked).toEqual(["Top", "Inner", "Deep"]);
+    expect(results.map((node) => node.id)).toEqual([newTop.id, file.id]);
+    expect(fs.getNode(file.id).parent).toBe(newDeep.id);
+    expect(fs.getNode(moved.id).parent).toBe(newInner.id);
+    expect(fs.getNode(top.id)).toBeNull();
+  });
+
+  // Like a paste, an item that leaves the bin while a question is open
+  // stays where it is now.
+  test("restore skips an item that left the bin during a question", async () => {
+    const asks = operations.createFile(fs.MY_DOCUMENTS, "asks.txt");
+    const leaves = operations.createFile(fs.MY_DOCUMENTS, "leaves.txt");
+    const gone = operations.createFile(fs.MY_DOCUMENTS, "gone.txt");
+    operations.removeToBin([asks.id, leaves.id, gone.id]);
+    operations.createFile(fs.MY_DOCUMENTS, "asks.txt");
+    const other = operations.createFolder(fs.MY_DOCUMENTS, "Other");
+    const { results } = await operations.restore(
+      [leaves.id, gone.id, asks.id],
+      () => {
+        fs.move(leaves.id, other.id);
+        fs.destroy(gone.id);
+        return "skip";
+      },
+    );
+    expect(results).toEqual([]);
+    expect(fs.getNode(leaves.id).parent).toBe(other.id);
+    expect(fs.getNode(gone.id)).toBeNull();
+    expect(fs.isInRecycleBin(asks.id)).toBe(true);
+  });
+
+  test("writeFile finds the file with the name when it writes", async () => {
+    const folder = operations.createFolder(fs.MY_DOCUMENTS, "Saves");
+    const made = operations.writeFile(folder.id, "Doc.txt", "one");
+    expect(made).toMatchObject({ parent: folder.id, name: "Doc.txt" });
+    // The file keeps the case of its name, like Windows.
+    const replaced = operations.writeFile(folder.id, "doc.TXT", "two");
+    expect(replaced.id).toBe(made.id);
+    expect(fs.getNode(made.id)).toMatchObject({ name: "Doc.txt" });
+    expect(fs.getContent(made.id)).toBe("two");
+    // The open file must still have the content that the program read.
+    expect(() =>
+      operations.writeFile(folder.id, "Doc.txt", "three", {
+        keepId: made.id,
+        expectedContent: "one",
+      }),
+    ).toThrow("This file changed in another window.");
+    // Another file never gets that check.
+    operations.writeFile(folder.id, "Doc.txt", "three", {
+      keepId: "other",
+      expectedContent: "one",
+    });
+    expect(fs.getContent(made.id)).toBe("three");
+    operations.createFolder(folder.id, "Sub");
+    expect(() => operations.writeFile(folder.id, "sub", "x")).toThrow(
+      "Cannot create the sub file. A folder with the name you specified already exists. Specify a different file name.",
+    );
+    operations.removeToBin([folder.id]);
+    expect(() => operations.writeFile(folder.id, "late.txt", "x")).toThrow(
+      "You cannot save in the folder you specified.",
+    );
+  });
+
   test("restore reports a file that cannot take the name of a folder", async () => {
     const file = operations.createFile(fs.MY_DOCUMENTS, "item");
     operations.removeToBin([file.id]);

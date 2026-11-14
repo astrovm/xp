@@ -533,6 +533,14 @@
     }
   };
 
+  // The error for a protected item. Its code lets the Command Prompt show
+  // its own text.
+  const accessDenied = (verb, node) => {
+    const error = new Error(`Cannot ${verb} ${node.name}: Access is denied.`);
+    error.code = "access-denied";
+    return error;
+  };
+
   const createNode = (parentId, name, type, options = {}) => {
     const parent = requireFolder(parentId);
     const validName = validateName(name);
@@ -574,7 +582,7 @@
   const rename = (id, newName) => {
     const node = requireNode(id);
     if (node.protected) {
-      throw new Error(`Cannot rename ${node.name}: Access is denied.`);
+      throw accessDenied("rename", node);
     }
     const validName = validateName(newName);
     if (node.name === validName) return node;
@@ -603,7 +611,7 @@
     const node = requireNode(id);
     const target = requireFolder(targetParentId);
     if (node.protected) {
-      throw new Error(`Cannot move ${node.name}: Access is denied.`);
+      throw accessDenied("move", node);
     }
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
       throw new Error(
@@ -672,7 +680,7 @@
     const node = nodes[id];
     if (!node) return;
     if (node.protected) {
-      throw new Error(`Cannot delete ${node.name}: Access is denied.`);
+      throw accessDenied("delete", node);
     }
     const erase = (nodeId) => {
       const current = nodes[nodeId];
@@ -689,7 +697,7 @@
   const remove = (id) => {
     const node = requireNode(id);
     if (node.protected) {
-      throw new Error(`Cannot delete ${node.name}: Access is denied.`);
+      throw accessDenied("delete", node);
     }
     if (isInRecycleBin(id)) {
       destroy(id);

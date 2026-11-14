@@ -64,8 +64,8 @@ const applicationContext = (win) => ({
     return parent && !fs.isInRecycleBin(parent) ? parent : null;
   },
   setFileContent: (id, content, options) => fs.setContent(id, content, options),
-  createFile: (parentId, name, content) =>
-    fileOps.createFile(parentId, name, { content }),
+  writeFile: (parentId, name, content, options) =>
+    fileOps.writeFile(parentId, name, content, options),
   setWallpaper(dataUrl) {
     const desktop = document.getElementById("desktop");
     desktop.style.setProperty("--desktop-background", `url("${dataUrl}")`);

@@ -35,14 +35,16 @@ const formatDate = (timestamp) => {
 // cmd.exe adds DOS rules: "?" at the end of a name part also matches no
 // character, so "note?.txt" matches "note.txt". A "." before only
 // wildcards also matches the end of the name, so "*.*" matches "noext". A
-// "*" before a "." stops at the last period of the name.
+// "*" before a "." takes any text but the last period of the name, so
+// "*.tar.gz" matches "a.b.tar.gz", and "*." matches only names with no
+// extension.
 const wildcardRegExp = (pattern) => {
   let source = "";
   const characters = [...pattern];
   for (const [index, character] of characters.entries()) {
     const rest = characters.slice(index + 1).join("");
     if (character === "*")
-      source += rest.startsWith(".") ? "(?:[^.]*|.*(?=\\.[^.]*$))" : ".*";
+      source += rest.startsWith(".") ? "(?:[^.]|\\.(?=.*\\.))*" : ".*";
     else if (character === "?")
       source += /^\?*(?:\.|$)/.test(rest) ? "[^.]?" : ".";
     else if (character === "." && /^[*?]*$/.test(rest)) source += "(?:\\.|$)";
@@ -405,7 +407,12 @@ export class CommandSession {
     if (!source.items.length) return { output: NOT_FOUND };
     const typed = paths[1] ?? "";
     const target = this.destination(typed || ".");
-    if (!target) return { output: PATH_NOT_FOUND };
+    // A folder in the Recycle Bin, such as a current folder that was
+    // deleted, takes no new files.
+    const takesFiles = (folderId) =>
+      !!this.fs.getNode(folderId) && !this.fs.isInRecycleBin(folderId);
+    if (!target || !takesFiles(target.folderId))
+      return { output: PATH_NOT_FOUND };
     if (target.single && source.many) {
       if (move)
         return { output: "Cannot move multiple files to a single file." };
@@ -473,6 +480,17 @@ export class CommandSession {
             continue;
           }
           session.fs.destroy(current.id);
+        }
+        // The folder can go away while a question is open.
+        if (!takesFiles(folderId)) {
+          out.push(PATH_NOT_FOUND);
+          continue;
+        }
+        // A protected item shows cmd.exe's text, and the next item goes
+        // on.
+        if (move && session.fs.isProtected(item.id)) {
+          out.push(ACCESS_DENIED);
+          continue;
         }
         const placed = move
           ? session.fs.move(item.id, folderId)
@@ -657,9 +675,11 @@ export class CommandSession {
         lines.push(
           error?.code === "name-exists" || error?.code === "name-required"
             ? DUPLICATE_NAME
-            : error?.code
-              ? SYNTAX_ERROR
-              : errorText(error),
+            : error?.code === "access-denied"
+              ? ACCESS_DENIED
+              : error?.code
+                ? SYNTAX_ERROR
+                : errorText(error),
         );
       }
     }
@@ -685,6 +705,7 @@ export class CommandSession {
       short: false,
       time: "w",
       wide: false,
+      pause: false,
       paths: [],
     };
     for (const arg of args) {
@@ -735,12 +756,14 @@ export class CommandSession {
           case "x":
             options.short = on;
             break;
-          // /N, /4 and /P are on or have no effect here: the names are
-          // always on the right, years have 4 digits, and the window
-          // scrolls.
+          // /P pauses after each screen of output.
+          case "p":
+            options.pause = on;
+            break;
+          // /N and /4 are on or have no effect here: the names are always
+          // on the right, and years have 4 digits.
           case "n":
           case "4":
-          case "p":
             break;
           default:
             return { error: `Invalid switch - "${part}".` };
@@ -940,9 +963,9 @@ export class CommandSession {
       if (!options.bare && !options.recurse)
         lines.push("", ` Directory of ${this.displayPath(folderId)}`, "");
       lines.push("File Not Found");
-      return { output: lines.join("\n") };
+      return { output: lines.join("\n"), paged: options.pause };
     }
-    if (options.bare) return { output: lines.join("\n") };
+    if (options.bare) return { output: lines.join("\n"), paged: options.pause };
     if (options.recurse)
       lines.push(
         "",
@@ -951,7 +974,7 @@ export class CommandSession {
       );
     else lines.push(filesLine(total.files, total.bytes));
     lines.push(freeLine(total.folders));
-    return { output: lines.join("\n") };
+    return { output: lines.join("\n"), paged: options.pause };
   }
 
   command_echo(args, line) {
@@ -1025,6 +1048,7 @@ export class CommandSession {
     if (!node || node.type !== "folder") {
       return { output: "The system cannot find the path specified." };
     }
+    if (node.protected) return { output: ACCESS_DENIED };
     if (this.fs.getChildren(node.id).length && !recursive) {
       return { output: "The directory is not empty." };
     }

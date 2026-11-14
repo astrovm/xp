@@ -167,6 +167,50 @@ test("Notepad saves a deleted file outside the Recycle Bin, under its own name",
   expect(h.fs.getContent(saved.id)).toBe("kept");
   expect(h.fs.getContent(h.file.id)).toBe("first\nsecond");
 });
+// The Replace question waits for the user. Notepad finds the file again
+// when it writes.
+test("Notepad checks the file again after the Replace question", async () => {
+  const h = await setup();
+  const other = h.fs.createFolder(h.fs.MY_DOCUMENTS, "Other");
+  // The file moved away during the question: it keeps its content, and a
+  // new file takes the name.
+  h.edit("one");
+  await h.command("save-as");
+  await h.choose("note.txt");
+  h.fs.move(h.file.id, other.id);
+  await h.answer("yes");
+  expect(h.fs.getContent(h.file.id)).toBe("first\nsecond");
+  const fresh = h.fs.findChild(h.fs.MY_DOCUMENTS, "note.txt");
+  expect(fresh.id === h.file.id).toBeFalse();
+  expect(h.fs.getContent(fresh.id)).toBe("one");
+  // The file went to the Recycle Bin during the question: it stays as it
+  // was there.
+  const binned = h.fs.createFile(h.fs.MY_DOCUMENTS, "bin.txt", {
+    content: "old",
+  });
+  h.edit("two");
+  await h.command("save-as");
+  await h.choose("bin.txt");
+  h.fs.remove(binned.id);
+  await h.answer("yes");
+  expect(h.fs.getContent(binned.id)).toBe("old");
+  expect(h.fs.getContent(h.fs.findChild(h.fs.MY_DOCUMENTS, "bin.txt").id)).toBe(
+    "two",
+  );
+  // A folder took the name during the question: Notepad shows an error.
+  const gone = h.fs.createFile(h.fs.MY_DOCUMENTS, "gone.txt", { content: "" });
+  await h.command("save-as");
+  await h.choose("gone.txt");
+  h.fs.destroy(gone.id);
+  h.fs.createFolder(h.fs.MY_DOCUMENTS, "gone.txt");
+  await h.answer("yes");
+  expect(
+    [...h.s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain(
+    "Cannot create the gone.txt file. A folder with the name you specified already exists.",
+  );
+  await h.answer("ok");
+});
 test("Notepad switching files preserves a canceled draft and saves on confirmation", async () => {
   const h = await setup(),
     other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
@@ -212,8 +256,8 @@ test("Notepad reports invalid and failed saves and ignores empty clipboard actio
   await h.choose("draft");
   expect(h.fs.findChild(folder.id, "draft.txt")).toBeTruthy();
 
-  const createFile = h.s.window.FileOperations.createFile;
-  h.s.window.FileOperations.createFile = async () => {
+  const writeFile = h.s.window.FileOperations.writeFile;
+  h.s.window.FileOperations.writeFile = async () => {
     throw new Error("");
   };
   try {
@@ -222,7 +266,7 @@ test("Notepad reports invalid and failed saves and ignores empty clipboard actio
     expect(dialogText()).toContain("The file could not be saved.");
     await h.answer("ok");
   } finally {
-    h.s.window.FileOperations.createFile = createFile;
+    h.s.window.FileOperations.writeFile = writeFile;
   }
   const setContent = h.fs.setContent;
   h.fs.setContent = async () => {

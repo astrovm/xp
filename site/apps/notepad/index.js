@@ -65,15 +65,13 @@ const mountNotepad = (context, instance) => {
     const { name } = result;
     const contentToSave = editor.value;
     try {
-      // Save As never names a folder: its name opens the folder instead.
-      let target = result.existingId && fs.getNode(result.existingId);
-      if (!target) {
-        target = await fileOps.createFile(result.parentId, name, {
-          content: contentToSave,
-        });
-      } else {
-        await fs.setContent(target.id, contentToSave, { name });
-      }
+      // The file is found again when Notepad writes, after the Replace
+      // question.
+      const target = await fileOps.writeFile(
+        result.parentId,
+        name,
+        contentToSave,
+      );
       win.nodeId = target.id;
       savedContent = contentToSave;
       win.dirty = editor.value !== savedContent;

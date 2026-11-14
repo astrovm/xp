@@ -657,6 +657,48 @@ describe("Command Prompt like cmd.exe", () => {
     );
   });
 
+  test("protected items and deleted folders get cmd.exe's own texts", () => {
+    run("cd /d C:\\");
+    // REN and RD on a protected folder print only cmd.exe's text.
+    expect(run('ren "Documents and Settings" x')).toBe("Access is denied.");
+    expect(run('rd /s "Documents and Settings"')).toBe("Access is denied.");
+    expect(fs.resolvePath("C:\\Documents and Settings")).toBeTruthy();
+    // A protected file in a wildcard MOVE shows the text, and MOVE goes on.
+    const t = folderAt("t");
+    const d = folderAt("d");
+    file(t, "a.txt");
+    const locked = file(t, "b.txt");
+    file(t, "c.txt");
+    fs.getNode(locked.id).protected = true;
+    expect(run("move C:\\t\\*.txt C:\\d")).toBe(
+      "C:\\t\\a.txt\nC:\\t\\b.txt\nAccess is denied.\nC:\\t\\c.txt",
+    );
+    expect(fs.getChildren(d).map((node) => node.name)).toEqual([
+      "a.txt",
+      "c.txt",
+    ]);
+    // A current folder that went to the Recycle Bin takes no new files.
+    run("cd /d C:\\d");
+    fs.remove(d);
+    expect(run("copy C:\\t\\b.txt")).toBe(
+      "The system cannot find the path specified.",
+    );
+    expect(run("copy C:\\t\\b.txt .")).toBe(
+      "The system cannot find the path specified.",
+    );
+    expect(fs.getChildren(d)).toHaveLength(2);
+    // A folder that goes away while the question is open takes nothing.
+    const e = folderAt("e");
+    file(e, "b.txt");
+    run("cd /d C:\\t");
+    expect(run("copy b.txt C:\\e")).toBe("");
+    expect(session.prompt).toBe("Overwrite C:\\e\\b.txt? (Yes/No/All): ");
+    fs.remove(e);
+    expect(run("y")).toBe(
+      "The system cannot find the path specified.\n        0 file(s) copied.",
+    );
+  });
+
   test("wildcards follow the DOS rules", () => {
     expect(matchesPattern("noext", "*.*")).toBeTrue();
     expect(matchesPattern("note.txt", "note?.txt")).toBeTrue();
@@ -666,6 +708,12 @@ describe("Command Prompt like cmd.exe", () => {
     expect(matchesPattern("notes.txt", "?ote.txt")).toBeFalse();
     expect(matchesPattern("a.b.c", "*.c")).toBeTrue();
     expect(matchesPattern("abc", "abc.")).toBeTrue();
+    // A "*" before a period takes any text but the last period.
+    expect(matchesPattern("a.b.tar.gz", "*.tar.gz")).toBeTrue();
+    expect(matchesPattern("a.b.txt", "*.txt")).toBeTrue();
+    expect(matchesPattern("notes.txt.bak", "*.txt")).toBeFalse();
+    expect(matchesPattern("noext", "*.")).toBeTrue();
+    expect(matchesPattern("a.txt", "*.")).toBeFalse();
     const t = folderAt("t");
     for (const name of ["noext", "note.txt", "note1.txt", "notes.txt"])
       file(t, name);

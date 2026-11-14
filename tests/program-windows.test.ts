@@ -211,7 +211,7 @@ test("programs launch other applications, save files and set the wallpaper", asy
   ).toBeTrue();
 
   const fs = s.window.VirtualFS;
-  const file = context.createFile(fs.MY_DOCUMENTS, "saved.txt", "old");
+  const file = context.writeFile(fs.MY_DOCUMENTS, "saved.txt", "old");
   expect(fs.getContent(file.id)).toBe("old");
   context.setFileContent(file.id, "new");
   expect(fs.getContent(file.id)).toBe("new");
@@ -219,10 +219,10 @@ test("programs launch other applications, save files and set the wallpaper", asy
   expect(context.folderOf("missing")).toBeNull();
   // A deleted picture's folder is in the Recycle Bin. Paint never saves there.
   const folder = fs.createFolder(fs.MY_PICTURES, "Trip");
-  const photo = context.createFile(folder.id, "beach.png", "");
+  const photo = context.writeFile(folder.id, "beach.png", "");
   fs.remove(folder.id);
   expect(context.folderOf(photo.id)).toBeNull();
-  expect(() => context.createFile(folder.id, "late.png", "")).toThrow(
+  expect(() => context.writeFile(folder.id, "late.png", "")).toThrow(
     /You cannot save in the folder you specified/,
   );
   // Paint reads pictures through the shell, sample pictures included.

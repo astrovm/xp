@@ -92,6 +92,10 @@
     ".png": "PNG Image",
     ".txt": "Text Document",
   };
+  // A type that XP knows by name, like "Text Document". XP asks before a
+  // rename changes the extension of a file of such a type.
+  const isKnownFileType = (ext) =>
+    Object.hasOwn(XP_FILE_TYPES, String(ext || "").toLowerCase());
   const describeFileType = (ext) => {
     const extension = String(ext || "").toLowerCase();
     if (!extension) return "File";
@@ -109,13 +113,35 @@
     return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
   };
 
+  // The input types that are not text boxes.
+  const NOT_TEXT_INPUTS = new Set([
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ]);
+  // A control that takes typed text.
+  const isEditable = (target) =>
+    Boolean(target) &&
+    (target.isContentEditable === true ||
+      target.tagName === "TEXTAREA" ||
+      (target.tagName === "INPUT" && !NOT_TEXT_INPUTS.has(target.type)));
+
   // The letter of an access key, such as F in Alt+F. On a Mac, Option
-  // changes the character (Option+F types "ƒ", and Option+E starts an
-  // accent), so a key that is not a plain letter or digit gives the letter
-  // of its place on the keyboard.
+  // changes the character (Option+F types "ƒ"). Outside a text box, a key
+  // that is not a plain letter or digit gives the letter of its place on
+  // the keyboard. In a text box, the key gives only its own character, so
+  // Option types that character there. A dead key (Option+E starts an
+  // accent) is never an access key.
   const accessKeyOf = (event) => {
+    if (event.key === "Dead") return "";
     const key = event.key.toLowerCase();
-    if (/^[a-z0-9]$/.test(key)) return key;
+    if (/^[a-z0-9]$/.test(key) || isEditable(event.target)) return key;
     const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
     return place ? (place[1] ?? place[2]).toLowerCase() : key;
   };
@@ -137,6 +163,7 @@
       accessKeyOf,
       isComposingKey,
       describeFileType,
+      isKnownFileType,
       formatBytes,
       formatDetailsDate,
       formatKilobytes,
@@ -224,10 +251,43 @@
     input.setSelectionRange(start + text.length, start + text.length);
   };
 
+  // Like an XP edit box, a one-line text box keeps only the first line of
+  // pasted text. Each browser does a different thing with the line breaks,
+  // so the box puts in the first line itself.
+  const ONE_LINE_INPUTS = new Set([
+    "text",
+    "search",
+    "url",
+    "tel",
+    "email",
+    "password",
+  ]);
+  document.addEventListener(
+    "paste",
+    (event) => {
+      const input = event.target;
+      if (
+        input.tagName !== "INPUT" ||
+        !ONE_LINE_INPUTS.has(input.type) ||
+        input.readOnly ||
+        input.disabled
+      )
+        return;
+      const text = event.clipboardData?.getData("text/plain") ?? "";
+      const firstLine = text.split(/\r\n|\r|\n/)[0];
+      if (firstLine === text) return;
+      event.preventDefault();
+      const { selectionStart, selectionEnd } = input;
+      if (firstLine || selectionStart !== selectionEnd)
+        replaceText(input, selectionStart, selectionEnd, firstLine);
+    },
+    true,
+  );
+
   // A file name box takes no character that Windows refuses in a name.
   // Like XP's rename box, it drops the character and shows a balloon. Typed,
-  // pasted and dropped text never gets in. A line break in pasted text goes
-  // away with no balloon, as in any one-line text box. Text from an input
+  // pasted and dropped text never gets in. Only the first line of pasted
+  // text gets in, as in any one-line text box. Text from an input
   // method gets in while it is composed, and the box removes the bad
   // characters when the composition ends. Undo and Redo skip each state
   // with a bad character, so they never bring one back.
@@ -457,6 +517,13 @@
           if (modal) trapFocus(e);
           return;
         }
+        // A box with its own Enter and Esc, such as a rename box, keeps
+        // them.
+        if (
+          (e.key === "Escape" || e.key === "Enter") &&
+          e.target?.dataset?.ownKeys !== undefined
+        )
+          return;
         if (e.key === "Escape") {
           e.preventDefault();
           // Escape leaves "What's This?" mode before it closes the dialog.
@@ -484,6 +551,16 @@
             e.preventDefault();
             dialog.defaultButton.click();
           }
+          return;
+        }
+        // XP's one-line edit boxes do not select all on Ctrl+A.
+        if (
+          (e.ctrlKey || e.metaKey) &&
+          !e.altKey &&
+          e.key.toLowerCase() === "a" &&
+          e.target.tagName === "INPUT"
+        ) {
+          e.preventDefault();
           return;
         }
         handleAccessKey(e);
@@ -690,6 +767,64 @@
   const confirm = (text, title = "Confirm", icon = "question") =>
     message({ title, text, icon, buttons: BUTTON_SETS.yesNo }).then(
       (result) => result === "yes",
+    );
+
+  // Explorer, the Desktop and the file dialogs check a rename the same way.
+  // The name that a rename box gives, like XP: spaces and periods at the end
+  // go away. An empty name, or a device name such as "con" with no
+  // extension, keeps the old name with no message: the result is null.
+  const renameBoxName = (value) => {
+    const name = value.replace(/[.\s]+$/, "");
+    try {
+      fs().validateName(name);
+    } catch (error) {
+      if (
+        error.code === "name-required" ||
+        (error.code === "name-reserved" && !name.includes("."))
+      )
+        return null;
+    }
+    return name;
+  };
+
+  // XP's text for a name that a rename box cannot use. A name in use and a
+  // device name with an extension, such as "con.txt", get the same text. It
+  // names the item without its extension.
+  const renameErrorText = (error, node) => {
+    const dot = node.type === "file" ? node.name.lastIndexOf(".") : -1;
+    const shown = dot > 0 ? node.name.slice(0, dot) : node.name;
+    if (error.code === "name-exists" || error.code === "name-reserved")
+      return `Cannot rename ${shown}: A file with the name you specified already exists. Specify a different file name.`;
+    if (error.code === "name-invalid")
+      return 'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |';
+    return error.message || "The file operation failed.";
+  };
+
+  // Like XP, a rename that changes or drops the extension of a file of a
+  // known type asks first. A folder, a file with no extension and a file of
+  // a type that XP does not know never ask. It resolves true to go on.
+  const confirmExtensionChange = async (node, name) => {
+    const extension = fs().extractExtension(node.name);
+    if (
+      node.type !== "file" ||
+      !isKnownFileType(extension) ||
+      fs().extractExtension(name) === extension
+    )
+      return true;
+    const answer = await message({
+      title: "Rename",
+      text: "If you change a file name extension, the file may become unusable.\n\nAre you sure you want to change it?",
+      icon: "warning",
+      buttons: BUTTON_SETS.yesNo,
+    });
+    return answer === "yes";
+  };
+
+  const alertRenameError = (error, node) =>
+    alert(
+      renameErrorText(error, node),
+      "Error Renaming File or Folder",
+      "error",
     );
 
   // ---- Progress dialog ----
@@ -1364,11 +1499,13 @@
         "new-folder",
         "Create New Folder",
         "assets/xp/icons/NewFolder.png",
-        () => {
+        async () => {
+          // Like XP, the new folder gets a rename box in the list. The
+          // File name box keeps its text.
+          const folderId = currentFolderId;
+          let folder;
           try {
-            const folder = fs().createFolder(currentFolderId, "New Folder");
-            renderList();
-            nameInput.value = folder.name;
+            folder = await fs().createFolder(folderId, "New Folder");
           } catch (error) {
             message({
               title,
@@ -1376,9 +1513,74 @@
               icon: "error",
               buttons: BUTTON_SETS.ok,
             });
+            return;
           }
+          // A dialog that closed or went to another folder shows no box.
+          if (!dialogStack.includes(dialog) || currentFolderId !== folderId)
+            return;
+          renderList();
+          renameInList(folder.id);
         },
       );
+      // Like XP, a new folder cannot go in My Computer or the Recycle Bin.
+      const takesNewFolder = (folderId) =>
+        folderId !== fs().MY_COMPUTER && !fs().isInRecycleBin(folderId);
+
+      // The rename box of a new folder in the list, like XP's. Enter or a
+      // click elsewhere gives the name. Esc keeps the old name. The rules
+      // and the texts are the rename box's in Explorer.
+      const renameInList = (nodeId) => {
+        const item = list.querySelector(
+          `.dlg-file-item[data-node-id="${CSS.escape(nodeId)}"]`,
+        );
+        const node = fs().getNode(nodeId);
+        const label = item.querySelector(".dlg-file-item-name");
+        const input = document.createElement("input");
+        input.className = "dlg-file-rename";
+        input.dataset.ownKeys = "";
+        input.setAttribute("aria-label", "Name");
+        input.value = node.name;
+        list
+          .querySelectorAll(".selected")
+          .forEach((el) => el.classList.remove("selected"));
+        item.classList.add("selected");
+        label.replaceWith(input);
+        guardFileName(input);
+        input.focus();
+        input.select();
+        let finished = false;
+        // Enter and Esc give the keys back to the item. A click elsewhere
+        // keeps them where the user put them.
+        const finish = async (commit, refocus) => {
+          if (finished) return;
+          finished = true;
+          const name = commit ? renameBoxName(input.value) : null;
+          input.replaceWith(label);
+          if (refocus) item.focus();
+          if (name === null || name === node.name) return;
+          // Only a new folder gets this box, and a folder's name never asks
+          // about its extension.
+          try {
+            await fs().rename(nodeId, name);
+            renderList();
+          } catch (error) {
+            await alertRenameError(error, node);
+            // Like XP, the box opens again with the old name, all selected.
+            if (item.isConnected) renameInList(nodeId);
+          }
+        };
+        input.addEventListener("keydown", (event) => {
+          if (isComposingKey(event)) return;
+          if (event.key !== "Enter" && event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          finish(event.key === "Enter", true);
+        });
+        input.addEventListener("blur", () => finish(true, false));
+        // The box is in a list button. Its clicks stay in the box.
+        input.addEventListener("click", (event) => event.stopPropagation());
+        input.addEventListener("dblclick", (event) => event.stopPropagation());
+      };
 
       // Views opens XP's menu of list views; the open one has a bullet.
       const viewsMenu = document.createElement("div");
@@ -1703,15 +1905,34 @@
         // also takes a name with no extension, so "*.*" shows all files.
         const pattern = last.replace(/[*?]/g, "");
         if (pattern !== last && !fs().INVALID_NAME_CHARACTERS.test(pattern)) {
-          const anyExtension = last.endsWith(".*");
-          const source = (anyExtension ? last.slice(0, -2) : last)
-            .replace(/[.+^${}()[\]\\]/g, "\\$&")
-            .replace(/\*/g, ".*")
-            .replace(/\?/g, ".");
-          namePattern = new RegExp(
-            `^${source}${anyExtension ? "(\\..*)?" : ""}$`,
-            "i",
+          // Like XP, the pattern of a type in the type box, such as "*.*"
+          // or "*.TXT", chooses that type instead.
+          const typeOption = [...typeSelect.options].find(
+            (option) =>
+              (option.value
+                ? option.value
+                    .split(",")
+                    .map((ext) => `*${ext}`)
+                    .join(";")
+                : "*.*") === last.toLowerCase(),
           );
+          if (typeOption) {
+            typeSelect.value = typeOption.value;
+            activeFilter = typeOption.value
+              ? typeOption.value.split(",")
+              : null;
+            namePattern = null;
+          } else {
+            const anyExtension = last.endsWith(".*");
+            const source = (anyExtension ? last.slice(0, -2) : last)
+              .replace(/[.+^${}()[\]\\]/g, "\\$&")
+              .replace(/\*/g, ".*")
+              .replace(/\?/g, ".");
+            namePattern = new RegExp(
+              `^${source}${anyExtension ? "(\\..*)?" : ""}$`,
+              "i",
+            );
+          }
           nameInput.value = last;
           if (folderId === currentFolderId) renderList();
           else navigate(folderId);
@@ -1725,10 +1946,11 @@
           : [last, name]
               .map((candidate) => findChildByName(folderId, candidate))
               .find((node) => node?.type === "folder");
+        // The typed text stays in the box, all selected, like XP.
         if (folder) {
-          nameInput.value = "";
           navigate(folder.id);
           nameInput.focus();
+          nameInput.select();
           return;
         }
         // The file system's own name rules, so a name that it refuses never
@@ -1770,6 +1992,7 @@
         renderFolders();
         upBtn.disabled = !folder.parent;
         backBtn.disabled = !history.length;
+        newFolderBtn.disabled = !takesNewFolder(folder.id);
         list.replaceChildren();
         if (view === "details") {
           const header = document.createElement("div");
@@ -1965,6 +2188,7 @@
     fillThumbnail,
     describeFileType,
     describeNodeType,
+    isKnownFileType,
     formatBytes,
     formatDetailsDate,
     formatKilobytes,
@@ -1973,6 +2197,9 @@
     takeKeys,
     showBalloon,
     guardFileName,
+    renameBoxName,
+    confirmExtensionChange,
+    alertRenameError,
     addWhatsThisHelp,
     createDialogButton,
     addButtonRow,

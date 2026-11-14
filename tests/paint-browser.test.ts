@@ -85,7 +85,7 @@ async function setup() {
       name: "image.png",
       content: "image-data",
     }),
-    createFile: async (...args) => {
+    writeFile: async (...args) => {
       writes.push(args);
       return { id: "saved", name: args[1] };
     },
@@ -163,7 +163,11 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   });
   expect(h.writes[0][2]).toStartWith("data:image/bmp;base64,Qk");
   expect(h.titles.at(-1)).toBe("drawing.bmp - Paint");
+  // Save As finds the file when it writes. Paint checks the content of
+  // the file it has open.
+  expect(h.writes[0][3]).toEqual({ keepId: null, expectedContent: undefined });
   await h.command("save");
+  expect(h.writes[1][0]).toBe("saved");
   expect(h.writes[1][2]).toEqual({ expectedContent: h.writes[0][2] });
   await h.command("wallpaper-tiled");
   await h.command("wallpaper-centered");
@@ -174,9 +178,18 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
   h.context.saveFile = async () => null;
   await h.command("save-as");
   expect(h.writes.length).toBe(2);
-  h.context.saveFile = async () => ({ existingId: "other", name: "other.png" });
+  h.context.saveFile = async () => ({
+    parentId: "pictures",
+    name: "other.png",
+    existingId: "other",
+  });
   await h.command("save-as");
-  expect(h.writes[2][2]).toEqual({ expectedContent: undefined });
+  expect(h.writes[2][0]).toBe("pictures");
+  expect(h.writes[2][1]).toBe("other.png");
+  expect(h.writes[2][3]).toEqual({
+    keepId: "saved",
+    expectedContent: h.writes[1][1],
+  });
   h.context.setFileContent = async () => {
     throw new Error("Document changed elsewhere");
   };
@@ -198,7 +211,7 @@ test("Paint saves new and existing pictures, protects unsaved edits and reports 
 test("Paint does not close after new edits arrive while a save is pending", async () => {
   const h = await setup();
   let finish;
-  h.context.createFile = () =>
+  h.context.writeFile = () =>
     new Promise((resolve) => {
       finish = resolve;
     });

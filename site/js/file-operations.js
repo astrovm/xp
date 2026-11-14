@@ -226,16 +226,19 @@
       `Cannot ${mode === "cut" ? "move" : "copy"} ${name}: A ${existing.type} with the name you specified already exists. Specify a different file name.`,
     );
   // name is the name that the item takes in the destination. An item in
-  // the Recycle Bin goes back with its original name.
+  // the Recycle Bin goes back with its original name. findExisting finds
+  // the item that has a name in a folder. A restore also finds the items
+  // that it puts there itself.
   const planItem = async (
     id,
     destinationId,
     mode,
     resolveConflict,
     name = fs.getNode(id).name,
+    findExisting = fs.findChild,
   ) => {
     const source = fs.getNode(id);
-    const existing = fs.findChild(destinationId, name);
+    const existing = findExisting(destinationId, name);
     if (!existing || existing.id === id)
       return { id, destinationId, name, action: "put" };
     if (existing.type !== source.type)
@@ -256,7 +259,14 @@
     const children = [];
     for (const child of fs.getChildren(id))
       children.push(
-        await planItem(child.id, existing.id, mode, resolveConflict),
+        await planItem(
+          child.id,
+          existing.id,
+          mode,
+          resolveConflict,
+          child.name,
+          findExisting,
+        ),
       );
     return {
       id,
@@ -414,6 +424,31 @@
     return fs.createFile(parentId, name, options);
   };
   const rename = (id, name) => fs.rename(id, name);
+  // Saves content in the file with that name in the folder, like the Save
+  // of an XP program. It finds the file when it writes, not when the
+  // Replace question was open. So a file that moved away meanwhile keeps
+  // its content, and a file that took the name meanwhile gets the new
+  // content. The file keeps the case of its name, like Windows.
+  // expectedContent checks the content of the file keepId, the file that
+  // the program has open.
+  const writeFile = (
+    parentId,
+    name,
+    content,
+    { keepId = null, expectedContent } = {},
+  ) =>
+    fs.transaction(() => {
+      assertWritableFolder(parentId);
+      const existing = fs.findChild(parentId, name);
+      if (!existing) return fs.createFile(parentId, name, { content });
+      if (existing.type !== "file")
+        throw new Error(
+          `Cannot create the ${name} file. A folder with the name you specified already exists. Specify a different file name.`,
+        );
+      return fs.setContent(existing.id, content, {
+        expectedContent: existing.id === keepId ? expectedContent : undefined,
+      });
+    });
 
   // Items dragged away leave a cut clipboard, so a later Paste never moves
   // them again.
@@ -482,10 +517,33 @@
     }
     // The folders that the restore takes out of the bin before the item
     // that comes next, and the folder that takes the items of a folder
-    // that joins a folder with its name. A folder inside a joined folder
-    // goes into that folder before the items that wait for it.
+    // that joins a folder with its name, at each level. A folder inside a
+    // joined folder goes into that folder before the items that wait for
+    // it.
     const leaving = new Set();
     const joins = new Map();
+    // The items that the restore puts in each folder, by name. Like XP, an
+    // item that goes where an item of the same restore went is a question
+    // too.
+    const claims = new Map();
+    const claimKey = (folderId, name) =>
+      `${folderId}\n${String(name).toLowerCase()}`;
+    const findExisting = (folderId, name) => {
+      const claimed = claims.get(claimKey(folderId, name));
+      return claimed
+        ? { ...fs.getNode(claimed.id), name: claimed.name }
+        : fs.findChild(folderId, name);
+    };
+    const record = (plan) => {
+      if (plan.action === "skip") return;
+      if (plan.action === "merge") {
+        joins.set(plan.id, plan.existingId);
+        plan.children.forEach(record);
+      } else {
+        leaving.add(plan.id);
+        claims.set(claimKey(plan.destinationId, plan.name), plan);
+      }
+    };
     const outOfBin = (folderId) => {
       for (let id = folderId; id; id = fs.getNode(id)?.parent) {
         if (leaving.has(id) || joins.has(id)) return true;
@@ -508,21 +566,25 @@
           "cut",
           resolveConflict,
           node.originalName || node.name,
+          findExisting,
         );
-        if (plan.action === "merge") joins.set(id, plan.existingId);
-        else if (plan.action !== "skip") leaving.add(id);
+        record(plan);
         plans.push(plan);
       }
     } catch (error) {
       if (error !== cancelled) throw error;
       return { cancelled: true, results: [] };
     }
+    // An item that left the bin while a question was open stays where it
+    // is now, like a paste. An item that a later item of the restore
+    // replaced is not a result.
     const results = await fs.transaction(() =>
       plans
+        .filter((plan) => fs.getParent(plan.id)?.id === fs.RECYCLE_BIN)
         .map((plan) =>
           runPlan(plan, "cut", () => fs.restore(plan.id, plan.destinationId)),
         )
-        .filter(Boolean),
+        .filter((node) => node && fs.getNode(node.id)),
     );
     return { cancelled: false, results };
   };
@@ -668,6 +730,7 @@
     createFolder,
     createFile,
     rename,
+    writeFile,
     removeToBin: (...args) => fs.transaction(() => removeToBin(...args)),
     permanentlyDelete: (...args) =>
       fs.transaction(() => permanentlyDelete(...args)),

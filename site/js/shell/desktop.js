@@ -717,15 +717,28 @@ const beginDesktopRename = (id) => {
     if (finished) return;
     finished = true;
     document.removeEventListener("pointerdown", onOutsidePointerDown, true);
-    const name = save ? renameBoxName(input.value) : null;
-    if (name !== null && name !== node.name) {
+    const name = save ? XPDialogs.renameBoxName(input.value) : null;
+    const changed = name !== null && name !== node.name;
+    // Like XP, the box keeps the new name while the question shows. No
+    // opens the box again with the old name, all selected.
+    if (changed && !(await XPDialogs.confirmExtensionChange(node, name))) {
+      refreshDesktop();
+      if (
+        document.querySelector(
+          `.desktop-icon[data-desktop-id="${CSS.escape(id)}"]`,
+        )
+      )
+        beginDesktopRename(id).select();
+      return;
+    }
+    if (changed) {
       try {
         await fileOps.rename(id, name);
       } catch (error) {
         // Like XP, a name Windows refuses shows an error, and the box opens
         // again with that name.
         refreshDesktop();
-        await alertRenameError(error, node);
+        await XPDialogs.alertRenameError(error, node);
         // An icon that went away while the error showed takes no box.
         if (
           !document.querySelector(

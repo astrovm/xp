@@ -274,11 +274,13 @@ const wireSearchCompanion = (win) => {
         label,
       );
       item.addEventListener("dblclick", () => openResult(result));
+      // Enter opens the result. Alt+Enter shows the Properties of a file or
+      // folder, like XP, and does nothing for a program.
       item.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          openResult(result);
-        }
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        if (!event.altKey) openResult(result);
+        else if (result.node) XPDialogs.properties(result.node.id);
       });
       item.addEventListener("click", () => {
         list
@@ -545,44 +547,6 @@ const alertFileOperationError = (error) =>
   XPDialogs.alert(
     error.message || "The file operation failed.",
     "File operation",
-    "error",
-  );
-
-// Explorer and the Desktop report a refused name the same way.
-// The name that a rename box gives, like XP: spaces and periods at the end
-// go away. An empty name, or a device name such as "con" with no
-// extension, keeps the old name with no message: the result is null.
-const renameBoxName = (value) => {
-  const name = value.replace(/[.\s]+$/, "");
-  try {
-    fs.validateName(name);
-  } catch (error) {
-    if (
-      error.code === "name-required" ||
-      (error.code === "name-reserved" && !name.includes("."))
-    )
-      return null;
-  }
-  return name;
-};
-
-// XP's text for a name that a rename box cannot use. A name in use and a
-// device name with an extension, such as "con.txt", get the same text. It
-// names the item without its extension.
-const renameErrorText = (error, node) => {
-  const dot = node.type === "file" ? node.name.lastIndexOf(".") : -1;
-  const shown = dot > 0 ? node.name.slice(0, dot) : node.name;
-  if (error.code === "name-exists" || error.code === "name-reserved")
-    return `Cannot rename ${shown}: A file with the name you specified already exists. Specify a different file name.`;
-  if (error.code === "name-invalid")
-    return 'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |';
-  return error.message || "The file operation failed.";
-};
-
-const alertRenameError = (error, node) =>
-  XPDialogs.alert(
-    renameErrorText(error, node),
-    "Error Renaming File or Folder",
     "error",
   );
 
@@ -1177,26 +1141,35 @@ const startExplorerRename = (win, nodeId) => {
   input.dropRename = () => (finished = true);
   // Enter and Escape give the focus back to the item. A click elsewhere
   // keeps the focus where the user put it.
+  const shown = () =>
+    win.el.querySelector(
+      `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
+    );
   const finish = async (commit, refocus) => {
     if (finished) return;
     finished = true;
+    const name = commit ? XPDialogs.renameBoxName(input.value) : null;
+    const changed = name !== null && name !== node.name;
+    // Like XP, the box keeps the new name while the question shows. No
+    // opens the box again with the old name, all selected.
+    if (changed && !(await XPDialogs.confirmExtensionChange(node, name))) {
+      input.replaceWith(label);
+      if (win.closing || !shown()) return;
+      startExplorerRename(win, nodeId).select();
+      return;
+    }
     input.replaceWith(label);
     if (refocus) item.focus();
-    if (!commit) return;
-    const name = renameBoxName(input.value);
-    if (name === null || name === node.name) return;
+    if (!changed) return;
     try {
       await fileOps.rename(nodeId, name);
     } catch (error) {
       // A window that is closing drops the rename and shows nothing.
       if (win.closing) return;
       // Like XP, the error shows, and the box opens again with the name.
-      await alertRenameError(error, node);
+      await XPDialogs.alertRenameError(error, node);
       // A window that closed, or an item that went away, gets no box.
-      const shown = win.el.querySelector(
-        `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
-      );
-      if (win.closing || !shown) return;
+      if (win.closing || !shown()) return;
       const again = startExplorerRename(win, nodeId);
       // Like XP, the box opens again with the old name, all selected.
       again.select();
@@ -1503,6 +1476,13 @@ const renderExplorerTree = (win) => {
     row.addEventListener("click", () => {
       if (hasFolders) expanded.add(id);
       navigateExplorer(win, id);
+    });
+    // Alt+Enter shows the Properties of the folder, like XP. It does not
+    // open the folder.
+    row.addEventListener("keydown", (event) => {
+      if (!event.altKey || event.key !== "Enter") return;
+      event.preventDefault();
+      XPDialogs.properties(id);
     });
     row.addEventListener("dblclick", () => {
       if (!hasFolders) return;

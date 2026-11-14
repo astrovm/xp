@@ -124,16 +124,25 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   expect(keysOn(control)).toBeTrue();
 
   // 2. On a Mac, Option changes the character of the key, or starts an
-  // accent ("Dead"). The place of the key on the keyboard still picks the
-  // menu.
+  // accent ("Dead"). A dead key never opens a menu. Outside a text box,
+  // the place of the key on the keyboard still picks the menu. In a text
+  // box, Option types its character.
   control.focus();
-  await key(control, "Dead", {
-    altKey: true,
-    code: `Key${accessKey.toUpperCase()}`,
-  });
-  expect(title.getAttribute("aria-expanded")).toBe("true");
-  await key(active(), "Escape");
-  await key(title, "Escape");
+  const code = `Key${accessKey.toUpperCase()}`;
+  await key(control, "Dead", { altKey: true, code });
+  expect(title.getAttribute("aria-expanded")).toBe("false");
+  expect(keysOn(control)).toBeTrue();
+  // A slider, a check box or a button is not a text box.
+  const typesText =
+    control.tagName === "TEXTAREA" ||
+    (control.tagName === "INPUT" &&
+      !["range", "checkbox", "radio", "button"].includes(control.type));
+  await key(control, "©", { altKey: true, code });
+  expect(title.getAttribute("aria-expanded")).toBe(String(!typesText));
+  if (!typesText) {
+    await key(active(), "Escape");
+    await key(title, "Escape");
+  }
   expect(keysOn(control)).toBeTrue();
 
   // 1. A click opens the menu and a second one closes it.

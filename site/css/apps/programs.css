@@ -1730,6 +1730,14 @@ html:not([data-xp-appearance="classic"]) .dlg-file-folder:hover {
   color: #000;
 }
 
+/* The rename box of a new folder, like the rename box in Explorer. */
+.dlg-file-rename {
+  width: 120px;
+  padding: 0 1px;
+  border: 1px solid #000;
+  font: inherit;
+}
+
 /* List: small icons in columns that flow left to right. */
 /* The items show where the keys are, so the list draws no ring. */
 .dlg-file-list:focus {

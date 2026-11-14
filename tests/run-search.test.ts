@@ -118,9 +118,48 @@ test("Search filters by type and location and opens selected results with Enter"
   location.value = fs.DESKTOP;
   await search("matching", "files");
   expect(win.querySelector(".search-results-list").children.length).toBe(0);
+  // Like XP, Alt+Enter shows the Properties of a file, and opens nothing.
+  location.value = fs.MY_DOCUMENTS;
+  await search("matching", "files");
+  result = win.querySelector(".search-results-list").firstElementChild;
+  const altEnter = new s.window.KeyboardEvent("keydown", {
+    key: "Enter",
+    altKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  result.dispatchEvent(altEnter);
+  await flushShell();
+  expect(altEnter.defaultPrevented).toBeTrue();
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("matching.txt Properties");
+  expect(s.document.querySelector(".notepad-window")).toBeNull();
+  s.document.querySelector('.xp-dialog [data-action="ok"]').click();
+  await flushShell();
+  // Other keys do nothing.
+  const other = new s.window.KeyboardEvent("keydown", {
+    key: "a",
+    bubbles: true,
+    cancelable: true,
+  });
+  result.dispatchEvent(other);
+  expect(other.defaultPrevented).toBeFalse();
   await search("Notepad", "applications");
   result = win.querySelector(".search-results-list").firstElementChild;
   expect(result.textContent).toContain("Notepad");
+  // A program has no Properties here, and Alt+Enter does not start it.
+  const windows = s.document.querySelectorAll(".xp-window").length;
+  result.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      altKey: true,
+      bubbles: true,
+    }),
+  );
+  await flushShell();
+  expect(s.document.querySelectorAll(".xp-window").length).toBe(windows);
+  expect(s.document.querySelector(".xp-dialog")).toBeNull();
   win.querySelector('[data-search-action="back"]').click();
   expect(win.querySelector(".search-form-panel").hidden).toBeTrue();
 });

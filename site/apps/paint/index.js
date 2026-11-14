@@ -441,7 +441,7 @@ const mountPaint = (shell, instance) => {
     // to save it, like Save As.
     const canSaveInPlace = fileId && canWriteType && shell.folderOf(fileId);
     let destination =
-      canSaveInPlace && !saveAs ? { existingId: fileId, name: fileName } : null;
+      canSaveInPlace && !saveAs ? { inPlace: true, name: fileName } : null;
     if (!destination) {
       // The dialog adds .bmp unless a type Paint saves is typed. A new
       // picture, or one of a type Paint cannot write, starts without one.
@@ -460,15 +460,20 @@ const mountPaint = (shell, instance) => {
     try {
       const revisionToSave = editRevision;
       const content = await encodeCanvas(canvas, destination.name);
-      const file = destination.existingId
-        ? await shell.setFileContent(destination.existingId, content, {
-            expectedContent:
-              destination.existingId === fileId ? savedContent : undefined,
+      // Save writes the open picture. Save As finds the file again when
+      // Paint writes, after the Replace question and the encoding.
+      const file = destination.inPlace
+        ? await shell.setFileContent(fileId, content, {
+            expectedContent: savedContent,
           })
-        : await shell.createFile(
+        : await shell.writeFile(
             destination.parentId,
             destination.name,
             content,
+            {
+              keepId: fileId,
+              expectedContent: savedContent,
+            },
           );
       fileId = file.id;
       fileName = file.name;

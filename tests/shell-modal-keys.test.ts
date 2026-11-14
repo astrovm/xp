@@ -768,14 +768,33 @@ test("a press into a game's frame makes its window active", async () => {
 });
 
 // On a Mac, Option changes the character of a key: Option+F types "ƒ", and
-// Option+E starts an accent ("Dead"). The access keys use the place of the
-// key on the keyboard, so Option works like Alt on Windows.
+// Option+E starts an accent ("Dead"). Outside a text box, the access keys
+// use the place of the key on the keyboard, so Option works like Alt on
+// Windows. In a text box, Option types its character. A dead key is never
+// an access key.
 test("Option and a letter on a Mac picks the access key by its place on the keyboard", async () => {
   const s = await login(await loadShell());
   const d = s.window.XPDialogs;
   expect(d.accessKeyOf({ key: "ƒ", code: "KeyF" })).toBe("f");
-  expect(d.accessKeyOf({ key: "Dead", code: "KeyE" })).toBe("e");
   expect(d.accessKeyOf({ key: "¡", code: "Digit1" })).toBe("1");
+  // A dead key, in a text box and outside it.
+  expect(d.accessKeyOf({ key: "Dead", code: "KeyE" })).toBe("");
+  const text = s.document.createElement("input");
+  expect(d.accessKeyOf({ key: "Dead", code: "KeyE", target: text })).toBe("");
+  // In each kind of text box, the key gives only its own character.
+  const editable = s.document.createElement("div");
+  editable.contentEditable = "true";
+  s.document.body.append(editable);
+  for (const target of [text, s.document.createElement("textarea"), editable]) {
+    expect(d.accessKeyOf({ key: "ƒ", code: "KeyF", target })).toBe("ƒ");
+    expect(d.accessKeyOf({ key: "f", code: "KeyF", target })).toBe("f");
+  }
+  editable.remove();
+  // A check box or a button is not a text box.
+  const check = s.document.createElement("input");
+  check.type = "checkbox";
+  for (const target of [check, s.document.createElement("button")])
+    expect(d.accessKeyOf({ key: "ƒ", code: "KeyF", target })).toBe("f");
   // A layout such as AZERTY keeps its own letters.
   expect(d.accessKeyOf({ key: "A", code: "KeyQ" })).toBe("a");
   expect(d.accessKeyOf({ key: "Enter", code: "Enter" })).toBe("enter");
@@ -801,6 +820,33 @@ test("Option and a letter on a Mac picks the access key by its place on the keyb
   const box = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
   key(s, box, "¥", { altKey: true, code: "KeyY" });
   expect(await answer).toBeTrue();
+
+  // In a text box, Option+E starts an accent and Option+F types "ƒ". Neither
+  // opens a menu, and the browser keeps the key.
+  const address = win.querySelector(".explorer-address input");
+  address.focus();
+  expect(key(s, address, "Dead", { altKey: true, code: "KeyE" })).toBeTrue();
+  expect(key(s, address, "ƒ", { altKey: true, code: "KeyF" })).toBeTrue();
+  await settle();
+  expect(
+    win.querySelector('[role="menubar"] [aria-expanded="true"]'),
+  ).toBeNull();
+  // Outside a text box, a dead key opens no menu either.
+  items.focus();
+  key(s, items, "Dead", { altKey: true, code: "KeyE" });
+  await settle();
+  expect(
+    win.querySelector('[role="menubar"] [aria-expanded="true"]'),
+  ).toBeNull();
+  // Alt and a plain letter in a text box still open the menu.
+  address.focus();
+  expect(key(s, address, "f", { altKey: true, code: "KeyF" })).toBeFalse();
+  await settle();
+  expect(
+    win
+      .querySelector('[role="menubar"] [aria-expanded="true"]')
+      ?.textContent.trim(),
+  ).toBe("File");
 });
 
 // An input method ends its text with Enter or Esc. Those keys belong to the

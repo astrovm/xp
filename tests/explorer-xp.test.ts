@@ -430,3 +430,33 @@ test("the Recycle Bin's File menu deletes for good and never renames", async () 
     s.window.FileOperations.permanentlyDelete = permanentlyDelete;
   }
 });
+
+test("Alt+Enter in the Folders tree shows the folder's Properties, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.DRIVE_C, "t2");
+  const win = await openFolder(s, fs.DRIVE_C);
+  const row = win.querySelector(
+    `.explorer-tree-item[data-node-id="${folder.id}"]`,
+  );
+  const press = (init) => {
+    const event = new s.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    row.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  // Enter alone is the row's own click.
+  expect(press({})).toBeFalse();
+  expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  expect(press({ altKey: true })).toBeTrue();
+  await settle();
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("t2 Properties");
+  // The folder does not open.
+  expect(win.querySelector(".explorer-address input").value).toBe("C:\\");
+});

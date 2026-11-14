@@ -365,6 +365,8 @@ test("rename boxes act on each refused name like XP", async () => {
   };
   for (const value of ["con.txt", "nul.txt", "other.txt", "fold"]) {
     await rename(file.id, value);
+    // A name with no extension asks about the extension first, like XP.
+    if (value === "fold") await answer(s, "Yes");
     expect(dialogs(s)).toEqual([inUse]);
     await answer(s);
     const input = win.querySelector(".explorer-rename");
@@ -389,7 +391,7 @@ test("rename boxes act on each refused name like XP", async () => {
   expect(dialogs(s)).toEqual([]);
   // A bad character that gets past the box has XP's text too.
   const input = await renameInExplorer(s, win, file.id);
-  input.value = "a?b";
+  input.value = "a?b.txt";
   key(s, input, "Enter");
   await settle();
   expect(dialogs(s)).toEqual([
@@ -424,7 +426,7 @@ test("a desktop rename box keeps the old name for an empty or device name", asyn
     expect(fs.getNode(file.id).name).toBe("note.txt");
   }
   const input = await renameOnDesktop(s, file.id);
-  input.value = "prn.log";
+  input.value = "prn.txt";
   key(s, input, "Enter");
   await settle();
   expect(dialogs(s).map((dialog) => dialog.text)).toEqual([
@@ -585,4 +587,105 @@ test("Save As keeps the dialog open in a folder that takes no files, and .. stop
     name: "x.txt",
     existingId: null,
   });
+});
+
+const EXTENSION_QUESTION = {
+  title: "Rename",
+  text: "If you change a file name extension, the file may become unusable.\n\nAre you sure you want to change it?",
+};
+
+test("an Explorer rename asks before it changes the extension of a known file type, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const text = fs.createFile(fs.MY_DOCUMENTS, "notes.txt", { content: "" });
+  const win = await openDocuments(s);
+  const rename = async (id, name) => {
+    const input = await renameInExplorer(s, win, id);
+    input.value = name;
+    key(s, input, "Enter");
+    await settle();
+  };
+  await rename(text.id, "notes.doc");
+  expect(dialogs(s)).toEqual([EXTENSION_QUESTION]);
+  // The box keeps the new name while the question shows.
+  expect(win.querySelector(".explorer-rename").value).toBe("notes.doc");
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog .dlg-buttons button")].map(
+      (button) => button.textContent,
+    ),
+  ).toEqual(["Yes", "No"]);
+  // No keeps the old name and opens the box again with it, all selected.
+  await answer(s, "No");
+  expect(fs.getNode(text.id).name).toBe("notes.txt");
+  const again = win.querySelector(".explorer-rename");
+  expect(again.value).toBe("notes.txt");
+  expect([again.selectionStart, again.selectionEnd]).toEqual([0, 9]);
+  key(s, again, "Escape");
+  await settle();
+  // An extension that goes away asks too, and Yes renames.
+  await rename(text.id, "notes");
+  expect(dialogs(s)).toEqual([EXTENSION_QUESTION]);
+  await answer(s, "Yes");
+  expect(fs.getNode(text.id).name).toBe("notes");
+  expect(win.querySelector(".explorer-rename")).toBeNull();
+
+  // No question for a file with no extension, a type that XP does not
+  // know, a change of case only, or a folder.
+  const plain = fs.createFile(fs.MY_DOCUMENTS, "readme", { content: "" });
+  const backup = fs.createFile(fs.MY_DOCUMENTS, "old.bak", { content: "" });
+  const upper = fs.createFile(fs.MY_DOCUMENTS, "list.txt", { content: "" });
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "box");
+  await settle();
+  for (const [node, name] of [
+    [plain, "readme.txt"],
+    [backup, "old.xyz"],
+    [upper, "LIST.TXT"],
+    [folder, "box.txt"],
+  ]) {
+    await rename(node.id, name);
+    expect(dialogs(s)).toEqual([]);
+    expect(fs.getNode(node.id).name).toBe(name);
+  }
+
+  // An item that goes away while the question shows gets no box.
+  const gone = fs.createFile(fs.MY_DOCUMENTS, "gone.txt", { content: "" });
+  await settle();
+  await rename(gone.id, "gone.doc");
+  fs.destroy(gone.id);
+  await settle();
+  await answer(s, "No");
+  expect(win.querySelector(".explorer-rename")).toBeNull();
+});
+
+test("a desktop rename asks before it changes the extension of a known file type, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "photo.png", { content: "" });
+  await settle();
+  let input = await renameOnDesktop(s, file.id);
+  input.value = "photo.gif";
+  key(s, input, "Enter");
+  await settle();
+  expect(dialogs(s)).toEqual([EXTENSION_QUESTION]);
+  await answer(s, "No");
+  expect(fs.getNode(file.id).name).toBe("photo.png");
+  input = s.document.querySelector(".desktop-rename");
+  expect(input.value).toBe("photo.png");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([0, 9]);
+  input.value = "photo.gif";
+  key(s, input, "Enter");
+  await settle();
+  await answer(s, "Yes");
+  expect(fs.getNode(file.id).name).toBe("photo.gif");
+  expect(s.document.querySelector(".desktop-rename")).toBeNull();
+
+  // An icon that goes away while the question shows gets no box.
+  input = await renameOnDesktop(s, file.id);
+  input.value = "photo.txt";
+  key(s, input, "Enter");
+  await settle();
+  fs.destroy(file.id);
+  await settle();
+  await answer(s, "No");
+  expect(s.document.querySelector(".desktop-rename")).toBeNull();
 });
