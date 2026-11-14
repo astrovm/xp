@@ -251,8 +251,9 @@ test("cards drag onto a card one higher, turn over what they uncover, and undo",
   expect(h.drawnAt(28, 73)).toBe(face("5S"));
   expect(h.drawnAt(622, 31)).toBe(face("TS"));
   expect(h.score()).toBe("Spider Solitaire. Score: 499. Moves: 1.");
-  // Undo turns the 10 back down and counts as a move.
-  await h.key("z", { ctrlKey: true });
+  // Undo turns the 10 back down and counts as a move. Like Windows, the
+  // letter follows the layout: AZERTY has Z where QWERTY has W.
+  await h.key("z", { ctrlKey: true, code: "KeyW" });
   expect(h.drawnAt(622, 31)).toBe(BACK);
   expect(h.drawnAt(622, 38)).toBe(face("5S"));
   expect(h.score()).toBe("Spider Solitaire. Score: 498. Moves: 2.");
@@ -333,7 +334,8 @@ test("the score box and M show available moves in turn, or say there are none", 
   const h = await open();
   await h.click([512, 640]);
   expect(h.sounds).toEqual(["Hint.wav"]);
-  await h.key("m");
+  // AZERTY has M where QWERTY has ";". Like Windows, M follows the layout.
+  await h.key("m", { code: "Semicolon" });
   await h.key("M", { code: "KeyM", shiftKey: true });
   expect(h.sounds).toEqual(["Hint.wav", "Hint.wav"]);
   // The seven moves cycle back to the first.

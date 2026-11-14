@@ -454,7 +454,7 @@ export const createSystemRuntime = (context) => {
         // The rename box keeps its own keys.
         if (main.dataset.view !== "filmstrip") return;
         const key =
-          event.key.length === 1 ? event.key.toLowerCase() : event.key;
+          event.key.length === 1 ? XPDialogs.shortcutKeyOf(event) : event.key;
         const action = filmstripKeys[key];
         const wantsCtrl = action?.startsWith("rotate");
         if (!action || event.altKey || event.ctrlKey !== !!wantsCtrl) return;

@@ -90,27 +90,42 @@ export const renderTerminal = (context, program, programId) => {
     return Math.max(1, tops.size);
   };
   // Output that pauses, like DIR /P: each screen shows one screen row less
-  // than the window has, and the last row asks for a key.
+  // than the window has, and the last row asks for a key. A line goes on
+  // the screen while the lines before it take fewer rows than a screen
+  // has.
   const writePaged = async (text) => {
     const page = visibleRows() - 1;
-    let rows = 0;
-    for (const line of text.split("\n")) {
-      if (rows >= page) {
-        output.append("Press any key to continue . . . ");
-        prompt.textContent = "";
-        screen.scrollTop = screen.scrollHeight;
-        input.disabled = false;
-        input.focus();
-        const stop = await waitForKey();
-        input.disabled = true;
-        output.append("\n");
-        if (stop) return;
-        rows = 0;
-      }
-      const shown = document.createTextNode(line);
-      output.append(shown);
-      rows += screenRows(shown);
+    const lines = text.split("\n");
+    let next = 0;
+    for (;;) {
+      // Each line takes one row or more, so a screen holds at most `page`
+      // lines. They all go in first, and one layout measures them all.
+      const shown = lines
+        .slice(next, next + page)
+        .map((line) => document.createTextNode(line));
+      shown.forEach((line) => output.append(line, "\n"));
+      let rows = 0;
+      const over = shown.findIndex((line) => {
+        if (rows >= page) return true;
+        rows += screenRows(line);
+        return false;
+      });
+      if (over >= 0)
+        shown.slice(over).forEach((line) => {
+          line.nextSibling.remove();
+          line.remove();
+        });
+      next += over >= 0 ? over : shown.length;
+      if (next >= lines.length) return;
+      output.append("Press any key to continue . . . ");
+      prompt.textContent = "";
+      screen.scrollTop = screen.scrollHeight;
+      input.disabled = false;
+      input.focus();
+      const stop = await waitForKey();
+      input.disabled = true;
       output.append("\n");
+      if (stop) return;
     }
   };
 
@@ -133,13 +148,15 @@ export const renderTerminal = (context, program, programId) => {
     // an empty line, and not before the next question of the command.
     // CLS clears the screen, and the blank line stays at the top.
     const blank = command.trim() && !session.question ? "\n" : "";
+    // New text goes at the end. The text that is on the screen stays as
+    // it is, so a long screen is not copied again for each command.
     if (result.clear) output.textContent = blank;
     else {
-      output.textContent += `${enteredPrompt}${command}\n`;
+      output.append(`${enteredPrompt}${command}\n`);
       input.value = "";
       if (result.paged) await writePaged(result.output);
-      else if (result.output) output.textContent += `${result.output}\n`;
-      output.textContent += blank;
+      else if (result.output) output.append(`${result.output}\n`);
+      output.append(blank);
     }
     input.disabled = false;
     input.focus();
@@ -192,7 +209,7 @@ export const renderTerminal = (context, program, programId) => {
       const go = waitingKey;
       waitingKey = null;
       pendingPress = TWO_PRESS_KEYS.test(event.key);
-      go(event.ctrlKey && event.key.toLowerCase() === "c");
+      go(event.ctrlKey && globalThis.XPDialogs.shortcutKeyOf(event) === "c");
       return;
     }
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {

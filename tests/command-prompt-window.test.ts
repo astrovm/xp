@@ -368,6 +368,53 @@ test("DIR /P counts the screen rows of long lines, like the console", async () =
   }
 });
 
+// A measure of the screen rows right after a change of the text makes the
+// browser lay out the whole screen again. Each screen of DIR /P measures
+// its lines in one layout, so a long screen does not stall.
+test("DIR /P lays out each screen one time", async () => {
+  const h = await openCommandPrompt();
+  manyFiles(h, 200, (index) => `f${String(index).padStart(3, "0")}.txt`);
+  await h.enter("cd Many");
+  const { Element, Range } = h.s.window;
+  const append = Element.prototype.append;
+  const rects = Range.prototype.getClientRects;
+  let changed = false;
+  let layouts = 0;
+  Element.prototype.append = function (...nodes) {
+    changed = true;
+    return append.apply(this, nodes);
+  };
+  Range.prototype.getClientRects = function () {
+    if (changed) layouts += 1;
+    changed = false;
+    return rects.call(this);
+  };
+  try {
+    await h.enter("dir /p /b");
+    expect(h.output.textContent.endsWith(PAUSE)).toBeTrue();
+    expect(layouts).toBe(1);
+    await h.press("x");
+    expect(layouts).toBe(2);
+  } finally {
+    Element.prototype.append = append;
+    Range.prototype.getClientRects = rects;
+  }
+  // Ctrl+C ends the listing with each keyboard layout. A Russian layout
+  // types "с" on the C key.
+  const stop = new h.s.window.KeyboardEvent("keydown", {
+    key: "с",
+    code: "KeyC",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  h.input.dispatchEvent(stop);
+  await settle();
+  expect(stop.defaultPrevented).toBeTrue();
+  expect(h.output.textContent.endsWith(`${PAUSE}\n\n`)).toBeTrue();
+  expect(h.output.textContent).not.toContain("f100.txt");
+});
+
 // The XP SP3 VM: at the pause, the modifier and lock keys do not go on. An
 // arrow or a function key goes on two times. Ctrl+C prints no ^C.
 test("the pause of DIR /P takes the keys like cmd.exe", async () => {

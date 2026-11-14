@@ -115,9 +115,18 @@ const openShellProperties = (nodeId) => XPDialogs.properties(nodeId);
 
 const openSearchDialog = () => openSystemWindow("__search");
 
-// Task Manager's New Task opens the same dialog titled "Create New Task".
-const openRunDialog = ({ title = "Run" } = {}) => {
-  const dialog = XPDialogs.createDialog({ title });
+// The path of an item as the Run dialog's Open box shows it, like XP: in
+// quotes when it has a space.
+const runBoxPath = (id) => {
+  const path = fs.getPath(id);
+  return path.includes(" ") ? `"${path}"` : path;
+};
+
+// Task Manager's New Task opens the same dialog titled "Create New Task",
+// which keeps the keys of Task Manager. Run itself is modeless, like XP, so
+// an item can be dragged onto it from a window or the desktop.
+const openRunDialog = ({ title = "Run", modal = false } = {}) => {
+  const dialog = XPDialogs.createDialog({ title, modal });
   dialog.el.classList.add("run-dialog");
   const introRow = document.createElement("div");
   introRow.className = "run-dialog-intro";
@@ -145,6 +154,12 @@ const openRunDialog = ({ title = "Run" } = {}) => {
   const status = document.createElement("p");
   status.className = "shell-dialog-status";
   status.hidden = true;
+  // The Open box gets new text the way XP sets it: the box's undo starts
+  // again, and the page hears an input event.
+  const setRunText = (text) => {
+    input.value = text;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
   const run = () => {
     const resolved = resolveShellCommand(input.value);
     if (!resolved || resolved.run() === false) {
@@ -164,7 +179,7 @@ const openRunDialog = ({ title = "Run" } = {}) => {
     { id: "browse", label: "&Browse..." },
     async () => {
       const node = await XPDialogs.openFile({ title: "Browse" });
-      if (node) input.value = fs.getPath(node.id);
+      if (node) setRunText(runBoxPath(node.id));
       input.focus();
     },
   );
@@ -186,29 +201,53 @@ const openRunDialog = ({ title = "Run" } = {}) => {
     if (key && !dialog.accessKeys.has(key)) dialog.accessKeys.set(key, button);
   });
   dialog.accessKeys.set("o", { disabled: false, click: () => input.focus() });
-  // Like XP, text dropped anywhere on the dialog goes at the end of the Open
-  // box, after a space. A one-line box keeps only the first line.
+  // Like XP, a drop anywhere on the dialog goes at the end of the Open box,
+  // after a space. Dropped text gives its first line. A dropped item from a
+  // window or the desktop gives its path. A file from the computer has no
+  // path here, so the dialog does not take it.
+  const appendRunText = (text) => {
+    if (!text) return;
+    setRunText(input.value ? `${input.value} ${text}` : text);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  };
+  const appendRunPaths = (ids) =>
+    appendRunText(
+      ids
+        .filter((id) => fs.getNode(id))
+        .map(runBoxPath)
+        .join(" "),
+    );
   dialog.el.dataset.textDrop = "";
+  dialog.el.dataset.dropAction = "items";
+  const { ITEM_DRAG_TYPE } = XPDialogs;
   const takesDrop = (event) =>
-    event.dataTransfer?.types?.includes("text/plain") ?? false;
+    XPDialogs.takesItemDrag(event, ["text/plain", ITEM_DRAG_TYPE]);
+  // A drag of items keeps the effect that its window allows, so the drop
+  // comes.
   ["dragenter", "dragover"].forEach((type) =>
     dialog.el.addEventListener(type, (event) => {
       if (!takesDrop(event)) return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
+      if (!event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+        event.dataTransfer.dropEffect = "copy";
     }),
   );
   dialog.el.addEventListener("drop", (event) => {
     if (!takesDrop(event)) return;
     event.preventDefault();
-    const text = event.dataTransfer
-      .getData("text/plain")
-      .split(/\r\n|\r|\n/)[0];
-    if (!text) return;
-    input.value = input.value ? `${input.value} ${text}` : text;
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    if (event.dataTransfer.types.includes(ITEM_DRAG_TYPE)) {
+      appendRunPaths(XPDialogs.droppedItemIds(event));
+      return;
+    }
+    appendRunText(
+      event.dataTransfer.getData("text/plain").split(/\r\n|\r|\n/)[0],
+    );
   });
+  // Desktop icons move with the pointer, not with a browser drag.
+  dialog.el.addEventListener("itemsdrop", (event) =>
+    appendRunPaths(event.detail.ids),
+  );
   input.focus();
 };
 

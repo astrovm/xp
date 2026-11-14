@@ -230,7 +230,7 @@ const CONTROL_KEYS = {
 const commandForKey = (event) => {
   if (event.altKey || event.metaKey) return null;
   if (event.ctrlKey) {
-    const letter = event.key.toLowerCase();
+    const letter = globalThis.XPDialogs.shortcutKeyOf(event);
     if (event.key === "Insert") return "copy";
     if (event.shiftKey) return letter === "k" ? "about" : null;
     if (letter === "c") return "copy";
@@ -689,7 +689,8 @@ const mountCalculator = (context) => {
     if (document.querySelector(".xp-dialog-overlay:not(.xp-dialog-modeless)"))
       return;
     // Ctrl+V arrives as a paste event, with the clipboard's text.
-    if (event.ctrlKey && event.key.toLowerCase() === "v") return;
+    if (event.ctrlKey && globalThis.XPDialogs.shortcutKeyOf(event) === "v")
+      return;
     const command = commandForKey(event);
     if (!command) return;
     event.preventDefault();

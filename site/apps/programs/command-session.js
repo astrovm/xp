@@ -395,7 +395,9 @@ export class CommandSession {
   }
 
   // A folder in the Recycle Bin, such as a current folder that was
-  // deleted, takes no new files.
+  // deleted, takes no change: no new file, and no file goes out of it,
+  // changes, or gets a new name. Each command that writes checks the
+  // folder that it changes.
   takesFiles(folderId) {
     return !!this.fs.getNode(folderId) && !this.fs.isInRecycleBin(folderId);
   }
@@ -476,7 +478,10 @@ export class CommandSession {
           out.push(NOT_FOUND);
           continue;
         }
-        if (!session.takesFiles(folderId)) {
+        if (
+          !session.takesFiles(folderId) ||
+          (move && !session.takesFiles(from))
+        ) {
           out.push(PATH_NOT_FOUND);
           continue;
         }
@@ -579,7 +584,7 @@ export class CommandSession {
         const split = node?.type === "folder" ? null : session.splitPath(path);
         const folderId = split ? split.folderId : id;
         const pattern = split ? split.name : "*";
-        if (!folderId) {
+        if (!folderId || !session.takesFiles(folderId)) {
           out.push(PATH_NOT_FOUND);
           continue;
         }
@@ -672,6 +677,8 @@ export class CommandSession {
       return { output: SYNTAX_ERROR };
     const [source, template] = args;
     const { folderId, name: pattern } = this.splitPath(source);
+    if (folderId && !this.takesFiles(folderId))
+      return { output: PATH_NOT_FOUND };
     const nodes = !folderId
       ? []
       : hasWildcards(pattern)
@@ -1000,12 +1007,13 @@ export class CommandSession {
     const destination = this.resolve(tokenize(path).join(" "), {
       parent: true,
     });
-    // A folder in the Recycle Bin takes no new file.
+    // A folder in the Recycle Bin takes no new file, and its files do not
+    // change.
     if (
       !destination ||
-      (!destination.node && !this.takesFiles(destination.parentId))
+      !this.takesFiles(destination.node?.parent ?? destination.parentId)
     )
-      return { output: "The system cannot find the path specified." };
+      return { output: PATH_NOT_FOUND };
     const content = `${text.trimEnd()}\n`;
     if (destination.node) {
       if (destination.node.type !== "file")
@@ -1047,7 +1055,10 @@ export class CommandSession {
         parent: true,
       });
       if (target?.node) continue;
-      if (this.fs.getNode(target?.parentId)?.type !== "folder")
+      if (
+        this.fs.getNode(target?.parentId)?.type !== "folder" ||
+        !this.takesFiles(target.parentId)
+      )
         return { output: PATH_NOT_FOUND };
       this.context.fileOps.createFolder(target.parentId, target.name);
     }
@@ -1063,7 +1074,7 @@ export class CommandSession {
     const target = args.filter((value) => !value.startsWith("/"));
     const id = this.resolve(target.join(" "));
     const node = id && this.fs.getNode(id);
-    if (!node || node.type !== "folder") {
+    if (!node || node.type !== "folder" || !this.takesFiles(node.id)) {
       return { output: "The system cannot find the path specified." };
     }
     if (node.protected) return { output: ACCESS_DENIED };

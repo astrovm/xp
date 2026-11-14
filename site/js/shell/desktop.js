@@ -215,6 +215,11 @@ const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
     if (target.dataset.dropAction === "recycle") {
       return { action: "recycle", element: target };
     }
+    // A window that does its own work with the items, such as the Run
+    // dialog or Notepad. It gets an itemsdrop event and shows no drop
+    // highlight.
+    if (target.dataset.dropAction === "items")
+      return { action: "items", box: target };
     const destinationId = target.dataset.dropDestinationId;
     if (
       destinationId === fs.DESKTOP ||
@@ -286,7 +291,7 @@ const wireDesktopIconDrag = (icon) => {
         item.style.top = `${top}px`;
       });
 
-      dropTarget?.element.classList.remove("drop-target");
+      dropTarget?.element?.classList.remove("drop-target");
       dropTarget = eligibility.movable
         ? findDesktopDropTarget(
             moveEvent.clientX,
@@ -294,14 +299,14 @@ const wireDesktopIconDrag = (icon) => {
             draggedIds,
           )
         : null;
-      dropTarget?.element.classList.add("drop-target");
+      dropTarget?.element?.classList.add("drop-target");
     };
 
     const onUp = async (upEvent) => {
       icon.removeEventListener("pointermove", onMove);
       icon.removeEventListener("pointerup", onUp);
       icon.removeEventListener("pointercancel", onUp);
-      dropTarget?.element.classList.remove("drop-target");
+      dropTarget?.element?.classList.remove("drop-target");
       dropTarget =
         eligibility.movable && upEvent.type === "pointerup"
           ? findDesktopDropTarget(upEvent.clientX, upEvent.clientY, draggedIds)
@@ -333,7 +338,15 @@ const wireDesktopIconDrag = (icon) => {
         return;
       }
       if (desktopDragged) {
-        if (dropTarget) {
+        if (dropTarget?.action === "items") {
+          // The items stay where they are. The window gets their ids.
+          returnIcons();
+          dropTarget.box.dispatchEvent(
+            new CustomEvent("itemsdrop", {
+              detail: { ids: eligibility.filesystemIds },
+            }),
+          );
+        } else if (dropTarget) {
           // The icons hide while the items move. Items that move away leave
           // the Desktop when it redraws. After a failure or Cancel, the
           // icons come back at their places.

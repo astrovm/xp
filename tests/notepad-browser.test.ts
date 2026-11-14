@@ -226,10 +226,16 @@ test("Notepad switching files preserves a canceled draft and saves on confirmati
   await h.answer("yes");
   expect(h.fs.getContent(h.file.id)).toBe("draft");
   expect(h.editor.value).toBe("other");
-  for (const command of ["o", "n"]) {
+  // A Russian layout types "щ" on the O key and "т" on the N key. Like
+  // Windows, Ctrl+O and Ctrl+N follow the place of the key.
+  for (const [command, key] of [
+    ["o", "щ"],
+    ["n", "т"],
+  ]) {
     h.editor.dispatchEvent(
       new h.s.window.KeyboardEvent("keydown", {
-        key: command,
+        key,
+        code: `Key${command.toUpperCase()}`,
         ctrlKey: true,
         bubbles: true,
       }),
@@ -312,4 +318,197 @@ test("Notepad's menus follow XP's menu bar rules", async () => {
     accessKey: "f",
     settle: flushShell,
   });
+});
+
+// A drag event with the data of a drag. Happy DOM keeps no dataTransfer,
+// so the test gives one.
+const dragOn = (s, element, type, data, files = []) => {
+  const transfer = {
+    types: [...Object.keys(data), ...(files.length ? ["Files"] : [])],
+    dropEffect: "move",
+    files,
+    getData: (format) => data[format] ?? "",
+  };
+  const event = new s.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: transfer });
+  element.dispatchEvent(event);
+  return { taken: event.defaultPrevented, effect: transfer.dropEffect };
+};
+
+test("Notepad opens a file dropped on it, like XP", async () => {
+  const h = await setup();
+  const title = () => h.win.querySelector(".title-text").textContent;
+  const computerFile = (name, text) => ({ name, text: async () => text });
+  // A file from the computer. Notepad asks first when its text changed.
+  h.edit("changed");
+  expect(
+    dragOn(h.s, h.editor, "dragover", {}, [computerFile("c.txt", "")]),
+  ).toEqual({ taken: true, effect: "copy" });
+  dragOn(h.s, h.editor, "drop", {}, [computerFile("c.txt", "from disk")]);
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog").textContent).toContain(
+    "The text in the note.txt file has changed.",
+  );
+  await h.answer("cancel");
+  expect(h.editor.value).toBe("changed");
+  dragOn(h.s, h.editor, "drop", {}, [computerFile("c.txt", "from disk")]);
+  await flushShell();
+  await h.answer("no");
+  expect(h.editor.value).toBe("from disk");
+  expect(title()).toBe("c.txt - Notepad");
+  // The file has no place here, so Save asks where to save it, with its
+  // name.
+  h.edit("from disk, changed");
+  dragOn(h.s, h.editor, "drop", {}, [computerFile("d.txt", "")]);
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog").textContent).toContain(
+    "The text in the c.txt file has changed.",
+  );
+  await h.answer("cancel");
+  await h.command("save");
+  expect(h.s.document.getElementById("dlg-file-name").value).toBe("c.txt");
+  await h.choose("c.txt");
+  const saved = h.fs.resolvePath(`${h.fs.getPath(h.fs.MY_DOCUMENTS)}\\c.txt`);
+  expect(h.fs.getContent(saved)).toBe("from disk, changed");
+  expect(title()).toBe("c.txt - Notepad");
+
+  // A file that cannot be read shows an error.
+  const broken = {
+    name: "e.txt",
+    text: async () => {
+      throw new Error("The file could not be read.");
+    },
+  };
+  dragOn(h.s, h.editor, "drop", {}, [broken]);
+  await flushShell();
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog").textContent).toContain(
+    "The file could not be read.",
+  );
+  await h.answer("ok");
+  // An error with no text gives XP's own text.
+  dragOn(h.s, h.editor, "drop", {}, [
+    {
+      name: "g.txt",
+      text: async () => {
+        throw new Error("");
+      },
+    },
+  ]);
+  await flushShell();
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog").textContent).toContain(
+    "Cannot open the g.txt file.",
+  );
+  await h.answer("ok");
+  expect(h.editor.value).toBe("from disk, changed");
+
+  // An item from an Explorer window opens. A folder, a missing item and a
+  // bad list do not.
+  const items = (ids) => ({
+    "application/x-astro-vfs-ids": JSON.stringify(ids),
+  });
+  const other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
+    content: "other",
+  });
+  expect(dragOn(h.s, h.win, "dragover", items([other.id]))).toEqual({
+    taken: true,
+    effect: "move",
+  });
+  for (const data of [
+    items([h.fs.MY_PICTURES]),
+    items(["missing"]),
+    { "application/x-astro-vfs-ids": "{" },
+  ]) {
+    dragOn(h.s, h.editor, "drop", data);
+    await flushShell();
+  }
+  expect(title()).toBe("c.txt - Notepad");
+  // Cancel keeps the changed text.
+  h.edit("kept");
+  dragOn(h.s, h.editor, "drop", items([other.id]));
+  await flushShell();
+  await h.answer("cancel");
+  expect(h.editor.value).toBe("kept");
+  dragOn(h.s, h.editor, "drop", items(["missing", other.id]));
+  await flushShell();
+  await h.answer("no");
+  expect(h.editor.value).toBe("other");
+  expect(title()).toBe("other.txt - Notepad");
+  // Text is not a file. The text box refuses it, like XP.
+  expect(dragOn(h.s, h.editor, "dragover", { "text/plain": "x" }).effect).toBe(
+    "none",
+  );
+  dragOn(h.s, h.editor, "drop", { "text/plain": "x" });
+  expect(h.editor.value).toBe("other");
+
+  // A desktop icon dragged onto Notepad opens its file. New starts an
+  // untitled document again.
+  const desktopFile = h.fs.createFile(h.fs.DESKTOP, "desk.txt", {
+    content: "desk",
+  });
+  await flushShell();
+  const icon = h.s.document.querySelector(
+    `.desktop-icon[data-desktop-id="${desktopFile.id}"]`,
+  );
+  h.s.document.elementsFromPoint = () => [h.editor];
+  [
+    ["pointerdown", 10],
+    ["pointermove", 190],
+    ["pointerup", 190],
+  ].forEach(([type, at]) =>
+    icon.dispatchEvent(
+      new h.s.window.PointerEvent(type, {
+        button: 0,
+        pointerId: 1,
+        clientX: at,
+        clientY: at,
+        bubbles: true,
+      }),
+    ),
+  );
+  await flushShell();
+  await flushShell();
+  expect(h.editor.value).toBe("desk");
+  expect(h.fs.getNode(desktopFile.id).parent).toBe(h.fs.DESKTOP);
+  await h.command("new");
+  expect(title()).toBe("Untitled - Notepad");
+});
+
+test("no part of the page opens a file from the computer that no folder takes", async () => {
+  const { s, fs } = await setup();
+  // The browser would open the file in place of the desktop. Like XP, the
+  // drop is refused.
+  for (const type of ["dragenter", "dragover", "drop"])
+    expect(dragOn(s, s.document.body, type, {}, [{}])).toEqual({
+      taken: true,
+      effect: "none",
+    });
+  // A drag that shows its files only at the drop still goes to a folder.
+  const desktop = s.document.getElementById("desktop-icons");
+  const early = dragOn(s, desktop, "dragover", {}, []);
+  expect(early).toEqual({ taken: false, effect: "move" });
+  const transfer = {
+    types: ["Files"],
+    dropEffect: "move",
+    files: [],
+    getData: () => "",
+  };
+  const event = new s.window.Event("dragover", {
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(event, "dataTransfer", { value: transfer });
+  desktop.dispatchEvent(event);
+  expect(event.defaultPrevented).toBeTrue();
+  expect(transfer.dropEffect).toBe("move");
+  expect(desktop.classList.contains("drop-target")).toBeTrue();
+  // Other drags, and events with no drag data, are left as they are.
+  expect(dragOn(s, s.document.body, "dragover", { "text/plain": "x" })).toEqual(
+    { taken: false, effect: "move" },
+  );
+  const bare = new s.window.Event("drop", { bubbles: true, cancelable: true });
+  s.document.body.dispatchEvent(bare);
+  expect(bare.defaultPrevented).toBeFalse();
+  expect(fs.getNode(fs.DESKTOP).type).toBe("folder");
 });

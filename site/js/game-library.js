@@ -29,8 +29,10 @@
       transaction.oncomplete = () => resolve();
       transaction.onabort = () =>
         reject(transaction.error || new Error("Browser storage was aborted."));
-      transaction.onerror = () =>
-        reject(transaction.error || new Error("Browser storage failed."));
+      // The error of a request comes to the transaction before the
+      // transaction has an error of its own. The request has it.
+      transaction.onerror = (event) =>
+        reject(event.target.error || new Error("Browser storage failed."));
     });
 
   const openDatabase = (indexedDBObject = root.indexedDB) => {

@@ -632,7 +632,8 @@ test("Filmstrip rotates pictures and saves them in their own type", async () => 
 
   h.item(f.win, jpg.id).click();
   stubNextPicture(h, { width: 8, height: 6 });
-  f.key("l", { ctrlKey: true });
+  // A Russian layout types "д" on the L key.
+  f.key("д", { ctrlKey: true, code: "KeyL" });
   await settle();
   expect(drawn.at(-1)).toEqual({
     width: 6,

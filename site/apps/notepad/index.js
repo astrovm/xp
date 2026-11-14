@@ -26,10 +26,13 @@ const mountNotepad = (context, instance) => {
   win.nodeId = null;
   win.dirty = false;
   let savedContent = "";
+  // The name of a document dropped from the computer. It has no file here
+  // until Save As writes one.
+  let looseName = null;
 
   const updateTitle = () => {
     const node = win.nodeId && fs.getNode(win.nodeId);
-    const documentName = node?.name || "Untitled";
+    const documentName = node?.name || looseName || "Untitled";
     const title = `${documentName} - Notepad`;
     context.setTitle(title);
   };
@@ -40,9 +43,10 @@ const mountNotepad = (context, instance) => {
     status.textContent = `Ln ${lines.length}, Col ${lines.at(-1).length + 1}`;
   };
 
-  const loadDocument = (node) => {
+  const loadDocument = (node, loose = null) => {
     win.nodeId = node?.id || null;
-    editor.value = node ? fs.getContent(node.id) || "" : "";
+    looseName = loose?.name ?? null;
+    editor.value = node ? fs.getContent(node.id) || "" : (loose?.text ?? "");
     savedContent = editor.value;
     win.dirty = false;
     updateTitle();
@@ -57,7 +61,8 @@ const mountNotepad = (context, instance) => {
       startFolder: current?.parent || fs.MY_DOCUMENTS,
       // The Recycle Bin can rename a deleted file. Save As suggests the
       // name the user gave it.
-      defaultName: current?.originalName || current?.name || "Untitled.txt",
+      defaultName:
+        current?.originalName || current?.name || looseName || "Untitled.txt",
       filter: [".txt"],
       defaultExtension: ".txt",
     });
@@ -115,7 +120,7 @@ const mountNotepad = (context, instance) => {
     const node = win.nodeId && fs.getNode(win.nodeId);
     const answer = await XPDialogs.message({
       title: "Notepad",
-      text: `The text in the ${node?.name || "Untitled"} file has changed.\n\nDo you want to save the changes?`,
+      text: `The text in the ${node?.name || looseName || "Untitled"} file has changed.\n\nDo you want to save the changes?`,
       icon: "warning",
       buttons: XPDialogs.BUTTON_SETS.yesNoCancel,
       defaultButton: "yes",
@@ -295,13 +300,13 @@ const mountNotepad = (context, instance) => {
     editor.addEventListener(eventName, updateStatus),
   );
   el.addEventListener("keydown", (event) => {
-    if (event.ctrlKey && event.key.toLowerCase() === "s") {
+    if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "s") {
       event.preventDefault();
       save();
-    } else if (event.ctrlKey && event.key.toLowerCase() === "o") {
+    } else if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "o") {
       event.preventDefault();
       commands.open();
-    } else if (event.ctrlKey && event.key.toLowerCase() === "n") {
+    } else if (event.ctrlKey && XPDialogs.shortcutKeyOf(event) === "n") {
       event.preventDefault();
       commands.new();
     } else if (event.key === "F5") {
@@ -309,6 +314,51 @@ const mountNotepad = (context, instance) => {
       commands["time-date"]();
     }
   });
+
+  // Like XP, a file dropped on Notepad opens in it. Notepad asks first when
+  // its text has changed. A folder does not open.
+  const openDroppedItems = async (ids) => {
+    const node = ids.map((id) => fs.getNode(id)).find(Boolean);
+    if (node?.type !== "file") return;
+    if (await confirmSaveChanges()) loadDocument(node);
+  };
+  const openComputerFile = async (dropped) => {
+    if (!(await confirmSaveChanges())) return;
+    try {
+      loadDocument(null, { name: dropped.name, text: await dropped.text() });
+    } catch (error) {
+      await XPDialogs.alert(
+        error.message || `Cannot open the ${dropped.name} file.`,
+        "Notepad",
+        "error",
+      );
+    }
+  };
+  const { ITEM_DRAG_TYPE } = XPDialogs;
+  const takesDrop = (event) =>
+    XPDialogs.takesItemDrag(event, ["Files", ITEM_DRAG_TYPE]);
+  el.dataset.dropAction = "items";
+  // A drag of items keeps the effect that its window allows, so the drop
+  // comes.
+  ["dragenter", "dragover"].forEach((type) =>
+    el.addEventListener(type, (event) => {
+      if (!takesDrop(event)) return;
+      event.preventDefault();
+      if (!event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+        event.dataTransfer.dropEffect = "copy";
+    }),
+  );
+  el.addEventListener("drop", (event) => {
+    if (!takesDrop(event)) return;
+    event.preventDefault();
+    const [dropped] = event.dataTransfer.files;
+    if (dropped) openComputerFile(dropped);
+    else openDroppedItems(XPDialogs.droppedItemIds(event));
+  });
+  // Desktop icons move with the pointer, not with a browser drag.
+  el.addEventListener("itemsdrop", (event) =>
+    openDroppedItems(event.detail.ids),
+  );
 
   loadDocument(file);
   return {

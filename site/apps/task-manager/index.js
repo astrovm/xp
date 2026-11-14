@@ -946,7 +946,8 @@ const mountTaskManager = (context, { window: win }) => {
     refresh();
   };
   const commands = {
-    "new-task": () => context.openRunDialog({ title: "Create New Task" }),
+    "new-task": () =>
+      context.openRunDialog({ title: "Create New Task", modal: true }),
     exit: () => context.closeGameWindow(win.gameId),
     "always-on-top": () => {
       toggleSetting("alwaysOnTop");

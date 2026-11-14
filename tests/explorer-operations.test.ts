@@ -182,8 +182,10 @@ test("drag-over highlights only droppable content", async () => {
     h.drag("dragover", { types: ["application/x-astro-vfs-ids"] })
       .defaultPrevented,
   ).toBeTrue();
+  // Like a browser, a drag of files from the computer shows that it has
+  // files, but not the files, until the drop.
   expect(
-    h.drag("dragover", { files: [h.file("a.txt")] }).defaultPrevented,
+    h.drag("dragover", { types: ["Files"], files: [] }).defaultPrevented,
   ).toBe(true);
   h.element().dispatchEvent(new h.s.window.Event("dragleave"));
   expect(h.element().classList.contains("drop-target")).toBeFalse();

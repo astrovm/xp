@@ -699,6 +699,54 @@ describe("Command Prompt like cmd.exe", () => {
     );
   });
 
+  // A deleted current folder is in the Recycle Bin. No command changes it
+  // or its files, and each one shows cmd.exe's text. Commands still read
+  // it, and they still write to other folders.
+  test("no command writes to a current folder in the Recycle Bin", () => {
+    const d = folderAt("d");
+    const kept = file(d, "a.txt", 4, "old\n");
+    file(d, "b.txt", 4, "bbb\n");
+    const sub = folderAt("d\\sub");
+    const out = folderAt("out");
+    file(folderAt("src"), "s.txt");
+    run("cd /d C:\\d");
+    fs.remove(d);
+    const before = JSON.stringify(
+      fs.getChildren(d).map((node) => [node.name, fs.getContent(node.id)]),
+    );
+    for (const line of [
+      "echo hi >> a.txt",
+      "echo hi > a.txt",
+      "echo hi>new.txt",
+      "del a.txt",
+      "del /q *.*",
+      "ren a.txt c.txt",
+      "md x",
+      "md x\\y",
+      "rd sub",
+      "move a.txt C:\\out",
+      "copy C:\\src\\s.txt .",
+    ])
+      expect(`${line}: ${run(line)}`).toBe(
+        `${line}: The system cannot find the path specified.`,
+      );
+    expect(
+      JSON.stringify(
+        fs.getChildren(d).map((node) => [node.name, fs.getContent(node.id)]),
+      ),
+    ).toBe(before);
+    expect(fs.getNode(sub).parent).toBe(d);
+    expect(fs.getChildren(out)).toEqual([]);
+    // Reads work, and a copy out of the folder leaves it as it is.
+    expect(run("type a.txt")).toBe("old");
+    expect(run("dir /b")).toBe("a.txt\nb.txt\nsub");
+    expect(run("copy a.txt C:\\out")).toBe("        1 file(s) copied.");
+    expect(fs.getNode(kept.id).parent).toBe(d);
+    // A command that writes to another folder works.
+    expect(run("echo hi> C:\\out\\new.txt")).toBe("");
+    expect(fs.getContent(fs.findChild(out, "new.txt").id)).toBe("hi\n");
+  });
+
   // Every check comes before the old file goes. A refused item never
   // destroys the file that it would replace.
   test("a refused copy or move keeps the file that it would replace", () => {

@@ -124,7 +124,13 @@ const resolveShellCommand = (value) => {
       title: formatGameTitle(gameId),
       run: () => openGameWindow(gameId),
     };
-  const nodeId = fs.resolvePath(String(value).trim());
+  // Like XP, one pair of quotes around a path, as Browse and a drop give
+  // it, is not part of the path.
+  const nodeId = fs.resolvePath(
+    String(value)
+      .trim()
+      .replace(/^"(.*)"$/, "$1"),
+  );
   const node = nodeId && fs.getNode(nodeId);
   // Like XP, Run cannot find an item by its place in the Recycle Bin.
   if (node && !isDeletedNode(node.id))
@@ -808,7 +814,7 @@ const wireFolderDropTarget = (element, destinationId) => {
   element.dataset.dropDestinationId = destinationId;
   element.addEventListener("dragover", (event) => {
     const internal = event.dataTransfer?.types?.includes(
-      "application/x-astro-vfs-ids",
+      XPDialogs.ITEM_DRAG_TYPE,
     );
     if (
       internal &&
@@ -820,7 +826,8 @@ const wireFolderDropTarget = (element, destinationId) => {
     if (
       internal ||
       fileOps.canPaste(destinationId) ||
-      event.dataTransfer?.files?.length
+      // A drag shows no files until the drop, only that it has them.
+      event.dataTransfer?.types?.includes("Files")
     ) {
       event.preventDefault();
       element.classList.add("drop-target");
@@ -834,9 +841,7 @@ const wireFolderDropTarget = (element, destinationId) => {
     element.classList.remove("drop-target");
     explorerDragIds = [];
     try {
-      const payload = event.dataTransfer?.getData(
-        "application/x-astro-vfs-ids",
-      );
+      const payload = event.dataTransfer?.getData(XPDialogs.ITEM_DRAG_TYPE);
       const ids = payload ? JSON.parse(payload) : [];
       if (!Array.isArray(ids)) throw new Error("Invalid dropped item list");
       // A drag moves the items without the clipboard, like XP. A folder
@@ -1907,7 +1912,7 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       const ids = selectedExplorerNodes(win);
       explorerDragIds = ids.includes(node.id) ? ids : [node.id];
       event.dataTransfer.setData(
-        "application/x-astro-vfs-ids",
+        XPDialogs.ITEM_DRAG_TYPE,
         JSON.stringify(explorerDragIds),
       );
       event.dataTransfer.setData(

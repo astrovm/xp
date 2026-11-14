@@ -108,9 +108,10 @@ async function setup() {
     s.document.querySelector(`.xp-dialog [data-action="${id}"]`).click();
     await flushShell();
   };
-  const key = async (key, ctrlKey = false) => {
+  const key = async (key, ctrlKey = false, code = undefined) => {
     const event = new s.window.KeyboardEvent("keydown", {
       key,
+      code,
       ctrlKey,
       bubbles: true,
       cancelable: true,
@@ -355,7 +356,9 @@ test("Paint tools, palette, menu checks and keyboard controls stay synchronized"
   expect(
     h.root.querySelector('[data-paint-panel="toolbox"]').hidden,
   ).toBeTrue();
-  await h.key("l", true);
+  // Like Windows, a Russian layout gives the letter of the key's place:
+  // its L key types "д".
+  await h.key("д", true, "KeyL");
   expect(
     h.root.querySelector('[data-paint-panel="colorbox"]').hidden,
   ).toBeTrue();

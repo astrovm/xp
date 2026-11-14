@@ -140,7 +140,10 @@ test("Run Browse uses the selected file path and cancel preserves the command", 
   );
   browse.querySelector('[data-action="accept"]').click();
   await flushShell();
-  expect(input.value).toBe(fs.getPath(file.id));
+  // Like XP, Browse puts quotes around a path with a space, and Run opens
+  // the quoted path.
+  expect(fs.getPath(file.id)).toContain(" ");
+  expect(input.value).toBe(`"${fs.getPath(file.id)}"`);
   run.querySelector('[data-action="run"]').click();
   await flushShell();
   expect(s.document.querySelector(".notepad-editor").value).toBe(

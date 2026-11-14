@@ -775,8 +775,8 @@ test("a press into a game's frame makes its window active", async () => {
 // The user's rules for access keys: outside a text box, a key that gives no
 // Latin letter or digit picks by its place on the keyboard. In a text box,
 // a Mac uses only the character of the key, and Windows and Linux fall back
-// to the place of a key that gives no Latin letter. A dead key opens no menu
-// only in a text box.
+// to the place of a key that types a letter of another script. A dead key
+// opens no menu only in a text box.
 test("access keys follow the place of the key, by platform and by text box", async () => {
   const s = await login(await loadShell());
   const d = s.window.XPDialogs;
@@ -803,15 +803,22 @@ test("access keys follow the place of the key, by platform and by text box", asy
     // [key, code, outside a text box, in a text box on a Mac, in a text
     // box on Windows and Linux]
     ["ƒ", "KeyF", "f", "ƒ", "f"],
-    ["©", "KeyG", "g", "©", "g"],
+    // A key that types no letter keeps its character in a text box.
+    ["©", "KeyG", "g", "©", "©"],
     ["¡", "Digit1", "1", "¡", "¡"],
     ["Dead", "KeyE", "e", "", ""],
     ["f", "KeyF", "f", "f", "f"],
-    // A layout such as AZERTY keeps its own letters.
+    // A layout such as AZERTY or Dvorak keeps its own letters.
     ["A", "KeyQ", "a", "a", "a"],
+    ["e", "KeyD", "e", "e", "e"],
+    // Dvorak's "." key is the E key of QWERTY. In a text box it types ".",
+    // so Alt+. opens no Edit menu.
+    [".", "KeyE", "e", ".", "."],
     ["Enter", "Enter", "enter", "enter", "enter"],
-    // A key of another script, such as Russian, gives no Latin letter.
+    // A key of another script, such as Russian or Greek, gives no Latin
+    // letter.
     ["ф", "KeyA", "a", "ф", "a"],
+    ["ε", "KeyE", "e", "ε", "e"],
   ];
   try {
     for (const [platform, data, mac] of [

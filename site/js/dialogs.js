@@ -173,15 +173,30 @@
       navigator.userAgentData?.platform || navigator.platform,
     );
 
+  // The letter of a Ctrl shortcut, such as S in Ctrl+S. Like Windows, a key
+  // that types a Latin letter gives that letter, so AZERTY and Dvorak keep
+  // their own letters. A key that types a letter of another script, such
+  // as a Russian or Greek one, gives the letter of its place on the
+  // keyboard, so Ctrl+S works with each layout. Other keys give their own
+  // value.
+  const shortcutKeyOf = (event) => {
+    const key = event.key.toLowerCase();
+    if (/^[a-z]$/.test(key)) return key;
+    const place = /^Key([A-Z])$/.exec(event.code);
+    return place && /^\p{L}$/u.test(key) ? place[1].toLowerCase() : key;
+  };
+
   // The letter of an access key, such as F in Alt+F.
   // In a text box:
   // - A dead key (Option+E on a Mac starts an accent) is never an access
   //   key, because it types.
   // - On a Mac, the key gives only its own character, so Option types that
   //   character (Option+F types "ƒ").
-  // - On Windows and Linux, a key that types a character that is not a
-  //   Latin letter, such as a Greek or Russian one, gives the letter of its
-  //   place on the keyboard, like Windows: Alt+F works with each layout.
+  // - On Windows and Linux, the key gives the letter of a Ctrl shortcut: a
+  //   key that types a letter that is not a Latin letter, such as a Greek
+  //   or Russian one, gives the letter of its place on the keyboard, like
+  //   Windows. A punctuation key, such as Dvorak's "." key, gives its own
+  //   character.
   // Outside a text box nothing types. A key that is not a plain letter or
   // digit, a dead key too, gives the letter or digit of its place on the
   // keyboard. So Option works like Alt on a Mac.
@@ -189,13 +204,7 @@
     const key = event.key.toLowerCase();
     if (isEditable(event.target)) {
       if (event.key === "Dead") return "";
-      const place = /^Key([A-Z])$/.exec(event.code);
-      return place &&
-        !isApplePlatform() &&
-        [...key].length === 1 &&
-        !/^[a-z]$/.test(key)
-        ? place[1].toLowerCase()
-        : key;
+      return isApplePlatform() ? key : shortcutKeyOf(event);
     }
     if (/^[a-z0-9]$/.test(key)) return key;
     const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
@@ -217,6 +226,7 @@
       BUTTON_SETS,
       parseAccessKey,
       accessKeyOf,
+      shortcutKeyOf,
       isComposingKey,
       describeFileType,
       isKnownFileType,
@@ -307,17 +317,10 @@
     input.setSelectionRange(start + text.length, start + text.length);
   };
 
-  // The input types that are one-line text boxes, like XP's edit boxes.
-  const ONE_LINE_INPUTS = new Set([
-    "text",
-    "search",
-    "url",
-    "tel",
-    "email",
-    "password",
-  ]);
+  // A one-line text box, like XP's edit boxes: each input that takes typed
+  // text, a number box too. The paste, Ctrl+A and drop rules use it.
   const isOneLineBox = (target) =>
-    target?.tagName === "INPUT" && ONE_LINE_INPUTS.has(target.type);
+    target?.tagName === "INPUT" && isEditable(target);
 
   // The check of each box that refuses some characters, such as a file
   // name box. A paste and typed text go through the same check.
@@ -347,6 +350,13 @@
       if (kept === text) return;
       event.preventDefault();
       const { selectionStart, selectionEnd } = input;
+      // A box without a caret position, such as a number box, takes the
+      // text at its own selection.
+      if (selectionStart === null) {
+        if (kept && !document.execCommand?.("insertText", false, kept))
+          input.value = kept;
+        return;
+      }
       // An empty first line takes the place of the selected text. Text with
       // only refused characters leaves the box as it is.
       if (kept || (!firstLine && selectionStart !== selectionEnd))
@@ -364,7 +374,7 @@
       if (
         (event.ctrlKey || event.metaKey) &&
         !event.altKey &&
-        event.key.toLowerCase() === "a" &&
+        shortcutKeyOf(event) === "a" &&
         isOneLineBox(event.target)
       )
         event.preventDefault();
@@ -390,6 +400,34 @@
       },
       true,
     ),
+  );
+  // An Explorer drag carries the ids of its items as JSON in this type.
+  const ITEM_DRAG_TYPE = "application/x-astro-vfs-ids";
+  // True when a drag carries one of the types.
+  const takesItemDrag = (event, types) =>
+    types.some((type) => event.dataTransfer?.types?.includes(type));
+  // The item ids of a drop. A bad list gives no ids.
+  const droppedItemIds = (event) => {
+    try {
+      const ids = JSON.parse(event.dataTransfer.getData(ITEM_DRAG_TYPE));
+      return Array.isArray(ids) ? ids : [];
+    } catch {
+      return [];
+    }
+  };
+  // A file from the computer that no folder or window takes is refused,
+  // like XP. The browser does not open it in place of the desktop. This
+  // listener comes after the targets, so it sees what they did.
+  ["dragenter", "dragover", "drop"].forEach((type) =>
+    document.addEventListener(type, (event) => {
+      if (
+        event.defaultPrevented ||
+        !event.dataTransfer?.types?.includes("Files")
+      )
+        return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+    }),
   );
 
   // A file name box takes no character that Windows refuses in a name.
@@ -1651,6 +1689,9 @@
         const item = list.querySelector(
           `.dlg-file-item[data-node-id="${CSS.escape(nodeId)}"]`,
         );
+        // F2 in the box reaches the item too. A second start keeps the
+        // open box, like Explorer.
+        if (item.querySelector(".dlg-file-rename")) return;
         const node = fs().getNode(nodeId);
         const label = item.querySelector(".dlg-file-item-name");
         const input = document.createElement("input");
@@ -2325,7 +2366,11 @@
     BUTTON_SETS,
     parseAccessKey,
     accessKeyOf,
+    shortcutKeyOf,
     isComposingKey,
+    ITEM_DRAG_TYPE,
+    takesItemDrag,
+    droppedItemIds,
     fillThumbnail,
     describeFileType,
     describeNodeType,

@@ -594,7 +594,7 @@ const mountPaint = (shell, instance) => {
   );
   root.addEventListener("keydown", (event) => {
     const modifier = event.ctrlKey || event.metaKey;
-    const key = event.key.toLowerCase();
+    const key = globalThis.XPDialogs.shortcutKeyOf(event);
     const command = modifier
       ? {
           n: "new",

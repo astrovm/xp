@@ -90,9 +90,11 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   const icon = () => s.document.querySelector(`[data-desktop-id="${file.id}"]`);
   icon().click();
   icon().focus();
-  key(s, icon(), "c", { ctrlKey: true });
+  // Like Windows, a layout of another script gives the letter of the key's
+  // place: a Russian C key types "с", and a Greek X key types "χ".
+  key(s, icon(), "с", { ctrlKey: true, code: "KeyC" });
   expect(ops.getClipboard().mode).toBe("copy");
-  key(s, icon(), "x", { ctrlKey: true });
+  key(s, icon(), "χ", { ctrlKey: true, code: "KeyX" });
   expect(ops.getClipboard().mode).toBe("cut");
   key(s, icon(), "F2");
   const rename = s.document.querySelector(".desktop-rename");
@@ -114,11 +116,11 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   ops.copy([other.id]);
   const surface = s.document.getElementById("desktop-icons");
   surface.focus();
-  key(s, surface, "v", { ctrlKey: true });
+  key(s, surface, "м", { ctrlKey: true, code: "KeyV" });
   await flushShell();
   await flushShell();
   expect(fs.findChild(fs.DESKTOP, "pasted.txt").content).toBe("copy");
-  key(s, surface, "a", { ctrlKey: true });
+  key(s, surface, "ф", { ctrlKey: true, code: "KeyA" });
   expect(s.document.querySelectorAll(".desktop-icon.selected").length).toBe(
     s.document.querySelectorAll(".desktop-icon").length,
   );

@@ -210,7 +210,9 @@ test("the keyboard follows calc.exe's accelerators", async () => {
   expect(h.display()).toBe("0.");
   h.type("1,5");
   expect(h.display()).toBe("1.5");
-  h.key("m", { ctrlKey: true });
+  // A Russian layout types "ь" on the M key. Like Windows, Ctrl+M follows
+  // the place of the key.
+  h.key("ь", { ctrlKey: true, code: "KeyM" });
   expect(h.win.querySelector(".calculator-indicator").textContent).toBe(" M");
   h.key("Escape");
   h.key("r", { ctrlKey: true });
@@ -404,6 +406,9 @@ test("Copy and Paste", async () => {
   expect(h.display()).toBe("36.");
   // Ctrl+V waits for the browser's paste event.
   expect(h.key("v", { ctrlKey: true }).defaultPrevented).toBeFalse();
+  expect(
+    h.key("м", { ctrlKey: true, code: "KeyV" }).defaultPrevented,
+  ).toBeFalse();
   h.paste("2+2=");
   expect(h.display()).toBe("4.");
   // Garbage stops the paste at the first character calc.exe has no key for.

@@ -408,6 +408,11 @@ test("Task Manager starts tasks, shows About and runs Shut Down commands", async
   expect(s.document.querySelector(".run-dialog .title-text").textContent).toBe(
     "Create New Task",
   );
+  // Like XP, New Task keeps the keys of Task Manager. Run itself is
+  // modeless.
+  expect(
+    s.document.querySelector(".run-dialog").getAttribute("aria-modal"),
+  ).toBe("true");
   s.document.querySelector('.run-dialog [data-action="cancel"]').click();
   await menuCommand(tm, "help", "about");
   const about = s.document.querySelector(".about-windows-dialog");

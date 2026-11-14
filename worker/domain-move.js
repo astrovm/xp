@@ -36,7 +36,9 @@
   const transactionDone = (transaction) =>
     new Promise((resolve, reject) => {
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
+      // The error of a request comes to the transaction before the
+      // transaction has an error of its own. The request has it.
+      transaction.onerror = (event) => reject(event.target.error);
       transaction.onabort = () => reject(transaction.error);
     });
 

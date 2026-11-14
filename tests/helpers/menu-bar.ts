@@ -126,8 +126,10 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   // 2. On a Mac, Option changes the character of the key, or starts an
   // accent ("Dead"). In a text box, a dead key opens no menu, and Option
   // types its character. Outside a text box, the place of the key on the
-  // keyboard picks the menu. On Windows and Linux, a key that gives no
-  // Latin letter picks the menu by its place, also in a text box.
+  // keyboard picks the menu. On Windows and Linux, a key that types a
+  // letter of another script, such as Russian "ф", picks the menu by its
+  // place, also in a text box. In a text box, a key that types punctuation,
+  // such as Dvorak's "." key, opens no menu.
   // A slider, a check box or a button is not a text box.
   const typesText =
     control.tagName === "TEXTAREA" ||
@@ -155,7 +157,8 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
         value: mac ? "MacIntel" : "Linux x86_64",
       });
       await opensMenu("Dead", !typesText);
-      await opensMenu("©", !(typesText && mac));
+      await opensMenu("ф", !(typesText && mac));
+      await opensMenu(".", !typesText);
     }
   } finally {
     if (platform)

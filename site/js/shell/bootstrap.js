@@ -425,7 +425,7 @@ document.addEventListener("keydown", async (e) => {
         allFilesystem,
         movable,
       } = getDesktopSelectionEligibility();
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      if ((e.ctrlKey || e.metaKey) && XPDialogs.shortcutKeyOf(e) === "a") {
         e.preventDefault();
         document
           .querySelectorAll(".desktop-icon")
@@ -434,21 +434,25 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "c" &&
+        XPDialogs.shortcutKeyOf(e) === "c" &&
         allFilesystem
       ) {
         e.preventDefault();
         fileOps.copy(selectedFsIds);
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x" && movable) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        XPDialogs.shortcutKeyOf(e) === "x" &&
+        movable
+      ) {
         e.preventDefault();
         fileOps.cut(selectedFsIds);
         return;
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "v" &&
+        XPDialogs.shortcutKeyOf(e) === "v" &&
         fileOps.canPaste(fs.DESKTOP)
       ) {
         e.preventDefault();
@@ -529,7 +533,7 @@ document.addEventListener("keydown", async (e) => {
       }
       const selected = selectedExplorerNodes(explorerWin);
       const protectedSelection = selected.some((id) => fs.isProtected(id));
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      if ((e.ctrlKey || e.metaKey) && XPDialogs.shortcutKeyOf(e) === "a") {
         e.preventDefault();
         explorerWin.el
           .querySelectorAll(".explorer-item")
@@ -539,7 +543,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "c" &&
+        XPDialogs.shortcutKeyOf(e) === "c" &&
         selected.length
       ) {
         e.preventDefault();
@@ -548,7 +552,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "x" &&
+        XPDialogs.shortcutKeyOf(e) === "x" &&
         selected.length &&
         !protectedSelection
       ) {
@@ -558,7 +562,7 @@ document.addEventListener("keydown", async (e) => {
       }
       if (
         (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === "v" &&
+        XPDialogs.shortcutKeyOf(e) === "v" &&
         fileOps.canPaste(explorerWin.currentFolderId)
       ) {
         e.preventDefault();

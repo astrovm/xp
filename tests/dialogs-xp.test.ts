@@ -154,6 +154,25 @@ test("file dialogs browse with places, back, the folder list, and file types", a
   await flushShell();
   expect(dialog.querySelector(".dlg-file-rename").value).toBe("New Folder");
   expect(dialog.querySelector("#dlg-file-name").value).toBe(typed);
+  // F2 in the rename box reaches the item too. Like Explorer, the open box
+  // stays with its text.
+  const errors = [];
+  const onError = (event) => errors.push(event.error);
+  s.window.addEventListener("error", onError);
+  const renameBox = dialog.querySelector(".dlg-file-rename");
+  renameBox.value = "Typed";
+  renameBox.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "F2",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  s.window.removeEventListener("error", onError);
+  expect(errors).toEqual([]);
+  expect(dialog.querySelectorAll(".dlg-file-rename")).toHaveLength(1);
+  expect(dialog.querySelector(".dlg-file-rename") === renameBox).toBeTrue();
+  expect(renameBox.value).toBe("Typed");
   // The first Esc ends the rename box, and the second closes the dialog.
   key(s, "Escape");
   expect(names()).toContain("New Folder");
@@ -1171,6 +1190,27 @@ test("a one-line box keeps only the first line of pasted text, like XP", async (
   box.dispatchEvent(empty);
   expect(empty.defaultPrevented).toBeFalse();
   expect(box.value).toBe("x");
+  // A number box has no caret position. It takes the first line at its
+  // own selection, with the browser's edit, and an empty first line puts
+  // in nothing. A browser without that edit gets the first line.
+  const number = s.document.createElement("input");
+  number.type = "number";
+  s.document.body.append(number);
+  expect(paste(number, "45\n67")).toBeTrue();
+  expect(number.value).toBe("45");
+  const edits = [];
+  s.document.execCommand = (command, ui, text) => {
+    edits.push([command, text]);
+    return true;
+  };
+  try {
+    expect(paste(number, "8\n9")).toBeTrue();
+    expect(paste(number, "\n9")).toBeTrue();
+  } finally {
+    delete s.document.execCommand;
+  }
+  expect(edits).toEqual([["insertText", "8"]]);
+  expect(number.value).toBe("45");
 });
 
 test("Create New Folder makes a folder with a rename box, like XP", async () => {

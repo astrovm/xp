@@ -4,7 +4,7 @@ import { ESLint, Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { localRules } from "../tools/lint-rules.mjs";
 
-const lint = (code: string) =>
+const lint = (code: string, rule = "expect-needs-matcher") =>
   new Linter({ configType: "flat" })
     .verify(
       code,
@@ -13,7 +13,7 @@ const lint = (code: string) =>
           files: ["**/*.ts"],
           languageOptions: { parser: tseslint.parser },
           plugins: { local: localRules },
-          rules: { "local/expect-needs-matcher": "error" },
+          rules: { [`local/${rule}`]: "error" },
         },
       ],
       "sample.test.ts",
@@ -40,8 +40,41 @@ test("expect-needs-matcher finds each expect(...) with no matcher call", () => {
   ).toEqual([1, 2, 3, 4, 5]);
 });
 
-test("the lint config runs expect-needs-matcher on every test file", async () => {
+test("await-async-expect finds each .rejects or .resolves check that no one waits for", () => {
+  expect(
+    lint(
+      [
+        "expect(p).rejects.toThrow();",
+        "expect(p).resolves.toBe(1);",
+        "expect(p).resolves.not.toBe(1);",
+        "const pending = expect(p).rejects.toThrow();",
+        "[expect(p).rejects.toThrow()];",
+        "function f() { expect(p).rejects.toThrow(); }",
+        "expect(p).rejects;",
+        "await expect(p).rejects.toThrow();",
+        "await expect(p).resolves.not.toBe(1);",
+        "function g() { return expect(p).rejects.toThrow(); }",
+        "const h = () => expect(p).resolves.toBe(1);",
+        "await expect(p).rejects;",
+        "expect(p).toBe(1);",
+        "expect(p)[rejects].toThrow();",
+        "expect(p).not.toBe(1);",
+      ].join("\n"),
+      "await-async-expect",
+    ),
+  ).toEqual([1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("the lint config runs the test rules on every test file", async () => {
   const eslint = new ESLint();
-  const config = await eslint.calculateConfigForFile("tests/any.test.ts");
-  expect(config.rules["local/expect-needs-matcher"]).toEqual([2]);
+  const files = [...new Bun.Glob("{tests,scripts}/**/*.test.ts").scanSync(".")];
+  expect(files).toContain("scripts/mutants.test.ts");
+  for (const file of files) {
+    const config = await eslint.calculateConfigForFile(file);
+    expect([
+      file,
+      config.rules["local/expect-needs-matcher"],
+      config.rules["local/await-async-expect"],
+    ]).toEqual([file, [2], [2]]);
+  }
 });

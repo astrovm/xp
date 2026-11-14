@@ -1738,19 +1738,21 @@ const mountSpider = (context) => {
     else if (command === "exit") context.close();
   };
 
-  // spider.exe's accelerators.
+  // spider.exe's accelerators. A letter follows the keyboard layout, like
+  // Windows.
+  const letter = (event) => globalThis.XPDialogs.shortcutKeyOf(event);
   const KEYS = [
     [(event) => event.key === "F1", "contents"],
     [(event) => event.key === "F2", "new"],
-    [(event) => event.ctrlKey && event.code === "KeyN", "new"],
+    [(event) => event.ctrlKey && letter(event) === "n", "new"],
     [(event) => event.key === "F3", "difficulty"],
     [(event) => event.key === "F4" && !event.altKey, "statistics"],
     [(event) => event.key === "F5", "options"],
-    [(event) => event.ctrlKey && event.code === "KeyZ", "undo"],
-    [(event) => event.ctrlKey && event.code === "KeyS", "save"],
-    [(event) => event.ctrlKey && event.code === "KeyO", "open"],
-    [(event) => event.code === "KeyD", "deal"],
-    [(event) => event.code === "KeyM", "hint"],
+    [(event) => event.ctrlKey && letter(event) === "z", "undo"],
+    [(event) => event.ctrlKey && letter(event) === "s", "save"],
+    [(event) => event.ctrlKey && letter(event) === "o", "open"],
+    [(event) => letter(event) === "d", "deal"],
+    [(event) => letter(event) === "m", "hint"],
   ];
   const handleKeydown = (event) => {
     if (document.querySelector(".xp-dialog-overlay")) return;
