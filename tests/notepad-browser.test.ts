@@ -616,3 +616,13 @@ test("a drag that nothing takes is refused, also on a text box", async () => {
     effect: "move",
   });
 });
+test("Notepad opens a file with the caret at the start, like XP", async () => {
+  const h = await setup();
+  expect(h.editor.value).toBe("first\nsecond");
+  expect([h.editor.selectionStart, h.editor.selectionEnd]).toEqual([0, 0]);
+  expect(h.editor.scrollTop).toBe(0);
+  await h.command("status-bar");
+  expect(h.win.querySelector(".notepad-status").textContent).toBe(
+    "Ln 1, Col 1",
+  );
+});

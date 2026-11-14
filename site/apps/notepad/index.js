@@ -47,6 +47,10 @@ const mountNotepad = (context, instance) => {
     win.nodeId = node?.id || null;
     looseName = loose?.name ?? null;
     editor.value = node ? fs.getContent(node.id) || "" : (loose?.text ?? "");
+    // A new value puts the caret at the end. XP opens a file at its start.
+    editor.setSelectionRange(0, 0);
+    editor.scrollTop = 0;
+    editor.scrollLeft = 0;
     savedContent = editor.value;
     win.dirty = false;
     updateTitle();
