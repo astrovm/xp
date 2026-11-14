@@ -7,6 +7,7 @@ import {
   flushShell,
 } from "./helpers/shell-harness";
 import { checkMenuBar } from "./helpers/menu-bar";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 async function setup() {
   const s = await login(await loadShell()),
@@ -244,6 +245,20 @@ test("Notepad switching files preserves a canceled draft and saves on confirmati
     if (command === "o") await h.answer("cancel");
   }
   expect(h.editor.value).toBe("");
+  // AltGr types characters, such as "ś", "ó" and "ń" on a Polish keyboard.
+  // Like XP, it never runs Save, Open or New.
+  h.edit("typed");
+  for (const [key, code] of [
+    ["ś", "KeyS"],
+    ["ó", "KeyO"],
+    ["ń", "KeyN"],
+  ])
+    for (const event of pressAltGr(h.s.window, h.editor, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  await flushShell();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
+  expect(h.editor.value).toBe("typed");
+  expect(h.fs.getContent(other.id)).toBe("other");
 });
 
 test("Notepad reports invalid and failed saves and ignores empty clipboard actions", async () => {
@@ -511,4 +526,93 @@ test("no part of the page opens a file from the computer that no folder takes", 
   s.document.body.dispatchEvent(bare);
   expect(bare.defaultPrevented).toBeFalse();
   expect(fs.getNode(fs.DESKTOP).type).toBe("folder");
+});
+
+test("an item dragged over Notepad's text keeps its effect and opens on the drop", async () => {
+  const h = await setup();
+  const title = () => h.win.querySelector(".title-text").textContent;
+  const items = (ids) => ({
+    "application/x-astro-vfs-ids": JSON.stringify(ids),
+  });
+  const other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
+    content: "other",
+  });
+  // The drag over the text box itself, not only over the window.
+  for (const type of ["dragenter", "dragover"])
+    expect(dragOn(h.s, h.editor, type, items([other.id]))).toEqual({
+      taken: true,
+      effect: "move",
+    });
+  dragOn(h.s, h.editor, "drop", items([other.id]));
+  await flushShell();
+  expect(title()).toBe("other.txt - Notepad");
+});
+
+test("an item that also carries a file opens as the item in Notepad", async () => {
+  const h = await setup();
+  const title = () => h.win.querySelector(".title-text").textContent;
+  const items = (ids) => ({
+    "application/x-astro-vfs-ids": JSON.stringify(ids),
+  });
+  const other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
+    content: "other",
+  });
+  // Such as a picture that the browser drags.
+  dragOn(h.s, h.editor, "drop", items([other.id]), [
+    { name: "picture.png", text: async () => "from the browser" },
+  ]);
+  await flushShell();
+  await flushShell();
+  expect(h.editor.value).toBe("other");
+  expect(title()).toBe("other.txt - Notepad");
+});
+
+test("Notepad does not open a dropped file that goes away while it asks to save", async () => {
+  const h = await setup();
+  const items = (ids) => ({
+    "application/x-astro-vfs-ids": JSON.stringify(ids),
+  });
+  const other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
+    content: "other",
+  });
+  const path = h.fs.getPath(other.id);
+  h.edit("changed");
+  dragOn(h.s, h.editor, "drop", items([other.id]));
+  await flushShell();
+  await h.fs.remove(other.id);
+  await h.answer("no");
+  const message = [...h.s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(message.querySelector(".title-text").textContent).toBe("Notepad");
+  expect(message.textContent).toContain(
+    `Cannot find the ${path} file.\n\nCheck the file name and try again.`,
+  );
+  await h.answer("ok");
+  expect(h.editor.value).toBe("changed");
+  expect(h.win.querySelector(".title-text").textContent).toBe(
+    "note.txt - Notepad",
+  );
+});
+
+test("a drag that nothing takes is refused, also on a text box", async () => {
+  const h = await setup();
+  const box = h.s.document.createElement("input");
+  h.s.document.getElementById("desktop").append(box);
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    expect(dragOn(h.s, box, type, { "text/plain": "x" })).toEqual({
+      taken: true,
+      effect: "none",
+    });
+    expect(
+      dragOn(h.s, box, type, {
+        "application/x-astro-vfs-ids": JSON.stringify([h.file.id]),
+      }),
+    ).toEqual({ taken: true, effect: "none" });
+  }
+  expect(box.value).toBe("");
+  // A drag that a target takes keeps the target's effect.
+  box.addEventListener("dragover", (event) => event.preventDefault());
+  expect(dragOn(h.s, box, "dragover", { "text/plain": "x" })).toEqual({
+    taken: true,
+    effect: "move",
+  });
 });

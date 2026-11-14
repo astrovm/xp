@@ -187,9 +187,8 @@ export const renderTerminal = (context, program, programId) => {
   // The prompt reads the pasted text itself, so the shell's paste rules
   // for one-line boxes do not apply.
   input.dataset.ownPaste = "";
-  input.addEventListener("paste", (event) => {
-    event.preventDefault();
-    typeAhead += event.clipboardData.getData("text/plain");
+  const typeIn = (text) => {
+    typeAhead += text;
     if (waitingKey && typeAhead) {
       const go = waitingKey;
       waitingKey = null;
@@ -198,7 +197,40 @@ export const renderTerminal = (context, program, programId) => {
       return;
     }
     feed();
+  };
+  input.addEventListener("paste", (event) => {
+    event.preventDefault();
+    typeIn(event.clipboardData.getData("text/plain"));
   });
+
+  // Like XP, a dropped item types its path at the caret, in quotes when it
+  // has a space. Of many items, only the dragged one goes in, and a drop
+  // adds no space. An item in the Recycle Bin and a file from the computer
+  // have no path here, so the window does not take them.
+  const { ITEM_DRAG_TYPE } = globalThis.XPDialogs;
+  const typeItemPath = (ids) => {
+    const id = ids[0];
+    if (!context.fs.getNode(id) || context.fs.isInRecycleBin(id)) return;
+    const path = context.fs.getPath(id);
+    input.focus();
+    typeIn(path.includes(" ") ? `"${path}"` : path);
+  };
+  content.dataset.dropAction = "items";
+  ["dragenter", "dragover"].forEach((type) =>
+    content.addEventListener(type, (event) => {
+      if (globalThis.XPDialogs.takesItemDrag(event, [ITEM_DRAG_TYPE]))
+        event.preventDefault();
+    }),
+  );
+  content.addEventListener("drop", (event) => {
+    if (!globalThis.XPDialogs.takesItemDrag(event, [ITEM_DRAG_TYPE])) return;
+    event.preventDefault();
+    typeItemPath(globalThis.XPDialogs.droppedItemIds(event));
+  });
+  // Desktop icons move with the pointer, not with a browser drag.
+  content.addEventListener("itemsdrop", (event) =>
+    typeItemPath(event.detail.ids),
+  );
 
   input.addEventListener("keydown", async (event) => {
     // The keys of an input method stay with it: its Enter runs nothing.
@@ -235,5 +267,6 @@ export const renderTerminal = (context, program, programId) => {
     setTimeout(() => input.focus(), 0);
   });
   setTimeout(() => input.focus(), 0);
-  return content;
+  // The closed window frees the folder that the session is in.
+  return { element: content, unmount: () => session.close() };
 };

@@ -628,8 +628,15 @@ const mountPaint = (shell, instance) => {
   return {
     element: root,
     beforeClose: confirmSaveChanges,
+    // The picture can go away or move while Paint asks to save. Paint then
+    // looks for it at its old path, and does not find it, like XP.
     async openFile(file) {
+      const path = shell.pathOf(file.id);
       if (!(await confirmSaveChanges())) return false;
+      if (shell.pathOf(file.id) !== path) {
+        await shell.dialogs.alert(`${path} was not found.`, "Paint", "warning");
+        return false;
+      }
       await loadFile(file);
       return true;
     },

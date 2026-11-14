@@ -418,7 +418,7 @@ test("rename boxes act on each refused name like XP", async () => {
   key(s, box, "Enter");
   await settle();
   expect(dialogs(s).map((dialog) => dialog.text)).toEqual([
-    "Cannot rename abc.txt: Access is denied.",
+    "Cannot rename abc.txt: Access is denied.\n\nMake sure the disk is not full or write-protected and that the file is not currently in use.",
   ]);
 });
 
@@ -729,4 +729,37 @@ test("a desktop rename asks before it changes the extension of a known file type
   await settle();
   await answer(s, "No");
   expect(s.document.querySelector(".desktop-rename")).toBeNull();
+});
+
+// In the XP VM, with the extensions shown, every rename box selects the
+// whole name, the extension too.
+test("every rename box selects the whole name with its extension, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
+  const icon = fs.createFile(fs.DESKTOP, "memo.txt", { content: "" });
+  await settle();
+  const selection = (input) => [input.selectionStart, input.selectionEnd];
+  const win = await openDocuments(s);
+  const explorerBox = await renameInExplorer(s, win, file.id);
+  expect(selection(explorerBox)).toEqual([0, "note.txt".length]);
+  key(s, explorerBox, "Escape");
+  await settle();
+  const desktopBox = await renameOnDesktop(s, icon.id);
+  expect(selection(desktopBox)).toEqual([0, "memo.txt".length]);
+  key(s, desktopBox, "Escape");
+  await settle();
+  const save = s.window.XPDialogs.saveFile({ defaultExtension: ".txt" });
+  await settle();
+  const item = s.document.querySelector(
+    `.dlg-file-item[data-node-id="${file.id}"]`,
+  );
+  key(s, item, "F2");
+  await settle();
+  const dialogBox = s.document.querySelector(".dlg-file-rename");
+  expect(selection(dialogBox)).toEqual([0, "note.txt".length]);
+  key(s, dialogBox, "Escape");
+  await settle();
+  s.document.querySelector('.xp-dialog [data-action="cancel"]').click();
+  expect(await save).toBeNull();
 });

@@ -136,7 +136,7 @@ test("no text box takes dropped text, like XP, but the Run dialog does", async (
   // the Open box, after a space, and only its first line.
   clickStartAction(s, "run");
   const run = s.document.querySelector(".run-dialog");
-  const input = run.querySelector("#run-command");
+  const input = run.querySelector(".run-command");
   input.value = "";
   expect(drag(s, input, "dragover", text)).toEqual({
     taken: true,
@@ -172,7 +172,7 @@ test("the Run dialog takes dragged items as paths, like XP", async () => {
   await flushShell();
   clickStartAction(s, "run");
   const run = s.document.querySelector(".run-dialog");
-  const input = run.querySelector("#run-command");
+  const input = run.querySelector(".run-command");
   // Run is modeless, like XP, so an item can come from a window or the
   // desktop. Task Manager's New Task stays modal.
   expect(run.getAttribute("aria-modal")).toBe("false");

@@ -397,6 +397,12 @@ test("Copy and Paste", async () => {
   h.key("Insert", { ctrlKey: true });
   expect(h.copied).toEqual(["8", "8", "8"]);
   h.type("+0.5=");
+  // AltGr sends Ctrl and Alt. AltGr+C types "ć" on a Polish keyboard and
+  // copies nothing, like XP.
+  expect(
+    h.key("ć", { ctrlKey: true, altKey: true, code: "KeyC" }).defaultPrevented,
+  ).toBeFalse();
+  expect(h.copied).toEqual(["8", "8", "8"]);
   h.key("c", { ctrlKey: true });
   expect(h.copied.at(-1)).toBe("8.5");
   await h.menu("edit", "paste");

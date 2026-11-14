@@ -35,7 +35,14 @@ export const openTemplateDialog = ({
   help = false,
   modal = true,
 }) => {
-  const dialog = dialogs.createDialog({ title, systemMenu, help, modal });
+  // A modeless dialog stays above its owner window, like XP.
+  const dialog = dialogs.createDialog({
+    title,
+    systemMenu,
+    help,
+    modal,
+    owner: modal ? null : owner.window.dataset.game,
+  });
   dialog.el.classList.add("xp-template-dialog");
   const { body } = dialog;
   body.classList.add("xp-template-body");

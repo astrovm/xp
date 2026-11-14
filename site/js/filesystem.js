@@ -533,12 +533,70 @@
     }
   };
 
-  // The error for a protected item. Its code lets the Command Prompt show
-  // its own text.
-  const accessDenied = (verb, node) => {
-    const error = new Error(`Cannot ${verb} ${node.name}: Access is denied.`);
-    error.code = "access-denied";
+  // XP's titles for a failed change. The Explorer and the desktop show
+  // them on their error boxes.
+  const ERROR_TITLES = {
+    delete: "Error Deleting File or Folder",
+    move: "Error Moving File or Folder",
+    rename: "Error Renaming File or Folder",
+  };
+
+  // An error with XP's text and title. Its code lets the Command Prompt
+  // show its own text.
+  const changeError = (verb, text, code) => {
+    const error = new Error(text);
+    error.code = code;
+    error.title = ERROR_TITLES[verb];
     return error;
+  };
+
+  const accessDenied = (verb, node) =>
+    changeError(
+      verb,
+      `Cannot ${verb} ${node.name}: Access is denied.\n\nMake sure the disk is not full or write-protected and that the file is not currently in use.`,
+      "access-denied",
+    );
+
+  const IN_USE_TEXT =
+    "It is being used by another person or program.\n\nClose any programs that might be using the file and try again.";
+
+  // The folders that programs are in, such as the folder of a Command
+  // Prompt. XP locks each of them and every folder above them.
+  const foldersInUse = new Map();
+
+  const useFolder = (owner, id) => {
+    foldersInUse.set(owner, id);
+  };
+
+  const releaseFolder = (owner) => {
+    foldersInUse.delete(owner);
+  };
+
+  // Throws XP's error when an item cannot be deleted, moved or renamed. A
+  // protected item and a folder above a folder in use are "access denied".
+  // The folder in use itself is "in use". A move of either names the
+  // folder in use, because XP copies the items first and then cannot
+  // remove that folder.
+  const checkChange = (verb, id) => {
+    const node = requireNode(id);
+    if (node.protected) throw accessDenied(verb, node);
+    const usedId = [...foldersInUse.values()].find(
+      (folderId) => folderId === id || isDescendantOf(id, folderId),
+    );
+    if (!usedId) return;
+    const code = usedId === id ? "in-use" : "access-denied";
+    if (verb === "move")
+      throw changeError(
+        verb,
+        `Cannot remove folder ${nodes[usedId].name}: ${IN_USE_TEXT}`,
+        code,
+      );
+    if (code === "access-denied") throw accessDenied(verb, node);
+    throw changeError(
+      verb,
+      `Cannot ${verb} ${node.name}: ${IN_USE_TEXT}`,
+      code,
+    );
   };
 
   const createNode = (parentId, name, type, options = {}) => {
@@ -581,9 +639,7 @@
 
   const rename = (id, newName) => {
     const node = requireNode(id);
-    if (node.protected) {
-      throw accessDenied("rename", node);
-    }
+    checkChange("rename", id);
     const validName = validateName(newName);
     if (node.name === validName) return node;
     // Like XP, a rename never takes the name of another item in its folder.
@@ -610,9 +666,7 @@
   const move = (id, targetParentId) => {
     const node = requireNode(id);
     const target = requireFolder(targetParentId);
-    if (node.protected) {
-      throw accessDenied("move", node);
-    }
+    checkChange("move", id);
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
       throw new Error(
         `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
@@ -679,9 +733,7 @@
   const destroy = (id) => {
     const node = nodes[id];
     if (!node) return;
-    if (node.protected) {
-      throw accessDenied("delete", node);
-    }
+    checkChange("delete", id);
     const erase = (nodeId) => {
       const current = nodes[nodeId];
       [...current.children].forEach(erase);
@@ -696,9 +748,7 @@
   // in the Recycle Bin destroys it permanently.
   const remove = (id) => {
     const node = requireNode(id);
-    if (node.protected) {
-      throw accessDenied("delete", node);
-    }
+    checkChange("delete", id);
     if (isInRecycleBin(id)) {
       destroy(id);
       return;
@@ -829,6 +879,7 @@
   const resetForTests = () => {
     storage.removeItem(STORAGE_KEY);
     nodes = seedNodes();
+    foldersInUse.clear();
     listeners.clear();
     fileTypeHandlers.clear();
     folderHandler = null;
@@ -1059,6 +1110,9 @@
     isDescendantOf,
     isInRecycleBin,
     isProtected,
+    checkChange,
+    useFolder,
+    releaseFolder,
     getSize,
     validateName,
     INVALID_NAME_CHARACTERS,

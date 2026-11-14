@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 
 afterEach(cleanupShells);
 
@@ -399,6 +400,13 @@ test("DIR /P lays out each screen one time", async () => {
     Element.prototype.append = append;
     Range.prototype.getClientRects = rects;
   }
+  // AltGr+C types "ć" on a Polish keyboard. It is no Ctrl+C, so the
+  // listing goes on, like any other key.
+  const shown = h.output.textContent.length;
+  pressAltGr(h.s.window, h.input, "ć", "KeyC");
+  await settle();
+  expect(h.output.textContent.slice(shown)).toContain("f");
+  expect(h.output.textContent.endsWith(PAUSE)).toBeTrue();
   // Ctrl+C ends the listing with each keyboard layout. A Russian layout
   // types "с" on the C key.
   const stop = new h.s.window.KeyboardEvent("keydown", {
@@ -469,4 +477,203 @@ test("the pause of DIR /P takes the keys like cmd.exe", async () => {
   await key("End");
   expect(pauses()).toBe(before + 3);
   await key("c", { ctrlKey: true });
+});
+
+// Like XP, the desktop cannot delete or rename the folder above the folder
+// of an open Command Prompt. The window that closes frees it.
+test("an open Command Prompt locks its folders until its window closes", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const outer = fs.createFolder(fs.DESKTOP, "t");
+  const inner = fs.createFolder(outer.id, "t2");
+  await h.enter(`cd "${fs.getPath(inner.id)}"`);
+  const dialogs = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].map((dialog) => [
+      dialog.getAttribute("aria-label"),
+      dialog.querySelector(".dlg-text")?.textContent,
+    ]);
+  const click = async (selector) => {
+    s.document.querySelector(selector).click();
+    await settle();
+  };
+  const menu = async (action) => {
+    const icon = s.document.querySelector(
+      `.desktop-icon[data-desktop-id="${outer.id}"]`,
+    );
+    icon.focus();
+    icon.dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+    await click(`#desktop-context-menu [data-action="${action}"]`);
+  };
+  const DENIED =
+    "Access is denied.\n\nMake sure the disk is not full or write-protected and that the file is not currently in use.";
+  await menu("delete");
+  await click('.xp-dialog [data-action="yes"]');
+  expect(dialogs()).toEqual([
+    ["Error Deleting File or Folder", `Cannot delete t: ${DENIED}`],
+  ]);
+  await click('.xp-dialog [data-action="ok"]');
+  expect(fs.getNode(outer.id).parent).toBe(fs.DESKTOP);
+  await menu("rename");
+  const box = s.document.querySelector(".desktop-rename");
+  box.value = "u";
+  box.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+  expect(dialogs()).toEqual([
+    ["Error Renaming File or Folder", `Cannot rename t: ${DENIED}`],
+  ]);
+  await click('.xp-dialog [data-action="ok"]');
+  s.document.querySelector(".desktop-rename")?.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+  expect(fs.getNode(outer.id).name).toBe("t");
+  await h.enter("exit");
+  expect(h.win.isConnected).toBeFalse();
+  await menu("delete");
+  await click('.xp-dialog [data-action="yes"]');
+  expect(dialogs()).toEqual([]);
+  expect(fs.isInRecycleBin(outer.id)).toBeTrue();
+});
+
+// A drag event with the data of a drag. Happy DOM keeps no dataTransfer.
+const dragOn = (s, element, type, transfer) => {
+  const event = new s.window.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: transfer });
+  element.dispatchEvent(event);
+  return event.defaultPrevented;
+};
+const transferOf = (data, files = []) => ({
+  types: [...Object.keys(data), ...(files.length ? ["Files"] : [])],
+  dropEffect: "move",
+  files,
+  getData: (format) => data[format] ?? "",
+  setData(format, value) {
+    data[format] = value;
+    this.types = Object.keys(data);
+  },
+});
+
+// In the XP VM, an item dropped on the Command Prompt types its path at
+// the caret, in quotes when it has a space, and adds no space. Of many
+// items, only the dragged one goes in.
+test("the Command Prompt types the path of an item dropped on it, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const plain = fs.createFile(fs.DRIVE_C, "a.txt", { content: "" });
+  const spaced = fs.createFile(fs.DRIVE_C, "b c.txt", { content: "" });
+  const deleted = fs.createFile(fs.DRIVE_C, "gone.txt", { content: "" });
+  fs.remove(deleted.id);
+  const items = (ids) =>
+    transferOf({ "application/x-astro-vfs-ids": JSON.stringify(ids) });
+  // A drag of items is taken, over the prompt and over the screen.
+  expect(dragOn(s, h.input, "dragover", items([plain.id]))).toBeTrue();
+  const screen = h.win.querySelector(".xp-terminal-screen");
+  expect(dragOn(s, screen, "dragenter", items([plain.id]))).toBeTrue();
+  h.input.value = "type ";
+  h.input.setSelectionRange(5, 5);
+  dragOn(s, screen, "drop", items([spaced.id, plain.id]));
+  await settle();
+  expect(h.input.value).toBe('type "C:\\b c.txt"');
+  dragOn(s, h.input, "drop", items([plain.id]));
+  await settle();
+  expect(h.input.value).toBe('type "C:\\b c.txt"C:\\a.txt');
+  // The path goes in at the caret.
+  h.input.setSelectionRange(0, 0);
+  dragOn(s, h.input, "drop", items([plain.id]));
+  await settle();
+  expect(h.input.value).toBe('C:\\a.txttype "C:\\b c.txt"C:\\a.txt');
+  // An item in the Recycle Bin, a missing item, a bad list and a file from
+  // the computer type nothing.
+  h.input.value = "";
+  dragOn(s, h.input, "drop", items([deleted.id]));
+  dragOn(s, h.input, "drop", items(["missing"]));
+  dragOn(
+    s,
+    h.input,
+    "drop",
+    transferOf({ "application/x-astro-vfs-ids": "{" }),
+  );
+  const computerFile = transferOf({}, [{ name: "x.txt" }]);
+  expect(dragOn(s, h.input, "dragover", computerFile)).toBeTrue();
+  expect(computerFile.dropEffect).toBe("none");
+  dragOn(s, h.input, "drop", computerFile);
+  await settle();
+  expect(h.input.value).toBe("");
+
+  // An Explorer drag gives the item that the pointer dragged, also when
+  // other items are selected before it.
+  s.window.history.replaceState(null, "", "#my-computer");
+  fs.open(fs.DRIVE_C);
+  await settle();
+  const explorer = [...s.document.querySelectorAll(".xp-window")].find((win) =>
+    win.querySelector(`.explorer-item[data-node-id="${plain.id}"]`),
+  );
+  const item = (id) =>
+    explorer.querySelector(`.explorer-item[data-node-id="${id}"]`);
+  item(plain.id).click();
+  item(spaced.id).dispatchEvent(
+    new s.window.MouseEvent("click", { ctrlKey: true, bubbles: true }),
+  );
+  const drag = transferOf({});
+  dragOn(s, item(spaced.id), "dragstart", drag);
+  expect(JSON.parse(drag.getData("application/x-astro-vfs-ids"))).toEqual([
+    spaced.id,
+    plain.id,
+  ]);
+  dragOn(s, h.input, "drop", drag);
+  await settle();
+  expect(h.input.value).toBe('"C:\\b c.txt"');
+
+  // A desktop icon dragged onto the window types its path. The icon stays.
+  h.input.value = "";
+  const icon = fs.createFile(fs.DESKTOP, "desk.txt", { content: "" });
+  const other = fs.createFile(fs.DESKTOP, "other.txt", { content: "" });
+  await settle();
+  const iconOf = (id) =>
+    s.document.querySelector(`.desktop-icon[data-desktop-id="${id}"]`);
+  s.document.elementsFromPoint = () => [h.input];
+  // The icon that the pointer drags is the later one on the desktop.
+  iconOf(icon.id).dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { button: 0, bubbles: true }),
+  );
+  iconOf(icon.id).dispatchEvent(
+    new s.window.PointerEvent("pointerup", { button: 0, bubbles: true }),
+  );
+  [
+    ["pointerdown", 10],
+    ["pointermove", 190],
+    ["pointerup", 190],
+  ].forEach(([type, at]) =>
+    iconOf(other.id).dispatchEvent(
+      new s.window.PointerEvent(type, {
+        button: 0,
+        pointerId: 1,
+        ctrlKey: type === "pointerdown",
+        clientX: at,
+        clientY: at,
+        bubbles: true,
+      }),
+    ),
+  );
+  await settle();
+  expect(
+    [...s.document.querySelectorAll(".desktop-icon.selected")].length,
+  ).toBe(2);
+  const path = fs.getPath(other.id);
+  expect(h.input.value).toBe(path.includes(" ") ? `"${path}"` : path);
+  expect(fs.getNode(icon.id).parent).toBe(fs.DESKTOP);
 });

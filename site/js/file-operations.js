@@ -133,13 +133,14 @@
     );
   };
 
-  const assertMovableTo = (ids, destinationId) => {
+  // Paste asks with checkUse false: like XP, a folder in use leaves Paste
+  // on and shows its error only when the paste runs. Cut already refuses
+  // protected items.
+  const assertMovableTo = (ids, destinationId, checkUse = true) => {
     requireFolder(destinationId);
     ids.forEach((id) => {
       const node = fs.getNode(id);
-      if (node.protected) {
-        throw new Error(`Cannot move ${node.name}: Access is denied.`);
-      }
+      if (checkUse) fs.checkChange("move", id);
       if (id === destinationId || fs.isDescendantOf(id, destinationId)) {
         throw new Error(
           `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
@@ -186,7 +187,7 @@
     try {
       assertWritableFolder(destinationId);
       const ids = getTopLevelIds(clipboard.ids);
-      if (clipboard.mode === "cut") assertMovableTo(ids, destinationId);
+      if (clipboard.mode === "cut") assertMovableTo(ids, destinationId, false);
       else assertCopyableTo(ids, destinationId);
       return true;
     } catch (error) {
@@ -453,10 +454,11 @@
   const removeToBin = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
-      const node = fs.getNode(id);
-      if (node.protected || fs.isInRecycleBin(id)) {
-        throw new Error(`Cannot delete ${node.name}: Access is denied.`);
-      }
+      if (fs.isInRecycleBin(id))
+        throw new Error(
+          `Cannot delete ${fs.getNode(id).name}: Access is denied.`,
+        );
+      fs.checkChange("delete", id);
     });
     topLevelIds.forEach((id) => fs.remove(id));
     return topLevelIds;
@@ -465,10 +467,11 @@
   const permanentlyDelete = (ids) => {
     const topLevelIds = getTopLevelIds(ids);
     topLevelIds.forEach((id) => {
-      const node = fs.getNode(id);
-      if (!fs.isInRecycleBin(id) || node.protected) {
-        throw new Error(`Cannot delete ${node.name}: Access is denied.`);
-      }
+      if (!fs.isInRecycleBin(id))
+        throw new Error(
+          `Cannot delete ${fs.getNode(id).name}: Access is denied.`,
+        );
+      fs.checkChange("delete", id);
     });
     topLevelIds.forEach((id) => fs.destroy(id));
     return topLevelIds;

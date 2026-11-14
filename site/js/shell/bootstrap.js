@@ -322,13 +322,7 @@ document.addEventListener("keydown", async (e) => {
 
     // Dialogs and editable controls own their keyboard semantics. Do not
     // steal browser text editing or modal access keys for shell shortcuts.
-    if (
-      e.defaultPrevented ||
-      document.querySelector(
-        ".xp-dialog-overlay:not(.xp-dialog-modeless), .system-dialog-overlay:not([hidden])",
-      )
-    )
-      return;
+    if (e.defaultPrevented || XPDialogs.isModalOpen()) return;
 
     if (e.ctrlKey && e.shiftKey && e.key === "Escape") {
       e.preventDefault();
@@ -645,11 +639,7 @@ document.addEventListener("keydown", async (e) => {
       closeTrayVolumePopup();
     }
   } catch (error) {
-    await XPDialogs.alert(
-      error.message || "The file operation failed.",
-      "File operation",
-      "error",
-    );
+    await alertError(error, "The file operation failed.", "File operation");
   }
 });
 

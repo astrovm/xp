@@ -11,7 +11,7 @@ afterEach(cleanupShells);
 const run = async (s, command) => {
   clickStartAction(s, "run");
   const dialog = s.document.querySelector(".run-dialog");
-  dialog.querySelector("#run-command").value = command;
+  dialog.querySelector(".run-dialog .shell-dialog-input").value = command;
   dialog.querySelector('[data-action="run"]').click();
   await flushShell();
 };
@@ -43,7 +43,7 @@ test("Run opens shell applications and keeps case-insensitive recent history", a
   ).toHaveLength(1);
   clickStartAction(s, "run");
   expect(
-    s.document.querySelectorAll("#run-command-history option").length,
+    s.document.querySelectorAll(".run-dialog datalist option").length,
   ).toBe(history.length);
   s.document.querySelector('.run-dialog [data-action="cancel"]').click();
 });
@@ -62,16 +62,26 @@ test("Run resolves filesystem paths and reports unknown commands without recordi
   await run(s, "unknown synthetic program");
   expect(s.document.querySelectorAll(".xp-dialog").length).toBe(2);
   const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
-  expect(error.querySelector(".title-text").textContent).toBe(
-    "unknown synthetic program",
-  );
+  // XP names only the program, and hides Run while the error is open.
+  expect(error.querySelector(".title-text").textContent).toBe("unknown");
   expect(error.textContent).toContain(
-    "Windows cannot find 'unknown synthetic program'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.",
+    "Windows cannot find 'unknown'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.",
   );
-  expect(
-    s.document.querySelectorAll(".xp-dialog")[0].classList.contains("active"),
-  ).toBeFalse();
+  const runDialog = s.document.querySelector(".run-dialog");
+  expect(runDialog.parentElement.hidden).toBeTrue();
   expect(error.classList.contains("active")).toBeTrue();
+  error.querySelector('[data-action="ok"]').click();
+  await flushShell();
+  // Run comes back with its text selected.
+  const input = runDialog.querySelector(".run-dialog .shell-dialog-input");
+  expect(runDialog.parentElement.hidden).toBeFalse();
+  expect(s.document.activeElement === input).toBeTrue();
+  expect([input.selectionStart, input.selectionEnd]).toEqual([
+    0,
+    "unknown synthetic program".length,
+  ]);
+  expect(runDialog.classList.contains("active")).toBeTrue();
+  runDialog.querySelector('[data-action="cancel"]').click();
   expect(JSON.parse(s.window.localStorage.getItem("runHistory"))).toEqual([
     fs.getPath(folder.id),
   ]);
@@ -244,4 +254,98 @@ test("Search lists games and applications and opens them", async () => {
   expect(
     !!s.document.querySelector('.xp-window[data-game="__control-panel"]'),
   ).toBeTrue();
+});
+
+// The last dialog on the page, such as a program's message.
+const lastDialog = (s) => [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+const answer = async (s, action) => {
+  lastDialog(s).querySelector(`[data-action="${action}"]`).click();
+  await flushShell();
+};
+const windowTitles = (s) =>
+  [...s.document.querySelectorAll(".xp-window[data-game] .title-text")].map(
+    (title) => title.textContent,
+  );
+
+test("Run opens a program with the file or folder that follows it, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Run Args");
+  const note = fs.createFile(folder.id, "a b.txt", { content: "hello" });
+  const folderPath = fs.getPath(folder.id);
+  await run(s, `notepad "${fs.getPath(note.id)}" "C:\\other.txt"`);
+  expect(windowTitles(s)).toContain("a b.txt - Notepad");
+  await run(s, `"explorer.exe" "${folderPath}"`);
+  expect(
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .explorer-address input',
+    ).value,
+  ).toBe(folderPath);
+  await run(s, "CALC extra words");
+  expect(
+    !!s.document.querySelector('.xp-window[data-game="__calculator"]'),
+  ).toBeTrue();
+  await run(s, "taskmgr");
+  expect(
+    !!s.document.querySelector('.xp-window[data-game="__task-manager"]'),
+  ).toBeTrue();
+  await run(s, "explorer");
+  expect(
+    !!s.document.querySelector('.xp-window[data-game="__my-computer"]'),
+  ).toBeTrue();
+  expect(JSON.parse(s.window.localStorage.getItem("runHistory"))[0]).toBe(
+    "explorer",
+  );
+});
+
+test("Run gives XP's messages for a program's missing file or folder", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folderPath = fs.getPath(fs.MY_DOCUMENTS);
+  const windows = () => s.document.querySelectorAll(".xp-window[data-game]");
+  const before = windows().length;
+  await run(s, `mspaint "${folderPath}\\no file.bmp"`);
+  expect(lastDialog(s).querySelector(".title-text").textContent).toBe("Paint");
+  expect(lastDialog(s).textContent).toContain(
+    `${folderPath}\\no file.bmp was not found.`,
+  );
+  await answer(s, "ok");
+  await run(s, 'explorer "C:\\no such"');
+  expect(lastDialog(s).querySelector(".title-text").textContent).toBe(
+    "Windows Explorer",
+  );
+  expect(lastDialog(s).textContent).toContain(
+    "The path 'C:\\no such' does not exist or is not a directory.",
+  );
+  await answer(s, "ok");
+  expect(windows().length).toBe(before);
+
+  const missing = `${folderPath}\\new note.txt`;
+  await run(s, `notepad ${missing}`);
+  expect(lastDialog(s).querySelector(".title-text").textContent).toBe(
+    "Notepad",
+  );
+  expect(lastDialog(s).textContent).toContain(
+    `Cannot find the ${missing} file.\n\nDo you want to create a new file?`,
+  );
+  await answer(s, "cancel");
+  expect(windows().length).toBe(before);
+  expect(fs.resolvePath(missing)).toBeNull();
+  await run(s, `notepad "${missing}"`);
+  await answer(s, "yes");
+  expect(fs.getNode(fs.resolvePath(missing)).type).toBe("file");
+  expect(windowTitles(s)).toContain("new note.txt - Notepad");
+  s.document
+    .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+    .click();
+  await flushShell();
+  await run(s, 'notepad "C:\\No Folder\\x.txt"');
+  await answer(s, "yes");
+  expect(lastDialog(s).textContent).toContain(
+    "The system cannot find the path specified.",
+  );
+  await answer(s, "ok");
+  await run(s, 'notepad "C:\\No Folder\\x.txt"');
+  await answer(s, "no");
+  expect(windowTitles(s)).toContain("Untitled - Notepad");
 });

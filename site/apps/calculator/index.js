@@ -686,8 +686,7 @@ const mountCalculator = (context) => {
     setTimeout(() => button.classList.remove("pressed"), 20);
   };
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay:not(.xp-dialog-modeless)"))
-      return;
+    if (globalThis.XPDialogs.isModalOpen()) return;
     // Ctrl+V arrives as a paste event, with the clipboard's text.
     if (event.ctrlKey && globalThis.XPDialogs.shortcutKeyOf(event) === "v")
       return;

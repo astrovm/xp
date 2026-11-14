@@ -173,18 +173,26 @@
       navigator.userAgentData?.platform || navigator.platform,
     );
 
-  // The letter of a Ctrl shortcut, such as S in Ctrl+S. Like Windows, a key
-  // that types a Latin letter gives that letter, so AZERTY and Dvorak keep
-  // their own letters. A key that types a letter of another script, such
-  // as a Russian or Greek one, gives the letter of its place on the
-  // keyboard, so Ctrl+S works with each layout. Other keys give their own
-  // value.
-  const shortcutKeyOf = (event) => {
+  // The letter of a key for a shortcut. Like Windows, a key that types a
+  // Latin letter gives that letter, so AZERTY and Dvorak keep their own
+  // letters. A key that types a letter of another script, such as a
+  // Russian or Greek one, gives the letter of its place on the keyboard,
+  // so Ctrl+S works with each layout. Other keys give their own value.
+  const layoutKeyOf = (event) => {
     const key = event.key.toLowerCase();
     if (/^[a-z]$/.test(key)) return key;
     const place = /^Key([A-Z])$/.exec(event.code);
     return place && /^\p{L}$/u.test(key) ? place[1].toLowerCase() : key;
   };
+
+  // The letter of a Ctrl shortcut, such as S in Ctrl+S. Like XP, a
+  // shortcut without Alt does not run while Alt is down. AltGr, which
+  // types characters such as "ś" on Windows, sends Ctrl and Alt together,
+  // so AltGr+S types and never saves. Then the result is "".
+  const shortcutKeyOf = (event) =>
+    event.altKey || event.getModifierState?.("AltGraph")
+      ? ""
+      : layoutKeyOf(event);
 
   // The letter of an access key, such as F in Alt+F.
   // In a text box:
@@ -204,7 +212,7 @@
     const key = event.key.toLowerCase();
     if (isEditable(event.target)) {
       if (event.key === "Dead") return "";
-      return isApplePlatform() ? key : shortcutKeyOf(event);
+      return isApplePlatform() ? key : layoutKeyOf(event);
     }
     if (/^[a-z0-9]$/.test(key)) return key;
     const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
@@ -258,9 +266,7 @@
   // An open modal dialog keeps the keys, like XP: they go to its control
   // that had them last, its default button or its first control, never to
   // a window behind it. It returns false when no modal dialog is open.
-  const takeKeys = () => {
-    const dialog = dialogStack.findLast((entry) => entry.modal);
-    if (!dialog) return false;
+  const takeDialogKeys = (dialog) =>
     [
       dialog.lastFocused,
       dialog.defaultButton,
@@ -270,11 +276,49 @@
       target.focus();
       return document.activeElement === target;
     });
+  const takeKeys = () => {
+    const dialog = dialogStack.findLast((entry) => entry.modal);
+    if (!dialog) return false;
+    takeDialogKeys(dialog);
     return true;
   };
 
-  // Registered only while a dialog is open, so the stack is never empty here.
-  const handleGlobalKeydown = (e) => dialogStack.at(-1).onKeydown(e);
+  // True while a modal dialog is open: an XP dialog that keeps the keys,
+  // or the Log Off or Turn Off Computer dialog. A modeless dialog, such as
+  // Run, is not modal: the windows keep their keys, like XP.
+  const isModalOpen = () =>
+    dialogStack.some((entry) => entry.modal) ||
+    !!document.querySelector(".system-dialog-overlay:not([hidden])");
+
+  // Registered only while a dialog is open. A key goes to the newest modal
+  // dialog, else to the modeless dialog that has the keys, like XP. Two
+  // modeless dialogs, such as Run and Taskbar and Start Menu Properties,
+  // each get only their own keys.
+  const handleGlobalKeydown = (e) =>
+    (
+      dialogStack.findLast((entry) => entry.modal) ||
+      dialogStack.find((entry) => entry.el.contains(e.target))
+    )?.onKeydown(e);
+
+  // Log off closes the modeless dialogs, such as Run, with the windows.
+  const closeModelessDialogs = () =>
+    dialogStack
+      .filter((entry) => !entry.modal)
+      .forEach((entry) => entry.close());
+
+  // Only the dialog that has the keys draws active, like XP. A window or the
+  // desktop that takes the keys makes every dialog draw inactive.
+  const showActiveDialog = (active) =>
+    dialogStack.forEach((entry) =>
+      entry.el.classList.toggle("active", entry === active),
+    );
+  document.addEventListener(
+    "focusin",
+    (event) => {
+      if (!event.target.closest(".xp-dialog")) showActiveDialog(null);
+    },
+    true,
+  );
 
   // ---- Core primitive ----
 
@@ -382,25 +426,6 @@
     true,
   );
 
-  // XP's edit boxes, one-line and multi-line, take no dropped text. A
-  // dropped file is left to the page. An element with data-text-drop, such
-  // as the Run dialog, takes the text itself.
-  const refusesTextDrop = (event) =>
-    !!event.dataTransfer &&
-    isEditable(event.target) &&
-    !event.target.closest("[data-text-drop]") &&
-    !event.dataTransfer.types.includes("Files");
-  ["dragenter", "dragover", "drop"].forEach((type) =>
-    document.addEventListener(
-      type,
-      (event) => {
-        if (!refusesTextDrop(event)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "none";
-      },
-      true,
-    ),
-  );
   // An Explorer drag carries the ids of its items as JSON in this type.
   const ITEM_DRAG_TYPE = "application/x-astro-vfs-ids";
   // True when a drag carries one of the types.
@@ -415,16 +440,19 @@
       return [];
     }
   };
-  // A file from the computer that no folder or window takes is refused,
-  // like XP. The browser does not open it in place of the desktop. This
-  // listener comes after the targets, so it sees what they did.
+  // A drag that no folder, window or dialog takes is refused, like XP. This
+  // listener comes after the targets, so it sees what they did: a target
+  // that takes the drag, such as Notepad for a file or Run for text,
+  // prevents the default. So the browser opens no file from the computer in
+  // place of the desktop, and XP's edit boxes, one-line and multi-line,
+  // take no dropped text or items.
+  const refusesDrag = (event) =>
+    !event.defaultPrevented &&
+    !!event.dataTransfer &&
+    (event.dataTransfer.types.includes("Files") || isEditable(event.target));
   ["dragenter", "dragover", "drop"].forEach((type) =>
     document.addEventListener(type, (event) => {
-      if (
-        event.defaultPrevented ||
-        !event.dataTransfer?.types?.includes("Files")
-      )
-        return;
+      if (!refusesDrag(event)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "none";
     }),
@@ -566,6 +594,7 @@
     help = false,
     systemMenu = true,
     closable = true,
+    owner = null,
   } = {}) => {
     const previouslyFocused = document.activeElement;
 
@@ -604,7 +633,18 @@
     if (help) addWhatsThisHelp(el, body);
     el.addEventListener("focusin", (event) => {
       dialog.lastFocused = event.target;
+      showActiveDialog(dialog);
     });
+    // A modeless dialog is a window among the windows, like XP's Run: a
+    // press or the keys bring it to the top, and a window that is used
+    // after it goes above it. A dialog with an owner window, such as
+    // Calculator's Statistics Box, stays above that window.
+    const raise = () => {
+      if (!modal) overlay.style.zIndex = globalThis.nextWindowLayer();
+    };
+    el.addEventListener("pointerdown", raise, true);
+    el.addEventListener("focusin", raise);
+    if (owner) overlay.dataset.owner = owner;
 
     let resultCallback = null;
 
@@ -642,7 +682,6 @@
       close(result = null) {
         if (!dialogStack.includes(dialog)) return;
         dialogStack.splice(dialogStack.indexOf(dialog), 1);
-        dialogStack.at(-1)?.el.classList.add("active");
         overlay.remove();
         if (!dialogStack.length) {
           document.removeEventListener("keydown", handleGlobalKeydown, true);
@@ -752,11 +791,25 @@
     if (!dialogStack.length) {
       document.addEventListener("keydown", handleGlobalKeydown, true);
     }
-    // Only the newest dialog is active; the ones behind it draw inactive.
-    dialogStack.at(-1)?.el.classList.remove("active");
+    // The new dialog is active; the ones behind it draw inactive.
     dialogStack.push(dialog);
-    overlay.style.zIndex = (modal ? BASE_Z_INDEX : 6900) + dialogStack.length;
-    document.body.appendChild(overlay);
+    showActiveDialog(dialog);
+    // A modal dialog stays above everything. A modeless one lives among the
+    // windows on the desktop.
+    if (modal) {
+      overlay.style.zIndex = BASE_Z_INDEX + dialogStack.length;
+      document.body.appendChild(overlay);
+    } else {
+      raise();
+      document.getElementById("desktop").appendChild(overlay);
+    }
+
+    // Brings the dialog to the top and gives it the keys, like XP when Run
+    // opens again while it is open.
+    dialog.activate = () => {
+      raise();
+      takeDialogKeys(dialog);
+    };
 
     // Dialogs start centered. Moving or resizing one pins it at explicit
     // overlay coordinates first, so it does not re-center.
@@ -2367,6 +2420,8 @@
     parseAccessKey,
     accessKeyOf,
     shortcutKeyOf,
+    isModalOpen,
+    closeModelessDialogs,
     isComposingKey,
     ITEM_DRAG_TYPE,
     takesItemDrag,

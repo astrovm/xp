@@ -315,12 +315,27 @@ const mountNotepad = (context, instance) => {
     }
   });
 
-  // Like XP, a file dropped on Notepad opens in it. Notepad asks first when
-  // its text has changed. A folder does not open.
-  const openDroppedItems = async (ids) => {
+  // Opens a file, like XP: Notepad asks first when its text has changed.
+  // The file can go away or move while the question is open. Notepad then
+  // looks for it at its old path, and does not find it.
+  const openAfterQuestion = async (node) => {
+    const path = context.pathOf(node.id);
+    if (!(await confirmSaveChanges())) return false;
+    if (context.pathOf(node.id) !== path) {
+      await XPDialogs.alert(
+        `Cannot find the ${path} file.\n\nCheck the file name and try again.`,
+        "Notepad",
+        "warning",
+      );
+      return false;
+    }
+    loadDocument(node);
+    return true;
+  };
+  // Like XP, a file dropped on Notepad opens in it. A folder does not open.
+  const openDroppedItems = (ids) => {
     const node = ids.map((id) => fs.getNode(id)).find(Boolean);
-    if (node?.type !== "file") return;
-    if (await confirmSaveChanges()) loadDocument(node);
+    if (node?.type === "file") void openAfterQuestion(node);
   };
   const openComputerFile = async (dropped) => {
     if (!(await confirmSaveChanges())) return;
@@ -351,9 +366,11 @@ const mountNotepad = (context, instance) => {
   el.addEventListener("drop", (event) => {
     if (!takesDrop(event)) return;
     event.preventDefault();
-    const [dropped] = event.dataTransfer.files;
-    if (dropped) openComputerFile(dropped);
-    else openDroppedItems(XPDialogs.droppedItemIds(event));
+    // An item from a window can also carry a file, such as a picture that
+    // the browser drags. The item comes first.
+    if (event.dataTransfer.types.includes(ITEM_DRAG_TYPE))
+      openDroppedItems(XPDialogs.droppedItemIds(event));
+    else openComputerFile(event.dataTransfer.files[0]);
   });
   // Desktop icons move with the pointer, not with a browser drag.
   el.addEventListener("itemsdrop", (event) =>
@@ -364,11 +381,7 @@ const mountNotepad = (context, instance) => {
   return {
     element: content,
     beforeClose: confirmSaveChanges,
-    async openFile(node) {
-      if (!(await confirmSaveChanges())) return false;
-      loadDocument(node);
-      return true;
-    },
+    openFile: openAfterQuestion,
     unmount() {},
   };
 };

@@ -915,12 +915,13 @@ const mountHearts = (context) => {
   };
 
   const handleKeydown = (event) => {
-    if (event.defaultPrevented || document.querySelector(".xp-dialog-overlay"))
-      return;
+    if (event.defaultPrevented || globalThis.XPDialogs.isModalOpen()) return;
     const commands = { F7: "options", F8: "sound", F9: "score" };
     if (commands[event.key]) {
+      // The name question of the welcome is modal, so these keys wait
+      // until the name is in.
       event.preventDefault();
-      if (phase !== "welcome") run(commands[event.key]);
+      run(commands[event.key]);
       return;
     }
     // Esc closes an open menu; otherwise it hides the game, mshearts.exe's

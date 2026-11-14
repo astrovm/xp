@@ -37,6 +37,42 @@ describe("XP dialogs", () => {
     ]);
   });
 
+  test("gives no Ctrl shortcut letter while Alt or AltGr is down, like XP", () => {
+    const { shortcutKeyOf, accessKeyOf } = loadDialogs();
+    const key = (init) => ({
+      code: "KeyS",
+      key: "s",
+      getModifierState: () => false,
+      ...init,
+    });
+    // A Russian layout types "ы" on the S key. The place gives the letter.
+    expect(shortcutKeyOf(key({ key: "ы", ctrlKey: true }))).toBe("s");
+    // AltGr sends Ctrl and Alt. A Polish layout types "ś" with it.
+    expect(shortcutKeyOf(key({ key: "ś", ctrlKey: true, altKey: true }))).toBe(
+      "",
+    );
+    expect(
+      shortcutKeyOf(
+        key({ key: "ś", getModifierState: (name) => name === "AltGraph" }),
+      ),
+    ).toBe("");
+    // An event with no modifier state, such as one from a script, gives
+    // the letter.
+    expect(shortcutKeyOf({ key: "S", code: "KeyS" })).toBe("s");
+    // Alt+letter is an access key. It keeps the place of a key in a text
+    // box, so Alt+F works with each layout.
+    expect(
+      accessKeyOf(
+        key({
+          key: "а",
+          code: "KeyF",
+          altKey: true,
+          target: { tagName: "TEXTAREA" },
+        }),
+      ),
+    ).toBe("f");
+  });
+
   test("gives each button set exactly one default button", () => {
     const dialogs = loadDialogs();
     Object.values(dialogs.BUTTON_SETS).forEach((buttons) => {

@@ -555,3 +555,56 @@ test("the browser never starts its own drag from a desktop icon picture", async 
   image.dispatchEvent(start);
   expect(start.defaultPrevented).toBeTrue();
 });
+
+test("only the top window under the pointer gets a desktop icon's drop, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.DESKTOP, "Behind");
+  const file = fs.createFile(fs.DESKTOP, "dragged.txt");
+  await flushShell();
+  const icon = (id) => s.document.querySelector(`[data-desktop-id="${id}"]`);
+  // A window that takes no items covers the folder and the Recycle Bin.
+  const covering = s.document.createElement("div");
+  covering.className = "xp-window";
+  const inside = s.document.createElement("span");
+  covering.append(inside);
+  s.document.getElementById("desktop").append(covering);
+  geometry(s);
+  const start = [icon(file.id).style.left, icon(file.id).style.top];
+  for (const target of [icon(folder.id), icon("__recycle-bin")]) {
+    s.document
+      .querySelectorAll(".desktop-icon")
+      .forEach((item) =>
+        item.classList.toggle("selected", item === icon(file.id)),
+      );
+    // The dragged icon under the pointer does not count.
+    s.document.elementsFromPoint = () => [
+      icon(file.id),
+      inside,
+      covering,
+      target,
+      s.document.body,
+    ];
+    for (const [type, clientX, clientY] of [
+      ["pointerdown", 10, 10],
+      ["pointermove", 190, 140],
+      ["pointerup", 190, 140],
+    ])
+      icon(file.id).dispatchEvent(
+        new s.window.PointerEvent(type, {
+          button: 0,
+          pointerId: 1,
+          clientX,
+          clientY,
+          bubbles: true,
+        }),
+      );
+    await flushShell();
+    await flushShell();
+  }
+  expect(fs.getNode(file.id).parent).toBe(fs.DESKTOP);
+  expect(fs.isInRecycleBin(file.id)).toBeFalse();
+  expect(s.document.querySelectorAll(".drop-target").length).toBe(0);
+  // The icon goes back to its place.
+  expect([icon(file.id).style.left, icon(file.id).style.top]).toEqual(start);
+});

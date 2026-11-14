@@ -1121,7 +1121,9 @@ html:not(.keyboard-cues) .menu-accesskey {
   background: #316ac5;
   color: #fff;
 }
-.drop-target {
+/* Like XP, an item shows that it takes a drop. A folder's empty list and
+   the desktop show nothing. */
+.drop-target:not(.explorer-items, #desktop-icons) {
   outline: 2px solid #316ac5 !important;
   background: #d8e7f8 !important;
 }

@@ -449,12 +449,21 @@ const applyStartMenuStyle = (style, persist = true) => {
   closeStartMenu();
 };
 
+// XP opens one Taskbar and Start Menu Properties dialog. Properties again
+// brings it to the top.
+let openProperties = null;
 const openTaskbarProperties = (initialTab = "taskbar") => {
+  if (openProperties) {
+    openProperties.activate();
+    return;
+  }
   const dialog = XPDialogs.createDialog({
     title: "Taskbar and Start Menu Properties",
     modal: false,
     help: true,
   });
+  openProperties = dialog;
+  dialog.onResult(() => (openProperties = null));
   dialog.el.classList.add("taskbar-properties-dialog");
 
   const currentStartMenuStyle = getStartMenuStyle();

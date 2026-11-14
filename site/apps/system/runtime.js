@@ -949,8 +949,10 @@ export const createSystemRuntime = (context) => {
           event.target.closest(".explorer-context-menu")
         )
           return;
+        // AltGr sends Ctrl and Alt, and types. Like XP, it opens no menu.
         if (event.altKey) {
-          openExplorerMenuByAccessKey(event);
+          if (!event.ctrlKey && !event.metaKey)
+            openExplorerMenuByAccessKey(event);
           return;
         }
         // A menu that the mouse opened, such as Views, leaves the keys on

@@ -7,6 +7,7 @@ import {
   flushShell,
   clickStartAction,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 const key = (s, el, key, extra = {}) =>
   el.dispatchEvent(
@@ -90,6 +91,15 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   const icon = () => s.document.querySelector(`[data-desktop-id="${file.id}"]`);
   icon().click();
   icon().focus();
+  // AltGr types characters, such as "ć" and "ź" on a Polish keyboard. Like
+  // XP, it runs no Ctrl shortcut.
+  for (const [key, code] of [
+    ["ć", "KeyC"],
+    ["ź", "KeyX"],
+  ])
+    for (const event of pressAltGr(s.window, icon(), key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  expect(ops.getClipboard()).toBeNull();
   // Like Windows, a layout of another script gives the letter of the key's
   // place: a Russian C key types "с", and a Greek X key types "χ".
   key(s, icon(), "с", { ctrlKey: true, code: "KeyC" });
@@ -116,6 +126,15 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   ops.copy([other.id]);
   const surface = s.document.getElementById("desktop-icons");
   surface.focus();
+  for (const [key, code] of [
+    ["√", "KeyV"],
+    ["ą", "KeyA"],
+  ])
+    for (const event of pressAltGr(s.window, surface, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  await flushShell();
+  expect(fs.findChild(fs.DESKTOP, "pasted.txt")).toBeNull();
+  expect(s.document.querySelectorAll(".desktop-icon.selected").length).toBe(0);
   key(s, surface, "м", { ctrlKey: true, code: "KeyV" });
   await flushShell();
   await flushShell();

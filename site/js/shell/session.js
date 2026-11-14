@@ -292,6 +292,7 @@ const closeCurrentSession = () => {
     const screenSaver = document.getElementById("screen-saver-overlay");
     if (screenSaver) hideScreenSaver(screenSaver);
     showDesktopSnapshot = null;
+    XPDialogs.closeModelessDialogs();
     closeStartMenu();
     closeDesktopContextMenu();
     closeWindowSystemMenu();

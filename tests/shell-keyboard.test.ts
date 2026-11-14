@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 
 afterEach(cleanupShells);
 
@@ -61,6 +62,31 @@ test("Explorer typeahead cycles matching items and keyboard shortcuts act on the
   expect(s.document.activeElement.dataset.nodeId).toBe(h.notes.id);
   press(s, s.document.activeElement, "n");
   expect(s.document.activeElement.dataset.nodeId).toBe(h.news.id);
+  // AltGr types characters, such as "ą", "ć", "ź" on a Polish keyboard and
+  // "√" on a Mac. Like XP, it runs no Ctrl shortcut: no select all, copy,
+  // cut or paste.
+  ops.copy([h.other.id]);
+  for (const [key, code] of [
+    ["ą", "KeyA"],
+    ["ć", "KeyC"],
+    ["ź", "KeyX"],
+    ["√", "KeyV"],
+  ])
+    for (const event of pressAltGr(
+      s.window,
+      s.document.activeElement,
+      key,
+      code,
+    ))
+      expect(event.defaultPrevented).toBeFalse();
+  await settle();
+  expect(h.win.querySelectorAll(".explorer-item.selected")).toHaveLength(1);
+  expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [h.other.id] });
+  expect(fs.findChild(h.folder.id, "Copy of other.txt")).toBeNull();
+  // AltGr opens no menu, such as View on the V key.
+  expect(
+    h.win.querySelector(".explorer-menu:not([hidden])") === null,
+  ).toBeTrue();
   press(s, s.document.activeElement, "a", { ctrlKey: true });
   expect(h.win.querySelectorAll(".explorer-item.selected")).toHaveLength(3);
 

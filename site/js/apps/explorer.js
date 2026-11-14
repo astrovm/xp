@@ -109,8 +109,8 @@ const SHELL_COMMANDS = [
 
 const normalizeShellCommand = (value) => value.trim().toLowerCase();
 const resolveShellCommand = (value) => {
+  // Run never asks for an empty command.
   const command = normalizeShellCommand(value);
-  if (!command) return null;
   const shell = SHELL_COMMANDS.find((entry) => entry.aliases.includes(command));
   if (shell) return { kind: "application", title: shell.title, run: shell.run };
   const gameId = Object.keys(gamesList).find(
@@ -126,20 +126,118 @@ const resolveShellCommand = (value) => {
     };
   // Like XP, one pair of quotes around a path, as Browse and a drop give
   // it, is not part of the path.
-  const nodeId = fs.resolvePath(
+  const node = findRunNode(
     String(value)
       .trim()
       .replace(/^"(.*)"$/, "$1"),
   );
-  const node = nodeId && fs.getNode(nodeId);
-  // Like XP, Run cannot find an item by its place in the Recycle Bin.
-  if (node && !isDeletedNode(node.id))
+  if (node)
     return {
       kind: node.type === "folder" ? "folder" : "file",
       title: node.name,
       run: () => fs.open(node.id),
     };
-  return null;
+  // Else the first word, or a quoted name, is a program, and the rest is
+  // what it opens, like `notepad "C:\a b.txt"`.
+  const { program, args } = splitShellCommand(value);
+  const programId = RUN_PROGRAMS[program.toLowerCase()];
+  if (!programId) return null;
+  return {
+    kind: "application",
+    title: program,
+    run: () => runProgram(programId, runArgumentPath(args)),
+  };
+};
+
+// Like XP, Run cannot find an item by its place in the Recycle Bin.
+const findRunNode = (path) => {
+  const nodeId = fs.resolvePath(path);
+  return nodeId && !isDeletedNode(nodeId) ? fs.getNode(nodeId) : null;
+};
+
+// The program names that XP's Run knows, with or without .exe.
+const RUN_PROGRAMS = Object.fromEntries(
+  [
+    ["calc", "__calculator"],
+    ["cmd", "__command-prompt"],
+    ["explorer", "explorer"],
+    ["freecell", "__freecell"],
+    ["mshearts", "__hearts"],
+    ["mspaint", "__paint"],
+    ["notepad", "__notepad"],
+    ["pbrush", "__paint"],
+    ["pinball", "__pinball"],
+    ["sol", "__solitaire"],
+    ["spider", "__spider-solitaire"],
+    ["taskmgr", "__task-manager"],
+    ["winmine", "__minesweeper"],
+  ].flatMap(([name, id]) => [
+    [name, id],
+    [`${name}.exe`, id],
+  ]),
+);
+
+// A command's program, quoted or up to the first space, and the rest.
+const splitShellCommand = (value) => {
+  const [, quoted, plain, args] = /^(?:"([^"]*)"?|(\S+))\s*(.*)$/.exec(
+    String(value).trim(),
+  );
+  return { program: quoted ?? plain, args };
+};
+
+// The path in a program's arguments: the first quoted text, or else all of
+// them, like XP's Notepad.
+const runArgumentPath = (args) => /^"([^"]*)"?/.exec(args)?.[1] ?? args;
+
+// Opens a program from Run with the item that its arguments name, like
+// XP. A missing item gets the program's own message.
+const runProgram = (programId, path) => {
+  const node = path && findRunNode(path);
+  if (programId === "explorer") {
+    if (!path) return openSystemWindow("__my-computer");
+    if (node) return fs.open(node.id);
+    return XPDialogs.alert(
+      `The path '${path}' does not exist or is not a directory.`,
+      "Windows Explorer",
+      "warning",
+    );
+  }
+  const application = window.XPApplicationRegistry.get(programId);
+  if (application.kind === "system") return openSystemWindow(programId);
+  if (!path || programId === "__calculator") return openXPProgram(programId);
+  if (node?.type === "file") return openXPProgram(programId, { file: node });
+  if (programId === "__notepad") return createNotepadFile(path);
+  return XPDialogs.alert(
+    `${path} was not found.`,
+    application.title,
+    "warning",
+  );
+};
+
+// XP's Notepad offers to create a file that Run names but that does not
+// exist. No opens an empty Notepad, and Cancel opens nothing.
+const createNotepadFile = async (path) => {
+  const answer = await XPDialogs.message({
+    title: "Notepad",
+    text: `Cannot find the ${path} file.\n\nDo you want to create a new file?`,
+    icon: "warning",
+    buttons: XPDialogs.BUTTON_SETS.yesNoCancel,
+  });
+  if (answer === "cancel") return;
+  if (answer === "no") {
+    openXPProgram("__notepad");
+    return;
+  }
+  const separator = path.lastIndexOf("\\");
+  const parent = findRunNode(path.slice(0, separator));
+  try {
+    if (parent?.type !== "folder")
+      throw new Error("The system cannot find the path specified.");
+    const file = fileOps.createFile(parent.id, path.slice(separator + 1));
+    openXPProgram("__notepad", { file });
+  } catch (error) {
+    await XPDialogs.alert(error.message, "Notepad", "error");
+  }
 };
 
 const RUN_HISTORY_KEY = "runHistory";
@@ -546,15 +644,16 @@ const wireInternetGames = (win) => {
   query.focus();
 };
 
+// An error box with the text and title of the error, such as XP's "Error
+// Deleting File or Folder". An error without them shows the defaults.
+const alertError = (error, text, title) =>
+  XPDialogs.alert(error.message || text, error.title || title, "error");
+
 // XP's wording and titles, with the Recycle Bin icon.
 // Delete questions report a failed delete themselves, so no caller leaves
 // it unhandled.
 const alertFileOperationError = (error) =>
-  XPDialogs.alert(
-    error.message || "The file operation failed.",
-    "File operation",
-    "error",
-  );
+  alertError(error, "The file operation failed.", "File operation");
 
 const confirmRecycleDelete = (ids) => {
   const node = fs.getNode(ids[0]);
@@ -670,11 +769,7 @@ const restoreFromRecycleBin = async (ids) => {
   try {
     return await fileOps.restore(ids, createReplaceQuestion(ids.length > 1));
   } catch (error) {
-    await XPDialogs.alert(
-      error.message || "The file operation failed.",
-      "Restore files",
-      "error",
-    );
+    await alertError(error, "The file operation failed.", "Restore files");
     return null;
   }
 };
@@ -715,10 +810,10 @@ const pasteIntoFolder = async (destinationId, items = null) => {
   } catch (error) {
     progress?.close?.("error");
     console.error(error);
-    XPDialogs.alert(
-      error.message || "The file operation could not be completed.",
+    alertError(
+      error,
+      "The file operation could not be completed.",
       "File Operation Error",
-      "error",
     );
     return null;
   }
@@ -810,9 +905,16 @@ let explorerDragIds = [];
 document.addEventListener("dragend", () => {
   explorerDragIds = [];
 });
-const wireFolderDropTarget = (element, destinationId) => {
-  element.dataset.dropDestinationId = destinationId;
+// The element takes drops into the folder that its data-drop-destination-id
+// names. A list can change it when it shows another folder. A drop on an
+// item inside it that is a target of its own goes only to that item.
+const wireFolderDropTarget = (element, folderId) => {
+  element.dataset.dropDestinationId = folderId;
+  const ownDrop = (event) =>
+    event.target.closest("[data-drop-destination-id]") === element;
   element.addEventListener("dragover", (event) => {
+    if (!ownDrop(event)) return;
+    const destinationId = element.dataset.dropDestinationId;
     const internal = event.dataTransfer?.types?.includes(
       XPDialogs.ITEM_DRAG_TYPE,
     );
@@ -837,6 +939,8 @@ const wireFolderDropTarget = (element, destinationId) => {
     element.classList.remove("drop-target"),
   );
   element.addEventListener("drop", async (event) => {
+    if (!ownDrop(event)) return;
+    const destinationId = element.dataset.dropDestinationId;
     event.preventDefault();
     element.classList.remove("drop-target");
     explorerDragIds = [];
@@ -862,10 +966,10 @@ const wireFolderDropTarget = (element, destinationId) => {
         });
       else await importDroppedFiles(destinationId, event.dataTransfer);
     } catch (error) {
-      XPDialogs.alert(
-        error.message || "The dropped files could not be imported.",
+      alertError(
+        error,
+        "The dropped files could not be imported.",
         "File Operation Error",
-        "error",
       );
     }
   });
@@ -1141,12 +1245,9 @@ const startExplorerRename = (win, nodeId) => {
   label.replaceWith(input);
   XPDialogs.guardFileName(input);
   input.focus();
-  input.setSelectionRange(
-    0,
-    node.name.lastIndexOf(".") > 0
-      ? node.name.lastIndexOf(".")
-      : node.name.length,
-  );
+  // Like XP, with the extensions shown, the box selects the whole name,
+  // the extension too. The desktop and the file dialogs do the same.
+  input.select();
   // Each rename ends once. Chrome fires blur while the box leaves the page,
   // so that blur finds the rename ended.
   let finished = false;
@@ -1738,6 +1839,17 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
   main.querySelector("h2").hidden = true;
 
   const items = main.querySelector(".explorer-items");
+  // Like XP, the empty part of the list takes a drop into the folder that
+  // it shows. My Computer and the Recycle Bin take none.
+  const takesDrop = !(
+    folder.id === fs.MY_COMPUTER || fs.isInRecycleBin(folder.id)
+  );
+  if (!items.dataset.dropWired) {
+    items.dataset.dropWired = "true";
+    wireFolderDropTarget(items, folder.id);
+  }
+  if (takesDrop) items.dataset.dropDestinationId = folder.id;
+  else delete items.dataset.dropDestinationId;
   const view = explorerViewFor(folder.id);
   // A new render of the same folder keeps the selection, like XP.
   const kept = new Set(
@@ -1909,8 +2021,12 @@ const renderExplorerItems = (win, contentRoot = win.el) => {
       renderExplorerSelection(win);
     });
     item.addEventListener("dragstart", (event) => {
+      // The dragged item comes first, so a window that takes one item,
+      // such as the Command Prompt, gets that one.
       const ids = selectedExplorerNodes(win);
-      explorerDragIds = ids.includes(node.id) ? ids : [node.id];
+      explorerDragIds = ids.includes(node.id)
+        ? [node.id, ...ids.filter((id) => id !== node.id)]
+        : [node.id];
       event.dataTransfer.setData(
         XPDialogs.ITEM_DRAG_TYPE,
         JSON.stringify(explorerDragIds),

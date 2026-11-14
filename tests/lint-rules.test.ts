@@ -65,6 +65,36 @@ test("await-async-expect finds each .rejects or .resolves check that no one wait
   ).toEqual([1, 2, 3, 4, 5, 6, 7]);
 });
 
+test("await-async-expect follows the check through variables, arrays and callbacks", () => {
+  expect(
+    lint(
+      [
+        // Lost: forEach and other calls drop what the callback gives.
+        "promises.forEach((p) => expect(p).resolves.toBe(1));",
+        "setTimeout(() => expect(p).rejects.toThrow());",
+        "promises.map((p) => expect(p).resolves.toBe(1));",
+        "const c = expect(p).rejects.toThrow(); c;",
+        "Promise.all([expect(p).resolves.toBe(1)]);",
+        "await Promise.all(x, [expect(p).resolves.toBe(1)]);",
+        "await other([expect(p).resolves.toBe(1)]);",
+        "await Promise.all(promises.filter((p) => expect(p).resolves.toBe(1)));",
+        "(() => expect(p).resolves.toBe(1))();",
+        "await Promise.all(promises.map(f, (p) => expect(p).resolves.toBe(1)));",
+        // Waited for.
+        "await Promise.all([expect(a).resolves.toBe(1)]);",
+        "const d = expect(p).rejects.toThrow(); await d;",
+        "const e = [expect(p).rejects.toThrow()]; await Promise.all(e);",
+        "await Promise.allSettled(promises.map((p) => expect(p).resolves.toBe(1)));",
+        "return Promise.all([expect(a).resolves.toBe(1)]);",
+        'test("x", () => expect(p).resolves.toBe(1));',
+        'test.only("x", () => expect(p).resolves.toBe(1));',
+        "const g = expect(p).rejects.toThrow(); const k = g; await k;",
+      ].join("\n"),
+      "await-async-expect",
+    ),
+  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+});
+
 test("the lint config runs the test rules on every test file", async () => {
   const eslint = new ESLint();
   const files = [...new Bun.Glob("{tests,scripts}/**/*.test.ts").scanSync(".")];

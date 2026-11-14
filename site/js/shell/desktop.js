@@ -206,8 +206,17 @@ const layoutDesktopIcons = (force = false) => {
   }
 };
 
+// Like XP, only the top window under the pointer gets the drop. A window
+// that takes no items refuses it, also when a folder is behind it: the
+// icons go back. The dragged icons themselves do not count.
 const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
-  for (const element of document.elementsFromPoint(clientX, clientY)) {
+  const elements = document
+    .elementsFromPoint(clientX, clientY)
+    .filter((element) => !element.closest?.(".desktop-icon.selected"));
+  const topWindow = elements[0]?.closest?.(".xp-window");
+  const refused = topWindow ? { action: "refuse" } : null;
+  for (const element of elements) {
+    if (topWindow && !topWindow.contains(element)) return refused;
     const target = element.closest?.(
       "[data-drop-action], [data-drop-destination-id]",
     );
@@ -230,7 +239,7 @@ const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
     }
     return { action: "move", element: target, destinationId };
   }
-  return null;
+  return refused;
 };
 
 const wireDesktopIconDrag = (icon) => {
@@ -338,12 +347,20 @@ const wireDesktopIconDrag = (icon) => {
         return;
       }
       if (desktopDragged) {
-        if (dropTarget?.action === "items") {
-          // The items stay where they are. The window gets their ids.
+        if (dropTarget?.action === "refuse") returnIcons();
+        else if (dropTarget?.action === "items") {
+          // The items stay where they are. The window gets their ids,
+          // the pressed icon first, so a window that takes one item, such
+          // as the Command Prompt, gets that one.
           returnIcons();
+          const ids = eligibility.filesystemIds;
           dropTarget.box.dispatchEvent(
             new CustomEvent("itemsdrop", {
-              detail: { ids: eligibility.filesystemIds },
+              detail: {
+                ids: [...new Set([icon.dataset.desktopId, ...ids])].filter(
+                  (id) => ids.includes(id),
+                ),
+              },
             }),
           );
         } else if (dropTarget) {
@@ -1147,10 +1164,10 @@ const setupDesktopContextMenu = () => {
                 fileOps.importItemsFromFiles(input.files),
               );
             } catch (error) {
-              await XPDialogs.alert(
-                error.message || "The file operation failed.",
+              await alertError(
+                error,
+                "The file operation failed.",
                 "File operation",
-                "error",
               );
             } finally {
               refreshDesktop();
@@ -1216,11 +1233,7 @@ const setupDesktopContextMenu = () => {
       }
       closeDesktopContextMenu();
     } catch (error) {
-      await XPDialogs.alert(
-        error.message || "The file operation failed.",
-        "File operation",
-        "error",
-      );
+      await alertError(error, "The file operation failed.", "File operation");
     }
   });
   menu.addEventListener("keydown", (event) => {

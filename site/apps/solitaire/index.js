@@ -889,7 +889,7 @@ const mountSolitaire = (context) => {
 
   // Alt+Shift+2 wins on the spot, sol.exe's hidden shortcut.
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay") || winning) return;
+    if (globalThis.XPDialogs.isModalOpen() || winning) return;
     if (event.key === "F2") {
       event.preventDefault();
       void run("deal");

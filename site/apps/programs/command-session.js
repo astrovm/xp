@@ -104,10 +104,18 @@ const BAD_NAME =
 const DUPLICATE_NAME =
   "A duplicate file name exists, or the file\ncannot be found.";
 const ACCESS_DENIED = "Access is denied.";
+const IN_USE =
+  "The process cannot access the file because it is being used by another process.";
 const FREE_BYTES = 5952212992;
 const SERIAL_NUMBERS = { C: "B836-2A76", D: "4C1F-90E3", F: "2E7A-15B8" };
 const COMPUTER_NAME = "XP";
 const SCREEN_WIDTH = 80;
+
+// cmd.exe's text for a change that fs.checkChange refuses. A folder in
+// use is "in use". A protected item and a folder above a folder in use are
+// "access denied".
+const changeErrorText = (error) =>
+  error.code === "in-use" ? IN_USE : ACCESS_DENIED;
 
 const isFile = (node) => node?.type === "file";
 
@@ -193,6 +201,22 @@ export class CommandSession {
       ["USERPROFILE", profile],
       ["WINDIR", "C:\\WINDOWS"],
     ]);
+  }
+
+  // The folder the session is in. Like XP, nothing deletes, moves or
+  // renames it, or a folder above it, while the session is open.
+  get cwd() {
+    return this.folderId;
+  }
+
+  set cwd(id) {
+    this.folderId = id;
+    this.fs.useFolder(this, id);
+  }
+
+  // The window closes: the folder is free again.
+  close() {
+    this.fs.releaseFolder(this);
   }
 
   get banner() {
@@ -424,16 +448,18 @@ export class CommandSession {
     }
     const out = [];
     const session = this;
+    // MOVE names each file at the place where it found it, also when the
+    // folder moves while a question is open.
+    const foundAt = source.items.map((item) =>
+      move
+        ? session.joinPath(item.parent, item.name)
+        : `${source.prefix}${item.name}`,
+    );
     function* job() {
       let count = 0;
-      for (const item of source.items) {
+      for (const [index, item] of source.items.entries()) {
         const from = item.parent;
-        if (source.many)
-          out.push(
-            move
-              ? session.joinPath(item.parent, item.name)
-              : `${source.prefix}${item.name}`,
-          );
+        if (source.many) out.push(foundAt[index]);
         const name = target.nameOf(item);
         const folderId = target.folderId;
         if (
@@ -450,6 +476,16 @@ export class CommandSession {
           out.push(BAD_NAME);
           continue;
         }
+        // The files and the folders can change while an earlier question
+        // is open, and while this one is open. So the checks come before
+        // and after each question.
+        const refusal = () =>
+          session.fs.getNode(item.id)?.parent !== from
+            ? NOT_FOUND
+            : !session.takesFiles(folderId) ||
+                (move && !session.takesFiles(from))
+              ? PATH_NOT_FOUND
+              : null;
         const existing = session.fs.findChild(folderId, name);
         if (
           existing &&
@@ -460,6 +496,10 @@ export class CommandSession {
           continue;
         }
         if (existing && existing.id !== item.id && !all) {
+          if (refusal()) {
+            out.push(refusal());
+            continue;
+          }
           const text = session.overwriteText(
             move,
             typed,
@@ -472,24 +512,20 @@ export class CommandSession {
           if (choice === "a") all = true;
         }
         // Every check comes before the old file goes, so a refused item
-        // never destroys a file. The files and the folder can change
-        // while a question is open.
-        if (session.fs.getNode(item.id)?.parent !== from) {
-          out.push(NOT_FOUND);
+        // never destroys a file.
+        if (refusal()) {
+          out.push(refusal());
           continue;
         }
-        if (
-          !session.takesFiles(folderId) ||
-          (move && !session.takesFiles(from))
-        ) {
-          out.push(PATH_NOT_FOUND);
-          continue;
-        }
-        // A protected item shows cmd.exe's text, and the next item goes
-        // on.
-        if (move && session.fs.isProtected(item.id)) {
-          out.push(ACCESS_DENIED);
-          continue;
+        // A protected item or a folder in use shows cmd.exe's text, and
+        // the next item goes on.
+        if (move) {
+          try {
+            session.fs.checkChange("move", item.id);
+          } catch (error) {
+            out.push(changeErrorText(error));
+            continue;
+          }
         }
         // Whatever file holds the name now is the one that goes, like
         // cmd.exe. A folder or a protected file that holds it stops this
@@ -600,21 +636,27 @@ export class CommandSession {
           out.push(`Could Not Find ${shown}`);
           continue;
         }
+        // The folder can go to the Recycle Bin while a question is open.
+        // Then its files stay, like the files of any folder there.
+        const folderGone = () => {
+          if (session.takesFiles(folderId)) return false;
+          out.push(PATH_NOT_FOUND);
+          return true;
+        };
         if (everything && !quiet && !eachFile) {
           const choice = yield* ask(`${shown}, Are you sure (Y/N)? `, "yn");
-          if (choice === "n") continue;
+          if (choice === "n" || folderGone()) continue;
         }
         for (const file of matches()) {
           if (eachFile) {
+            if (folderGone()) break;
             const choice = yield* ask(
               `${session.joinPath(file.parent, file.name)}, Delete (Y/N)? `,
               "yn",
             );
-            if (
-              choice === "n" ||
-              session.fs.getNode(file.id)?.parent !== folderId
-            )
-              continue;
+            if (choice === "n") continue;
+            if (folderGone()) break;
+            if (session.fs.getNode(file.id)?.parent !== folderId) continue;
           }
           try {
             session.fs.destroy(file.id);
@@ -696,8 +738,8 @@ export class CommandSession {
         lines.push(
           error?.code === "name-exists" || error?.code === "name-required"
             ? DUPLICATE_NAME
-            : error?.code === "access-denied"
-              ? ACCESS_DENIED
+            : error?.code === "access-denied" || error?.code === "in-use"
+              ? changeErrorText(error)
               : error?.code
                 ? SYNTAX_ERROR
                 : errorText(error),
@@ -1081,7 +1123,11 @@ export class CommandSession {
     if (this.fs.getChildren(node.id).length && !recursive) {
       return { output: "The directory is not empty." };
     }
-    this.fs.destroy(node.id);
+    try {
+      this.fs.destroy(node.id);
+    } catch (error) {
+      return { output: changeErrorText(error) };
+    }
     return { output: "" };
   }
 

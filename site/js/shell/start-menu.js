@@ -125,8 +125,24 @@ const runBoxPath = (id) => {
 // Task Manager's New Task opens the same dialog titled "Create New Task",
 // which keeps the keys of Task Manager. Run itself is modeless, like XP, so
 // an item can be dragged onto it from a window or the desktop.
+// XP opens one Run dialog. Run again brings it to the top with its text.
+let openRun = null;
+// Each Open box gets its own ids, because Run and Create New Task can be
+// open at the same time.
+let runDialogCount = 0;
 const openRunDialog = ({ title = "Run", modal = false } = {}) => {
+  if (!modal && openRun) {
+    openRun.activate();
+    return;
+  }
   const dialog = XPDialogs.createDialog({ title, modal });
+  if (!modal) {
+    openRun = dialog;
+    dialog.onResult(() => {
+      if (openRun === dialog) openRun = null;
+    });
+  }
+  runDialogCount += 1;
   dialog.el.classList.add("run-dialog");
   const introRow = document.createElement("div");
   introRow.className = "run-dialog-intro";
@@ -142,11 +158,11 @@ const openRunDialog = ({ title = "Run", modal = false } = {}) => {
   setAccessKeyText(promptText, "&Open:");
   const input = document.createElement("input");
   input.type = "text";
-  input.className = "shell-dialog-input";
-  input.setAttribute("list", "run-command-history");
-  input.id = "run-command";
+  input.className = "shell-dialog-input run-command";
+  input.id = `run-command-${runDialogCount}`;
   const history = document.createElement("datalist");
-  history.id = "run-command-history";
+  history.id = `run-command-history-${runDialogCount}`;
+  input.setAttribute("list", history.id);
   getRunHistory().forEach((entry) =>
     history.appendChild(new Option(entry, entry)),
   );
@@ -160,16 +176,29 @@ const openRunDialog = ({ title = "Run", modal = false } = {}) => {
     input.value = text;
     input.dispatchEvent(new Event("input", { bubbles: true }));
   };
-  const run = () => {
+  const run = async () => {
+    // Like XP, Run does nothing without a command.
+    if (!input.value.trim()) return;
     const resolved = resolveShellCommand(input.value);
-    if (!resolved || resolved.run() === false) {
-      // XP titles this error with the command that could not be found.
-      status.textContent = `Windows cannot find '${input.value}'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.`;
-      XPDialogs.alert(status.textContent, input.value, "error");
+    // The command can open a new Run, like `run`. This one closes then.
+    if (!modal) openRun = null;
+    const ran = !!resolved && resolved.run() !== false;
+    if (!modal) openRun ??= dialog;
+    if (ran) {
+      rememberRunCommand(input.value);
+      dialog.close();
       return;
     }
-    rememberRunCommand(input.value);
-    dialog.close();
+    // XP names the program that it could not find, and hides Run while the
+    // error is open. Then Run comes back with its text selected.
+    const { program } = splitShellCommand(input.value);
+    status.textContent = `Windows cannot find '${program}'. Make sure you typed the name correctly, and then try again. To search for a file, click the Start button, and then click Search.`;
+    const overlay = dialog.el.parentElement;
+    overlay.hidden = true;
+    await XPDialogs.alert(status.textContent, program, "error");
+    overlay.hidden = false;
+    input.focus();
+    input.select();
   };
   const runButton = XPDialogs.createDialogButton(
     { id: "run", label: "&OK" },
@@ -218,7 +247,6 @@ const openRunDialog = ({ title = "Run", modal = false } = {}) => {
         .map(runBoxPath)
         .join(" "),
     );
-  dialog.el.dataset.textDrop = "";
   dialog.el.dataset.dropAction = "items";
   const { ITEM_DRAG_TYPE } = XPDialogs;
   const takesDrop = (event) =>
@@ -992,6 +1020,9 @@ const wireStartFlyoutKeyboard = (panel, parentButton) => {
       parentButton.focus();
       return;
     }
+    // A key with Ctrl, such as AltGr, which sends Ctrl and Alt, types no
+    // letter of a menu item, like XP.
+    if (event.ctrlKey || event.metaKey) return;
     const item = items.find(
       (entry) => entry.dataset.accessKey === XPDialogs.accessKeyOf(event),
     );

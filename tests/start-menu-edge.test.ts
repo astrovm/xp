@@ -125,7 +125,7 @@ test("the classic Start menu opens folders and runs access keys", async () => {
   await settle();
   expect(!!s.document.querySelector(".run-dialog")).toBeTrue();
   press(s, s.document.querySelector(".run-dialog"), "o", { altKey: true });
-  expect(s.document.activeElement.id).toBe("run-command");
+  expect(s.document.activeElement.classList.contains("run-command")).toBeTrue();
   clickStartAction(s, "run");
 });
 

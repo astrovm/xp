@@ -13,6 +13,12 @@ let fileOps;
 let context;
 let session;
 const run = (line) => session.execute(line).output;
+// Another tab does not know which folders the sessions of this tab are in,
+// so it can delete the current folder.
+const inOtherTab = (action) => {
+  fs.releaseFolder(session);
+  action();
+};
 
 beforeEach(() => {
   const memoryStorage = new Map();
@@ -250,7 +256,7 @@ describe("Command Prompt session", () => {
   test("falls back to the C: drive when the current folder disappears", () => {
     const folder = fs.createFolder(fs.MY_DOCUMENTS, "Temporary");
     run(`cd "${fs.getPath(folder.id)}"`);
-    fs.destroy(folder.id);
+    inOtherTab(() => fs.destroy(folder.id));
     expect(session.prompt).toBe("C:\\>");
     run("cd \\");
     expect(session.cwd).toBe(fs.DRIVE_C);
@@ -677,9 +683,10 @@ describe("Command Prompt like cmd.exe", () => {
       "a.txt",
       "c.txt",
     ]);
-    // A current folder that went to the Recycle Bin takes no new files.
+    // A current folder that another tab sent to the Recycle Bin takes no
+    // new files.
     run("cd /d C:\\d");
-    fs.remove(d);
+    inOtherTab(() => fs.remove(d));
     expect(run("copy C:\\t\\b.txt")).toBe(
       "The system cannot find the path specified.",
     );
@@ -699,7 +706,7 @@ describe("Command Prompt like cmd.exe", () => {
     );
   });
 
-  // A deleted current folder is in the Recycle Bin. No command changes it
+  // A current folder that another tab deleted is in the Recycle Bin. No command changes it
   // or its files, and each one shows cmd.exe's text. Commands still read
   // it, and they still write to other folders.
   test("no command writes to a current folder in the Recycle Bin", () => {
@@ -710,7 +717,7 @@ describe("Command Prompt like cmd.exe", () => {
     const out = folderAt("out");
     file(folderAt("src"), "s.txt");
     run("cd /d C:\\d");
-    fs.remove(d);
+    inOtherTab(() => fs.remove(d));
     const before = JSON.stringify(
       fs.getChildren(d).map((node) => [node.name, fs.getContent(node.id)]),
     );
@@ -807,11 +814,139 @@ describe("Command Prompt like cmd.exe", () => {
     expect(fs.getNode(old.id).content).toBe("old\n");
     // ECHO puts no new file in a folder in the Recycle Bin.
     run("cd /d C:\\h");
-    fs.remove(h);
+    inOtherTab(() => fs.remove(h));
     expect(run("echo x>new.txt")).toBe(
       "The system cannot find the path specified.",
     );
     expect(fs.findChild(h, "new.txt")).toBeNull();
+  });
+
+  // A folder can go to the Recycle Bin while a question is open, or
+  // between two questions. Each question checks the folders before it is
+  // asked and again after the answer.
+  // Like XP, the folder a Command Prompt is in, and every folder above it,
+  // cannot be deleted, moved or renamed until the session leaves it or
+  // closes. The texts come from the XP VM.
+  test("a session locks its folder and the folders above it, with XP's texts", async () => {
+    const outer = fs.createFolder(fs.DESKTOP, "t");
+    const inner = fs.createFolder(outer.id, "t2");
+    const other = fs.createFolder(fs.DESKTOP, "other");
+    run(`cd "${fs.getPath(inner.id)}"`);
+    const IN_USE =
+      "The process cannot access the file because it is being used by another process.";
+    // cmd.exe's own texts. Another session gets them too.
+    const second = new CommandSession(context);
+    second.execute(`cd "${fs.getPath(fs.DESKTOP)}"`);
+    expect(second.execute("rd t\\t2").output).toBe(IN_USE);
+    expect(second.execute("rd /s /q t").output).toBe("Access is denied.");
+    expect(second.execute("ren t\\t2 t3").output).toBe(IN_USE);
+    expect(second.execute("ren t u").output).toBe("Access is denied.");
+    expect(second.execute("move t\\t2 other").output).toBe(IN_USE);
+    expect(second.execute("move t other").output).toBe("Access is denied.");
+    // The Explorer and the desktop get XP's texts and titles.
+    const MAKE_SURE =
+      "\n\nMake sure the disk is not full or write-protected and that the file is not currently in use.";
+    const CLOSE_PROGRAMS =
+      "It is being used by another person or program.\n\nClose any programs that might be using the file and try again.";
+    const failure = (action) => {
+      try {
+        action();
+      } catch (error) {
+        return [error.title, error.message];
+      }
+      return null;
+    };
+    expect(failure(() => fileOps.removeToBin([inner.id]))).toEqual([
+      "Error Deleting File or Folder",
+      `Cannot delete t2: ${CLOSE_PROGRAMS}`,
+    ]);
+    expect(failure(() => fileOps.removeToBin([other.id, outer.id]))).toEqual([
+      "Error Deleting File or Folder",
+      `Cannot delete t: Access is denied.${MAKE_SURE}`,
+    ]);
+    // Nothing goes when one item cannot.
+    expect(fs.getNode(other.id).parent).toBe(fs.DESKTOP);
+    expect(failure(() => fileOps.rename(inner.id, "t3"))).toEqual([
+      "Error Renaming File or Folder",
+      `Cannot rename t2: ${CLOSE_PROGRAMS}`,
+    ]);
+    expect(failure(() => fileOps.rename(outer.id, "u"))).toEqual([
+      "Error Renaming File or Folder",
+      `Cannot rename t: Access is denied.${MAKE_SURE}`,
+    ]);
+    // A move names the folder in use, for the folder and for a parent.
+    for (const id of [inner.id, outer.id]) {
+      fileOps.cut([id]);
+      // Like XP, Paste stays on. The error comes when it runs.
+      expect(fileOps.canPaste(other.id)).toBeTrue();
+      await expect(fileOps.pasteWithConflicts(other.id)).rejects.toMatchObject({
+        title: "Error Moving File or Folder",
+        message: `Cannot remove folder t2: ${CLOSE_PROGRAMS}`,
+      });
+    }
+    expect(failure(() => fs.destroy(outer.id))?.[1]).toBe(
+      `Cannot delete t: Access is denied.${MAKE_SURE}`,
+    );
+    // Items in the folder in use can still change.
+    const file = fs.createFile(inner.id, "a.txt", { content: "" });
+    expect(run("ren a.txt b.txt")).toBe("");
+    expect(fs.getNode(file.id).name).toBe("b.txt");
+    // The folders are free when the session leaves them.
+    run("cd ..");
+    expect(second.execute("rd /s /q t\\t2").output).toBe("");
+    expect(fs.getNode(inner.id)).toBeNull();
+    // And when the session closes.
+    expect(second.execute("rd /s /q t").output).toBe(IN_USE);
+    session.close();
+    expect(second.execute("move t other").output).toBe("");
+    expect(fs.getNode(outer.id).parent).toBe(other.id);
+  });
+
+  test("DEL and MOVE check the folders before and after each question", () => {
+    run("cd /d C:\\");
+    // DEL *.*: the folder goes after the question.
+    const a = folderAt("a");
+    const kept = file(a, "x.txt");
+    expect(run("del C:\\a\\*.*")).toBe("");
+    fs.remove(a);
+    expect(run("y")).toBe("The system cannot find the path specified.");
+    expect(fs.getNode(kept.id).parent).toBe(a);
+    // DEL /P: the folder goes after one answer, so no more questions.
+    const b = folderAt("b");
+    const first = file(b, "1.txt");
+    const second = file(b, "2.txt");
+    expect(run("del /p C:\\b\\*.txt")).toBe("");
+    fs.remove(b);
+    expect(run("n")).toBe("The system cannot find the path specified.");
+    expect(session.prompt).not.toContain("Delete (Y/N)?");
+    expect(run("del /p C:\\b\\*.txt")).toBe(
+      "The system cannot find the path specified.",
+    );
+    fs.restore(b);
+    expect(run("del /p C:\\b\\*.txt")).toBe("");
+    fs.remove(b);
+    expect(run("y")).toBe("The system cannot find the path specified.");
+    expect([fs.getNode(first.id), fs.getNode(second.id)]).toEqual([
+      expect.anything(),
+      expect.anything(),
+    ]);
+    // MOVE of two files: the source folder goes after the first answer, so
+    // the second file gets no question.
+    const c = folderAt("c");
+    const d = folderAt("d");
+    file(c, "1.txt", 1, "new\n");
+    file(c, "2.txt", 1, "new\n");
+    const old1 = file(d, "1.txt", 1, "old\n");
+    const old2 = file(d, "2.txt", 1, "old\n");
+    expect(run("move C:\\c\\*.txt C:\\d")).toBe("C:\\c\\1.txt");
+    expect(session.prompt).toBe("Overwrite C:\\d\\1.txt? (Yes/No/All): ");
+    fs.remove(c);
+    expect(run("n")).toBe(
+      "C:\\c\\2.txt\nThe system cannot find the path specified.",
+    );
+    expect(session.prompt).not.toContain("Overwrite");
+    expect(fs.getNode(old1.id).content).toBe("old\n");
+    expect(fs.getNode(old2.id).content).toBe("old\n");
   });
 
   test("wildcards follow the DOS rules", () => {

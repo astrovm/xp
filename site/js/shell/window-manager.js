@@ -1035,6 +1035,11 @@ const activateWindow = (win) => {
   win.lastUsed = Date.now();
   win.zIndex = ++zIndexCounter;
   win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : win.zIndex;
+  // The window's own modeless dialogs stay above it, like XP's owned
+  // windows.
+  document
+    .querySelectorAll(`.xp-dialog-modeless[data-owner="${CSS.escape(gameId)}"]`)
+    .forEach((overlay) => (overlay.style.zIndex = nextWindowLayer()));
 
   openWindows.forEach((w, id) => {
     w.el.classList.toggle("active", id === gameId);
@@ -1055,6 +1060,11 @@ const activateWindow = (win) => {
     history.replaceState(null, "", deepLinkUrl);
   }
 };
+
+// The next layer on the desktop, above every window and modeless dialog.
+// The dialogs of dialogs.js take their layers here too.
+const nextWindowLayer = () => ++zIndexCounter;
+window.nextWindowLayer = nextWindowLayer;
 
 // Topmost windows (Task Manager's Always On Top) stay above the others but
 // below shell dialogs (6900) and the taskbar.
@@ -1806,13 +1816,27 @@ document.addEventListener(
 );
 
 // The desktop and the taskbar are no windows. When they take the keys, no
-// window is active, like XP. The last active window keeps its sound.
+// window is active, like XP. The last active window keeps its sound. A
+// modeless dialog, such as Run, is a window of its own: when it takes the
+// keys, the windows draw inactive too. A dialog with an owner window keeps
+// that window on its taskbar button, but the window draws inactive.
 document.addEventListener(
   "focusin",
   (event) => {
+    const modeless = event.target.closest(".xp-dialog-modeless");
+    const owner = openWindows.get(modeless?.dataset.owner);
+    if (owner) {
+      if (owner.gameId !== focusedGameId) activateWindow(owner);
+      owner.el.classList.remove("active");
+      return;
+    }
     if (
       !focusedGameId ||
-      !(event.target.closest("#desktop-icons") || event.target.id === "taskbar")
+      !(
+        modeless ||
+        event.target.closest("#desktop-icons") ||
+        event.target.id === "taskbar"
+      )
     )
       return;
     soundGameId = focusedGameId;

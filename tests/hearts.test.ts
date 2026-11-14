@@ -252,9 +252,8 @@ describe("starting", () => {
     const h = await open({ name: null });
     await h.key("F9");
     expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
-    h.dialog().closest(".xp-dialog-overlay").remove();
-    await h.key("F9");
-    expect(h.dialog()).toBeUndefined();
+    await h.key("F7");
+    expect(h.s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
     await h.key("F8");
     expect(h.s.window.localStorage.getItem("heartsSettings")).toBeNull();
   });

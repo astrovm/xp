@@ -67,7 +67,7 @@ const withRuffle = (s) => {
 const runCommand = async (s, text) => {
   clickStartAction(s, "run");
   const dialog = s.document.querySelector(".run-dialog");
-  dialog.querySelector("#run-command").value = text;
+  dialog.querySelector(".run-command").value = text;
   dialog.querySelector('[data-action="run"]').click();
   await settle();
 };

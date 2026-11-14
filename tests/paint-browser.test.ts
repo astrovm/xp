@@ -1,6 +1,7 @@
 // @ts-nocheck -- Exercise Paint's real menus and dialogs with browser/storage boundaries.
 import { afterEach, expect, test } from "bun:test";
 import { cleanupShells, loadShell, flushShell } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 import { checkMenuBar } from "./helpers/menu-bar";
 afterEach(cleanupShells);
 async function setup() {
@@ -43,6 +44,8 @@ async function setup() {
       });
     return element;
   };
+  // The paths of the pictures that a test moved.
+  const paths = new Map();
   // Paint's window, as the shell gives it.
   const windowElement = s.document.createElement("div");
   windowElement.className = "xp-window";
@@ -65,6 +68,8 @@ async function setup() {
     dialogs: s.window.XPDialogs,
     myPictures: "pictures",
     pictureUrl: (file) => file.content || null,
+    // A test moves a picture by changing its path here.
+    pathOf: (id) => paths.get(id) ?? `C:\\Pictures\\${id}`,
     // "anim" and "deleted" stand for pictures in the Recycle Bin.
     folderOf: (id) =>
       id === "other"
@@ -126,6 +131,7 @@ async function setup() {
     root,
     mounted,
     context,
+    paths,
     titles,
     messages,
     writes,
@@ -362,6 +368,24 @@ test("Paint tools, palette, menu checks and keyboard controls stay synchronized"
   expect(
     h.root.querySelector('[data-paint-panel="colorbox"]').hidden,
   ).toBeTrue();
+  // AltGr types characters, such as "ł" on the L key of a Polish
+  // keyboard. Like XP, it runs no Ctrl shortcut, also from the text tool's
+  // box.
+  const box = h.s.document.createElement("textarea");
+  h.root.append(box);
+  for (const [key, code] of [
+    ["ł", "KeyL"],
+    ["ś", "KeyS"],
+    ["ą", "KeyA"],
+  ])
+    for (const event of pressAltGr(h.s.window, box, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  box.remove();
+  await flushShell();
+  expect(
+    h.root.querySelector('[data-paint-panel="colorbox"]').hidden,
+  ).toBeTrue();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
   await h.key("f", true);
   expect(h.root.classList.contains("paint-bitmap-view")).toBeTrue();
   await h.command("view-bitmap");
@@ -455,4 +479,27 @@ test("Paint's menus follow XP's menu bar rules", async () => {
     expect(
       h.root.querySelector(`[data-paint-command="${command}"]`).disabled,
     ).toBeTrue();
+});
+
+test("Paint does not open a picture that moved while it asked to save, like XP", async () => {
+  const h = await setup();
+  await h.command("clear-image");
+  const opening = h.mounted.openFile({
+    id: "moving",
+    name: "moving.png",
+    content: "data",
+  });
+  await flushShell();
+  h.paths.set("moving", "C:\\Elsewhere\\moving.png");
+  await h.answer("no");
+  const message = h.s.document.querySelectorAll(".xp-dialog");
+  expect(message[message.length - 1].textContent).toContain(
+    "C:\\Pictures\\moving was not found.",
+  );
+  expect(
+    message[message.length - 1].querySelector(".title-text").textContent,
+  ).toBe("Paint");
+  await h.answer("ok");
+  expect(await opening).toBeFalse();
+  expect(h.titles.at(-1)).toBe("untitled - Paint");
 });

@@ -2,10 +2,12 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import {
   cleanupShells,
+  clickStartAction,
   flushShell,
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 import { checkMenuBar } from "./helpers/menu-bar";
 import { recordCardCanvas, siteFiles } from "./helpers/card-canvas";
 
@@ -256,6 +258,18 @@ test("cards drag onto a card one higher, turn over what they uncover, and undo",
   await h.key("z", { ctrlKey: true, code: "KeyW" });
   expect(h.drawnAt(622, 31)).toBe(BACK);
   expect(h.drawnAt(622, 38)).toBe(face("5S"));
+  expect(h.score()).toBe("Spider Solitaire. Score: 498. Moves: 2.");
+  // AltGr types characters, such as "ż" on the Z key of a Polish
+  // keyboard. Like XP, it runs no Ctrl shortcut.
+  for (const [key, code] of [
+    ["ż", "KeyZ"],
+    ["ś", "KeyS"],
+    ["ó", "KeyO"],
+    ["ń", "KeyN"],
+  ])
+    for (const event of pressAltGr(h.s.window, h.win, key, code))
+      expect(event.defaultPrevented).toBeFalse();
+  expect(h.s.document.querySelector(".xp-dialog")).toBeNull();
   expect(h.score()).toBe("Spider Solitaire. Score: 498. Moves: 2.");
   expect(await h.menu("game", "undo")).toBeFalse();
   // Cards dropped where nothing takes them go back.
@@ -1252,4 +1266,20 @@ test("Spider's Deal! title runs from Alt+D, and the arrows pass over it", async 
   expect((await keyOn(root, "q", { altKey: true })).defaultPrevented).toBe(
     false,
   );
+});
+
+test("an open Run leaves Spider its keys, like XP", async () => {
+  const h = await open();
+  clickStartAction(h.s, "run");
+  await h.idle();
+  expect(!!h.s.document.querySelector(".run-dialog")).toBeTrue();
+  const event = new h.s.window.KeyboardEvent("keydown", {
+    key: "F3",
+    bubbles: true,
+    cancelable: true,
+  });
+  h.win.dispatchEvent(event);
+  await h.idle();
+  expect(event.defaultPrevented).toBeTrue();
+  expect(h.dialogTitle()).toBe("Difficulty");
 });

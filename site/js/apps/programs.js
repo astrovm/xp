@@ -63,6 +63,11 @@ const applicationContext = (win) => ({
     const parent = fs.getNode(id)?.parent;
     return parent && !fs.isInRecycleBin(parent) ? parent : null;
   },
+  // The path of a file, or null when it is gone or in the Recycle Bin. A
+  // program that waits, such as for a question, opens the file only when
+  // it is still at this path, like XP.
+  pathOf: (id) =>
+    fs.getNode(id) && !fs.isInRecycleBin(id) ? fs.getPath(id) : null,
   setFileContent: (id, content, options) => fs.setContent(id, content, options),
   writeFile: (parentId, name, content) =>
     fileOps.writeFile(parentId, name, content),

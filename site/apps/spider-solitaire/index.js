@@ -1755,7 +1755,7 @@ const mountSpider = (context) => {
     [(event) => letter(event) === "m", "hint"],
   ];
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay")) return;
+    if (globalThis.XPDialogs.isModalOpen()) return;
     if (menus.isOpen()) {
       if (event.key === "Escape") menus.close();
       return;

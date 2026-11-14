@@ -13,11 +13,8 @@ export const defineProgram = (metadata) => {
   }
   return defineApplication({
     ...metadata,
-    mount(context, instance) {
-      // Renderers return their element, or { element, unmount } when they
-      // have something to clean up.
-      const rendered = renderer(context, instance.application, metadata.id);
-      return rendered.nodeType ? { element: rendered, unmount() {} } : rendered;
-    },
+    // Renderers return { element, unmount }.
+    mount: (context, instance) =>
+      renderer(context, instance.application, metadata.id),
   });
 };

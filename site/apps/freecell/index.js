@@ -954,7 +954,7 @@ const mountFreeCell = (context) => {
 
   // Shortcuts work anywhere in the window, like a menu's accelerators.
   const handleKeydown = (event) => {
-    if (document.querySelector(".xp-dialog-overlay")) return;
+    if (globalThis.XPDialogs.isModalOpen()) return;
     if (event.key === "F10" && event.ctrlKey && event.shiftKey) {
       event.preventDefault();
       void chooseOutcome();

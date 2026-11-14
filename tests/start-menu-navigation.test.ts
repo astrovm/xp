@@ -78,6 +78,10 @@ test.each(["click", "hover", "keyboard"])(
     expect(panels(s).length).toBe(1);
     expect(panels(s)[0].textContent).toContain("My Pictures");
     panels(s)[0].querySelector("button").focus();
+    // AltGr sends Ctrl and Alt, and types a character. Like XP, it
+    // chooses no item.
+    key(s, panels(s)[0], "π", { ctrlKey: true, altKey: true, code: "KeyP" });
+    expect(panels(s).length).toBe(1);
     key(s, panels(s)[0], "p");
     expect(
       s.document.querySelector('.xp-window[data-game="__my-pictures"]') !==
@@ -121,7 +125,7 @@ test("Run Browse uses the selected file path and cancel preserves the command", 
   });
   clickStartAction(s, "run");
   const run = s.document.querySelector(".run-dialog"),
-    input = run.querySelector("#run-command");
+    input = run.querySelector(".run-command");
   input.value = "keep this command";
   run.querySelector('[data-action="browse"]').click();
   await flushShell();

@@ -169,8 +169,9 @@ test("tasks and Details follow the selection", async () => {
     .find((button) => button.textContent === "Rename this file")
     .click();
   const input = win.querySelector(".explorer-rename");
+  // Like XP, the box selects the whole name, with its extension.
   expect(input.selectionStart).toBe(0);
-  expect(input.selectionEnd).toBe(4);
+  expect(input.selectionEnd).toBe("note.txt".length);
   input.value = "memo.txt";
   input.dispatchEvent(new s.window.FocusEvent("blur"));
   await settle();
@@ -339,11 +340,12 @@ test("Explorer never browses into the Recycle Bin's folders", async () => {
   // Run cannot find an item by its place in the Recycle Bin.
   clickStartAction(s, "run");
   const run = s.document.querySelector(".run-dialog");
-  run.querySelector("#run-command").value = "Recycle Bin\\Old";
+  run.querySelector(".run-command").value = "Recycle Bin\\Old";
   run.querySelector('[data-action="run"]').click();
   await settle();
+  // Like XP, the text names the program part: the text up to the space.
   expect(s.document.querySelector(".run-dialog").textContent).toContain(
-    "Windows cannot find 'Recycle Bin\\Old'",
+    "Windows cannot find 'Recycle'",
   );
   // Opening it by its id does not browse into it either.
   fs.open(folder.id);
