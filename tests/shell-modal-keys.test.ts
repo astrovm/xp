@@ -666,16 +666,39 @@ test("Alt+Enter shows Properties, never opens the item, and commits a rename box
   await press(desktop);
   expect(dialogTitle()).toBe("other.txt Properties");
   await closeDialog();
-  // My Documents has no Properties on the desktop, as in its menu.
+  // My Documents shows its Properties too, like XP.
   desktopIcon(s, other.id).classList.remove("selected");
   desktopIcon(s, "__my-documents").classList.add("selected");
   await press(desktop);
-  expect(dialogTitle()).toBeUndefined();
-  expect(display() === null).toBeTrue();
-  // With no icon selected, the display's Properties show.
+  expect(dialogTitle()).toBe("My Documents Properties");
+  await closeDialog();
+  // Its menu has Properties too.
+  desktopIcon(s, "__my-documents").dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  const menuItem = s.document.querySelector(
+    '#desktop-context-menu [data-action="item-properties"]',
+  );
+  expect(menuItem.disabled || menuItem.classList.contains("disabled")).toBe(
+    false,
+  );
+  menuItem.click();
+  await settle();
+  expect(dialogTitle()).toBe("My Documents Properties");
+  await closeDialog();
+  // With no icon selected, nothing shows, like XP.
   desktopIcon(s, "__my-documents").classList.remove("selected");
   await press(desktop);
-  expect(display() === null).toBeFalse();
+  expect(dialogTitle()).toBeUndefined();
+  expect(display() === null).toBeTrue();
+  // In Explorer with no item selected, nothing shows, like XP.
+  item().classList.remove("selected");
+  const list = win.querySelector(".explorer-items");
+  win
+    .querySelectorAll(".explorer-item.selected")
+    .forEach((selected) => selected.classList.remove("selected"));
+  await press(list);
+  expect(dialogTitle()).toBeUndefined();
 });
 
 test("a fallback for the keys never takes the active state from a window that is about to show", async () => {
@@ -742,4 +765,135 @@ test("a press into a game's frame makes its window active", async () => {
   expect(docs.classList.contains("active")).toBeFalse();
   await pressFrame();
   expect(docs.classList.contains("active")).toBeTrue();
+});
+
+// On a Mac, Option changes the character of a key: Option+F types "ƒ", and
+// Option+E starts an accent ("Dead"). The access keys use the place of the
+// key on the keyboard, so Option works like Alt on Windows.
+test("Option and a letter on a Mac picks the access key by its place on the keyboard", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  expect(d.accessKeyOf({ key: "ƒ", code: "KeyF" })).toBe("f");
+  expect(d.accessKeyOf({ key: "Dead", code: "KeyE" })).toBe("e");
+  expect(d.accessKeyOf({ key: "¡", code: "Digit1" })).toBe("1");
+  // A layout such as AZERTY keeps its own letters.
+  expect(d.accessKeyOf({ key: "A", code: "KeyQ" })).toBe("a");
+  expect(d.accessKeyOf({ key: "Enter", code: "Enter" })).toBe("enter");
+
+  // The menu bar of an Explorer window.
+  const win = await openDocuments(s);
+  const items = win.querySelector(".explorer-items");
+  items.focus();
+  expect(key(s, items, "ƒ", { altKey: true, code: "KeyF" })).toBeFalse();
+  await settle();
+  expect(
+    win
+      .querySelector('[role="menubar"] [aria-expanded="true"]')
+      ?.textContent.trim(),
+  ).toBe("File");
+  key(s, s.document.activeElement, "Escape");
+  key(s, s.document.activeElement, "Escape");
+  await settle();
+
+  // The buttons of a message box.
+  const answer = d.confirm("Go on?");
+  await settle();
+  const box = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  key(s, box, "¥", { altKey: true, code: "KeyY" });
+  expect(await answer).toBeTrue();
+});
+
+// An input method ends its text with Enter or Esc. Those keys belong to the
+// input method, so no text box acts on them.
+test("the Enter and Esc of an input method never end a text box", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const composing = [
+    ["Enter", { isComposing: true }],
+    ["Escape", { isComposing: true }],
+    ["Enter", { keyCode: 229 }],
+  ];
+
+  // A rename box on the desktop.
+  const memo = fs.createFile(fs.DESKTOP, "memo.txt", { content: "" });
+  await settle();
+  desktopIcon(s, memo.id).focus();
+  desktopIcon(s, memo.id).dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  s.document
+    .querySelector('#desktop-context-menu [data-action="rename"]')
+    .click();
+  const box = s.document.querySelector(".desktop-rename");
+  box.value = "日本.txt";
+  for (const [name, init] of composing) key(s, box, name, init);
+  await settle();
+  expect(box.isConnected).toBeTrue();
+  expect(fs.getNode(memo.id).name).toBe("memo.txt");
+  key(s, box, "Enter");
+  await settle();
+  expect(fs.getNode(memo.id).name).toBe("日本.txt");
+
+  // The rename box of My Computer, whose name is a setting.
+  desktopIcon(s, "__my-computer").focus();
+  desktopIcon(s, "__my-computer").dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  s.document
+    .querySelector('#desktop-context-menu [data-action="rename-my-computer"]')
+    .click();
+  const system = s.document.querySelector(".desktop-rename");
+  system.value = "日本";
+  for (const [name, init] of composing) key(s, system, name, init);
+  await settle();
+  expect(system.isConnected).toBeTrue();
+  key(s, system, "Escape");
+  await settle();
+  expect(desktopIcon(s, "__my-computer").textContent).toBe("My Computer");
+
+  // A rename box in Explorer.
+  const file = fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
+  const win = await openDocuments(s);
+  win
+    .querySelector(`.explorer-item[data-node-id="${file.id}"]`)
+    .dispatchEvent(new s.window.MouseEvent("contextmenu", { bubbles: true }));
+  win.querySelector('.explorer-context-menu [data-command="rename"]').click();
+  await settle();
+  const input = win.querySelector(".explorer-rename");
+  input.value = "日本語.txt";
+  for (const [name, init] of composing) key(s, input, name, init);
+  await settle();
+  expect(input.isConnected).toBeTrue();
+  expect(fs.getNode(file.id).name).toBe("note.txt");
+  key(s, input, "Escape");
+  await settle();
+
+  // A message box keeps its answer open.
+  const answer = s.window.XPDialogs.confirm("Go on?");
+  await settle();
+  const dialog = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  let done = false;
+  answer.then(() => (done = true));
+  for (const [name, init] of composing) key(s, dialog, name, init);
+  await settle();
+  expect(done).toBeFalse();
+  key(s, dialog, "Enter");
+  expect(await answer).toBeTrue();
+});
+
+// An icon that is no file or folder, such as Internet Games, has no
+// Properties, so Alt+Enter does nothing.
+test("Alt+Enter on a desktop icon with no Properties does nothing", async () => {
+  const s = await login(await loadShell());
+  const icon = desktopIcon(s, "__internet-games");
+  icon.click();
+  icon.focus();
+  key(s, icon, "Enter", { altKey: true });
+  await settle();
+  expect(s.document.querySelectorAll(".xp-dialog")).toHaveLength(0);
+  expect(
+    [...s.document.querySelectorAll(".xp-window")].some((win) =>
+      /Properties/.test(win.textContent),
+    ),
+  ).toBeFalse();
 });

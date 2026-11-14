@@ -124,7 +124,7 @@ describe("file operations", () => {
     expect(fs.getNode(note.id).parent).toBe(destination.id);
     expect(operations.getClipboard()).toBe(null);
     await expect(operations.pasteWithConflicts(destination.id)).rejects.toThrow(
-      /clipboard is empty/,
+      /The Clipboard is empty/,
     );
   });
 
@@ -134,7 +134,7 @@ describe("file operations", () => {
     operations.cut([source.id]);
     expect(operations.canPaste(nested.id)).toBe(false);
     await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
-      /into itself/,
+      /subfolder of the source folder/,
     );
     expect(operations.getClipboard()).toEqual({
       mode: "cut",
@@ -147,34 +147,38 @@ describe("file operations", () => {
     const { note, destination } = createClipboardFixture();
 
     expect(() => operations.createFile(destination.id, "bad?.txt")).toThrow(
-      /invalid characters/,
+      /cannot contain any of the following characters/,
     );
     expect(() => operations.rename(note.id, "CON.txt")).toThrow(
-      /reserved device name/,
+      /reserved for use by Windows/,
     );
   });
 
-  test("moves items through the Recycle Bin explicitly and rejects accidental permanent deletes", () => {
+  test("moves items through the Recycle Bin explicitly and rejects accidental permanent deletes", async () => {
     const { source, destination } = createClipboardFixture();
     const note = operations.createFile(destination.id, "note.txt");
 
     operations.removeToBin([note.id]);
     expect(fs.isInRecycleBin(note.id)).toBeTruthy();
-    expect(() => operations.removeToBin([note.id])).toThrow(/cannot delete/);
-    const [restored] = operations.restore([note.id]);
+    expect(() => operations.removeToBin([note.id])).toThrow(
+      /Cannot delete note.txt: Access is denied./,
+    );
+    const {
+      results: [restored],
+    } = await operations.restore([note.id]);
     expect(restored.id).toBe(note.id);
     expect(fs.getNode(note.id).parent).toBe(destination.id);
     operations.removeToBin([note.id]);
     operations.permanentlyDelete([note.id]);
     expect(fs.getNode(note.id)).toBe(null);
     expect(() => operations.permanentlyDelete([source.id])).toThrow(
-      /not deletable/,
+      /Cannot delete Source: Access is denied./,
     );
 
     // Nothing new goes in a folder inside the Recycle Bin.
     operations.removeToBin([destination.id]);
     expect(() => operations.createFile(destination.id, "late.txt")).toThrow(
-      /cannot accept new items/,
+      /You cannot save in the folder you specified/,
     );
 
     operations.removeToBin([source.id]);
@@ -312,7 +316,7 @@ describe("file operations", () => {
     const again = fs.createFile(destination.id, "again.txt");
     operations.removeToBin([again.id]);
     operations.cut([again.id]);
-    operations.restore([again.id]);
+    await operations.restore([again.id]);
     expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [again.id] });
     operations.removeToBin([again.id]);
     expect(operations.getClipboard()).toBeNull();
@@ -361,8 +365,8 @@ describe("file operations", () => {
     // Cut in the bin, restored and deleted again while the question is open.
     fs.createFile(conflictTarget.id, conflictFile.name);
     operations.cut([conflictFile.id]);
-    await operations.pasteWithConflicts(conflictTarget.id, () => {
-      operations.restore([conflictFile.id]);
+    await operations.pasteWithConflicts(conflictTarget.id, async () => {
+      await operations.restore([conflictFile.id]);
       operations.removeToBin([conflictFile.id]);
       return "rename";
     });
@@ -673,7 +677,7 @@ describe("file operations", () => {
         called = true;
         return "rename";
       }),
-    ).rejects.toThrow(/cannot accept new items/);
+    ).rejects.toThrow(/You cannot save in the folder you specified/);
     expect(called).toBe(false);
   });
 
@@ -724,7 +728,7 @@ describe("file operations", () => {
     });
   });
 
-  test("restores only top-level Recycle Bin items without partial restores", () => {
+  test("restores only top-level Recycle Bin items without partial restores", async () => {
     const recycledFolder = operations.createFolder(
       fs.MY_DOCUMENTS,
       "Recycled Folder",
@@ -735,14 +739,14 @@ describe("file operations", () => {
     );
     const recycledDirect = operations.createFile(fs.MY_DOCUMENTS, "direct.txt");
     operations.removeToBin([recycledFolder.id, recycledDirect.id]);
-    expect(() =>
+    await expect(
       operations.restore([recycledDirect.id, recycledChild.id]),
-    ).toThrow(/top-level Recycle Bin items/);
+    ).rejects.toThrow(/top-level Recycle Bin items/);
     expect(fs.getNode(recycledDirect.id).parent).toBe(fs.RECYCLE_BIN);
     expect(fs.getNode(recycledChild.id).parent).toBe(recycledFolder.id);
   });
 
-  test("restores an item to the Desktop when its original folder is still recycled", () => {
+  test("restores an item to the Desktop when its original folder is still recycled", async () => {
     const fallbackFolder = operations.createFolder(
       fs.MY_DOCUMENTS,
       "Fallback Folder",
@@ -753,12 +757,12 @@ describe("file operations", () => {
     );
     operations.removeToBin([fallbackChild.id]);
     operations.removeToBin([fallbackFolder.id]);
-    operations.restore([fallbackChild.id]);
+    await operations.restore([fallbackChild.id]);
     expect(fs.getNode(fallbackChild.id).parent).toBe(fs.DESKTOP);
     expect(fs.isInRecycleBin(fallbackChild.id)).toBe(false);
   });
 
-  test("restores a selected ancestor first so its child returns to its original folder", () => {
+  test("restores a selected ancestor first so its child returns to its original folder", async () => {
     const selectedFolder = operations.createFolder(
       fs.MY_DOCUMENTS,
       "Selected Folder",
@@ -769,18 +773,18 @@ describe("file operations", () => {
     );
     operations.removeToBin([selectedChild.id]);
     operations.removeToBin([selectedFolder.id]);
-    operations.restore([selectedChild.id, selectedFolder.id]);
+    await operations.restore([selectedChild.id, selectedFolder.id]);
     expect(fs.getNode(selectedFolder.id).parent).toBe(fs.MY_DOCUMENTS);
     expect(fs.getNode(selectedChild.id).parent).toBe(selectedFolder.id);
   });
 
-  test("restores a file to its nested folder when a higher folder is also selected", () => {
+  test("restores a file to its nested folder when a higher folder is also selected", async () => {
     const outer = operations.createFolder(fs.MY_DOCUMENTS, "Outer");
     const inner = operations.createFolder(outer.id, "Inner");
     const file = operations.createFile(inner.id, "deep.txt");
     operations.removeToBin([file.id]);
     operations.removeToBin([outer.id]);
-    operations.restore([file.id, outer.id]);
+    await operations.restore([file.id, outer.id]);
     expect(fs.getNode(outer.id).parent).toBe(fs.MY_DOCUMENTS);
     expect(fs.getNode(file.id).parent).toBe(inner.id);
   });
@@ -833,7 +837,7 @@ describe("file operations", () => {
     expect(operations.getClipboard()).toEqual({ mode: "cut", ids: [other.id] });
   });
 
-  test("restores original names after temporary Recycle Bin conflict names", () => {
+  test("restores original names after temporary Recycle Bin conflict names", async () => {
     const nameFolderA = operations.createFolder(fs.MY_DOCUMENTS, "Name A");
     const nameFolderB = operations.createFolder(fs.MY_DOCUMENTS, "Name B");
     const sameNameA = operations.createFile(nameFolderA.id, "same-name.txt");
@@ -842,7 +846,7 @@ describe("file operations", () => {
     expect(fs.getNode(sameNameA.id).name).not.toBe(
       fs.getNode(sameNameB.id).name,
     );
-    operations.restore([sameNameA.id, sameNameB.id]);
+    await operations.restore([sameNameA.id, sameNameB.id]);
     expect(fs.getNode(sameNameA.id).name).toBe("same-name.txt");
     expect(fs.getNode(sameNameB.id).name).toBe("same-name.txt");
     expect(fs.getNode(sameNameA.id).originalName).toBe(null);
@@ -897,34 +901,36 @@ describe("file operations", () => {
   test("rejects invalid selections and destinations", async () => {
     const { note, source, nested } = createClipboardFixture();
     expect(() => operations.copy("not-an-array")).toThrow("must be an array");
-    expect(() => operations.copy([])).toThrow("select at least one item");
+    expect(() => operations.copy([])).toThrow("Select at least one item.");
     expect(() => operations.copy(["missing"])).toThrow(
-      '"missing" was not found',
+      "Cannot find the file or folder.",
     );
     operations.copy([note.id]);
     await expect(operations.pasteWithConflicts(note.id)).rejects.toThrow(
-      "must be a folder",
+      "The destination is not a folder.",
     );
     operations.copy([source.id]);
     await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
-      'cannot copy "Source" into itself',
+      "Cannot copy Source: The destination folder is a subfolder of the source folder.",
     );
     await expect(operations.pasteWithConflicts(source.id)).rejects.toThrow(
-      "into itself",
+      "subfolder of the source folder",
     );
     expect(operations.canPaste(nested.id)).toBeFalse();
     operations.cut([source.id]);
     await expect(operations.pasteWithConflicts(nested.id)).rejects.toThrow(
-      "into itself",
+      "subfolder of the source folder",
     );
     fs.getNode(source.id).protected = true;
     await expect(operations.pasteWithConflicts(fs.DESKTOP)).rejects.toThrow(
-      "access is denied",
+      "Access is denied.",
     );
-    expect(() => operations.cut([fs.MY_DOCUMENTS])).toThrow("access is denied");
+    expect(() => operations.cut([fs.MY_DOCUMENTS])).toThrow(
+      "Access is denied.",
+    );
     operations.resetForTests();
     await expect(operations.pasteWithConflicts(fs.DESKTOP)).rejects.toThrow(
-      "clipboard is empty",
+      "The Clipboard is empty.",
     );
   });
 
@@ -954,14 +960,93 @@ describe("file operations", () => {
     expect(operations.getClipboard()).toBeNull();
   });
 
-  test("restores items whose original folders refer to each other", () => {
+  test("restores items whose original folders refer to each other", async () => {
     const first = operations.createFolder(fs.DESKTOP, "First");
     const second = operations.createFolder(fs.DESKTOP, "Second");
     operations.removeToBin([first.id, second.id]);
     fs.getNode(first.id).originalParent = second.id;
     fs.getNode(second.id).originalParent = first.id;
-    const restored = operations.restore([first.id, second.id]);
+    const { results: restored } = await operations.restore([
+      first.id,
+      second.id,
+    ]);
     expect(restored.map((node) => node.parent)).toEqual([fs.DESKTOP, first.id]);
+  });
+
+  // Like XP, a restore over a folder with the same name puts the items in
+  // that folder. A file from a folder inside it goes back to that folder.
+  test("restore joins a folder with the folder that has its name", async () => {
+    const old = operations.createFolder(fs.MY_DOCUMENTS, "Old");
+    const sub = operations.createFolder(old.id, "Sub");
+    const deep = operations.createFile(sub.id, "deep.txt");
+    const kept = operations.createFile(old.id, "kept.txt");
+    operations.removeToBin([deep.id]);
+    operations.removeToBin([old.id]);
+    const again = operations.createFolder(fs.MY_DOCUMENTS, "Old");
+    const asked = [];
+    const { cancelled } = await operations.restore(
+      [old.id, deep.id],
+      ({ existing }) => {
+        asked.push(existing.name);
+        return "replace";
+      },
+    );
+    expect(cancelled).toBe(false);
+    expect(asked).toEqual(["Old"]);
+    expect(fs.getNode(kept.id).parent).toBe(again.id);
+    expect(fs.getNode(sub.id).parent).toBe(again.id);
+    expect(fs.getNode(deep.id).parent).toBe(sub.id);
+    expect(fs.isInRecycleBin(deep.id)).toBe(false);
+  });
+
+  test("restore reports a file that cannot take the name of a folder", async () => {
+    const file = operations.createFile(fs.MY_DOCUMENTS, "item");
+    operations.removeToBin([file.id]);
+    operations.createFolder(fs.MY_DOCUMENTS, "item");
+    await expect(
+      operations.restore([file.id], () => "replace"),
+    ).rejects.toThrow(
+      "Cannot move item: A folder with the name you specified already exists.",
+    );
+    expect(fs.getNode(file.id).parent).toBe(fs.RECYCLE_BIN);
+  });
+
+  // An item that an old version put in the bin can have no original name.
+  // It goes back with the name it has.
+  test("restore keeps the name of an item with no original name", async () => {
+    const file = operations.createFile(fs.MY_DOCUMENTS, "plain.txt");
+    fs.remove(file.id);
+    fs.getNode(file.id).originalName = null;
+    await operations.restore([file.id]);
+    expect(fs.getNode(file.id)).toMatchObject({
+      parent: fs.MY_DOCUMENTS,
+      name: "plain.txt",
+    });
+  });
+
+  test("import works with no options, and No on an item in a folder skips it", async () => {
+    const folder = operations.createFolder(fs.MY_DOCUMENTS, "Tree");
+    const old = operations.createFile(folder.id, "a.txt", { content: "old" });
+    const item = (name, content) => ({
+      type: "file",
+      name,
+      size: content.length,
+      read: async () => content,
+    });
+    const { results } = await operations.importWithConflicts(
+      fs.MY_DOCUMENTS,
+      [
+        {
+          type: "folder",
+          name: "Tree",
+          children: [item("a.txt", "new"), item("b.txt", "b")],
+        },
+      ],
+      ({ existing }) => (existing.type === "folder" ? "replace" : "skip"),
+    );
+    expect(results.map((node) => node.id)).toEqual([folder.id]);
+    expect(fs.getNode(old.id).content).toBe("old");
+    expect(fs.findChild(folder.id, "b.txt").content).toBe("b");
   });
 });
 

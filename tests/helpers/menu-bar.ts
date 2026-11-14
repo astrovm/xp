@@ -123,6 +123,19 @@ export const checkMenuBar = async ({ s, win, control, accessKey, settle }) => {
   await key(title, "Escape");
   expect(keysOn(control)).toBeTrue();
 
+  // 2. On a Mac, Option changes the character of the key, or starts an
+  // accent ("Dead"). The place of the key on the keyboard still picks the
+  // menu.
+  control.focus();
+  await key(control, "Dead", {
+    altKey: true,
+    code: `Key${accessKey.toUpperCase()}`,
+  });
+  expect(title.getAttribute("aria-expanded")).toBe("true");
+  await key(active(), "Escape");
+  await key(title, "Escape");
+  expect(keysOn(control)).toBeTrue();
+
   // 1. A click opens the menu and a second one closes it.
   await clickTitle();
   expect(title.getAttribute("aria-expanded")).toBe("true");

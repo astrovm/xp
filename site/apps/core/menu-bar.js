@@ -222,7 +222,10 @@ export const wireMenuBar = ({
         event.altKey &&
         !event.ctrlKey &&
         !event.metaKey &&
-        titles().find((entry) => accessKey(entry) === event.key.toLowerCase());
+        titles().find(
+          (entry) =>
+            accessKey(entry) === globalThis.XPDialogs.accessKeyOf(event),
+        );
       if (title) {
         event.preventDefault();
         event.stopPropagation();

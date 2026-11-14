@@ -43,6 +43,48 @@ test("a folder opens in Explorer while Explorer's code still loads", async () =>
     '.xp-window[data-game="__my-documents"]',
   );
   expect(win?.querySelector(".title-text")?.textContent).toBe("Projects");
+  // Like XP, the new window starts on the folder, so Back is off.
+  const back = () =>
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] [data-explorer-action="back"]',
+    );
+  expect(back().disabled).toBeTrue();
+  // An open window goes to the folder, and Back goes to where it was.
+  const other = fs.createFolder(fs.MY_DOCUMENTS, "Other");
+  fs.open(other.id);
+  await settle();
+  expect(win.querySelector(".title-text").textContent).toBe("Other");
+  expect(back().disabled).toBeFalse();
+  win.querySelector(".close-btn").click();
+  await settle();
+  // When the code is already loaded, the new window starts on the folder
+  // too.
+  fs.open(folder.id);
+  await settle();
+  expect(
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .title-text',
+    ).textContent,
+  ).toBe("Projects");
+  expect(back().disabled).toBeTrue();
+  s.document
+    .querySelector('.xp-window[data-game="__my-documents"] .close-btn')
+    .click();
+  await settle();
+  // A folder in the Recycle Bin opens no view of the bin: the window shows
+  // My Documents.
+  fs.remove(other.id);
+  fs.open(other.id);
+  await settle();
+  expect(
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .title-text',
+    ).textContent,
+  ).toBe("My Documents");
+  s.document
+    .querySelector('.xp-window[data-game="__my-documents"] .close-btn')
+    .click();
+  await settle();
 
   // A window that fails to load leaves nothing to show the folder in.
   win.querySelector(".close-btn").click();
@@ -181,7 +223,7 @@ test("programs launch other applications, save files and set the wallpaper", asy
   fs.remove(folder.id);
   expect(context.folderOf(photo.id)).toBeNull();
   expect(() => context.createFile(folder.id, "late.png", "")).toThrow(
-    /cannot accept new items/,
+    /You cannot save in the folder you specified/,
   );
   // Paint reads pictures through the shell, sample pictures included.
   expect(context.pictureUrl(fs.getNode("sample-winter"))).toBe(

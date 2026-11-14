@@ -1,18 +1,25 @@
 // @ts-nocheck -- A small pixel-backed canvas verifies the app's drawing logic without a browser GPU.
 import { afterEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
+import { createRequire } from "node:module";
 import { createCanvasEngine } from "../site/apps/paint/canvas-engine.js";
 const previousDocument = globalThis.document,
-  previousImageData = globalThis.ImageData;
+  previousImageData = globalThis.ImageData,
+  previousDialogs = globalThis.XPDialogs;
+// The pure key rules of the shell's dialogs, which Paint reads from
+// globalThis.XPDialogs like in the page.
+const dialogs = createRequire(import.meta.url)("../site/js/dialogs.js");
 let w;
 afterEach(() => {
   w?.close();
   globalThis.document = previousDocument;
   globalThis.ImageData = previousImageData;
+  globalThis.XPDialogs = previousDialogs;
 });
 function setup() {
   w = new Window();
   globalThis.document = w.document;
+  globalThis.XPDialogs = dialogs;
   globalThis.ImageData = class {
     constructor(data, width, height) {
       Object.assign(this, { data, width, height });
@@ -243,6 +250,15 @@ test("text commits on keyboard confirmation and can be canceled", () => {
   expect(press.defaultPrevented).toBeTrue();
   let editor = h.frame.querySelector("textarea");
   editor.value = "one\ntwo";
+  // The Enter and Esc that end an input method composition stay in the
+  // text.
+  for (const init of [
+    { key: "Enter", ctrlKey: true, isComposing: true },
+    { key: "Escape", keyCode: 229 },
+  ])
+    editor.dispatchEvent(new w.KeyboardEvent("keydown", init));
+  expect(editor.isConnected).toBeTrue();
+  expect(h.calls.some((c) => c[0] === "fillText")).toBeFalse();
   editor.dispatchEvent(
     new w.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true }),
   );

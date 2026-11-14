@@ -461,16 +461,10 @@ document.addEventListener("keydown", async (e) => {
         return;
       }
       // Alt+Enter shows the Properties of the selected icon, wherever the
-      // keys are on the desktop. With no icon selected, it shows the
-      // display's, like XP. Like the menu, many icons show none.
+      // keys are on the desktop, like XP. No icon or many icons show none.
       if (e.altKey && e.key === "Enter") {
         e.preventDefault();
-        const [id, ...more] = getSelectedDesktopIds();
-        if (!id) openSystemWindow("__display-properties");
-        else if (more.length) return;
-        else if (id === "__recycle-bin") openShellProperties(fs.RECYCLE_BIN);
-        else if (id === "__my-computer") openShellProperties(fs.MY_COMPUTER);
-        else if (fs.getNode(id)) openShellProperties(id);
+        showDesktopProperties();
         return;
       }
       if (e.key === "F2" && movable && selectedFsIds.length === 1) {
@@ -570,9 +564,11 @@ document.addEventListener("keydown", async (e) => {
         pasteIntoFolder(explorerWin.currentFolderId);
         return;
       }
+      // Alt+Enter shows the Properties of the one selected item, like XP.
+      // No item or many items show none.
       if (e.altKey && e.key === "Enter" && selected.length === 1) {
         e.preventDefault();
-        XPDialogs.properties(selected[0]);
+        openShellProperties(selected[0]);
         return;
       }
       if (e.key === "F2" && selected.length === 1 && !protectedSelection) {

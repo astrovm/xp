@@ -206,6 +206,7 @@ const showWelcomeScreen = (autoLogin) => {
   const welcomeScreen = document.getElementById("welcome-screen");
   const loginUser = document.getElementById("login-user");
   welcomeScreen.classList.toggle("auto-login", autoLogin);
+  welcomeScreen.querySelector(".welcome-username").textContent = fs.USER_NAME;
   const status = document.getElementById("welcome-user-status");
   status.hidden = !loggedIn;
   const programCount = loggedIn ? openWindows.size : 0;

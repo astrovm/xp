@@ -150,6 +150,8 @@ export const createCanvasEngine = ({ canvas, frame, onChange, onPosition }) => {
       once: true,
     });
     textarea.addEventListener("keydown", (event) => {
+      // The keys of an input method stay in the text.
+      if (globalThis.XPDialogs.isComposingKey(event)) return;
       // Ctrl+Esc and Alt+Esc belong to the shell and keep the text.
       // Esc drops the text, and the picture takes the keys back.
       if (event.key === "Escape" && !event.ctrlKey && !event.altKey) {

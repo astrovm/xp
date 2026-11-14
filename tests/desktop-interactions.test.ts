@@ -73,17 +73,63 @@ describe("desktop", () => {
       ],
     });
     pickers[0].dispatchEvent(new s.window.Event("change"));
+    // The Copying progress box closes, then the error opens.
+    const error = () =>
+      [...s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+        dialog.textContent.includes("The file operation failed."),
+      );
+    for (let attempt = 0; attempt < 50 && !error(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(Boolean(error())).toBeTrue();
+    expect(s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);
+    const fs = s.window.VirtualFS;
+    expect(fs.findChild(fs.DESKTOP, "locked.bin")).toBeNull();
+  });
+
+  // Like XP, an uploaded file with a name in use asks Confirm File
+  // Replace. It never gets a new name such as "note (2).txt".
+  test("asks Confirm File Replace for an uploaded file with a name in use", async () => {
+    const s = await login(await loadShell());
+    const fs = s.window.VirtualFS;
+    fs.createFile(fs.DESKTOP, "note.txt", { content: "old" });
+    const pickers = [];
+    const pickerClick = spyOn(
+      s.window.HTMLInputElement.prototype,
+      "click",
+    ).mockImplementation(function () {
+      pickers.push(this);
+    });
+    try {
+      openMenu(s).querySelector('[data-action="upload"]').click();
+    } finally {
+      pickerClick.mockRestore();
+    }
+    Object.defineProperty(pickers[0], "files", {
+      value: [new s.window.File(["new"], "note.txt")],
+    });
+    pickers[0].dispatchEvent(new s.window.Event("change"));
+    const question = () =>
+      [...s.document.querySelectorAll(".xp-dialog")].find(
+        (dialog) =>
+          dialog.querySelector(".title-text")?.textContent ===
+          "Confirm File Replace",
+      );
+    for (let attempt = 0; attempt < 50 && !question(); attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(question().textContent).toContain(
+      "This folder already contains a file named 'note.txt'.",
+    );
+    question().querySelector('[data-action="yes"]').click();
     for (
       let attempt = 0;
-      attempt < 50 && !s.document.querySelector(".xp-dialog");
+      attempt < 50 && fs.findChild(fs.DESKTOP, "note.txt").content !== "new";
       attempt++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(s.document.querySelector(".xp-dialog").textContent).toContain(
-      "The file operation failed.",
-    );
-    const fs = s.window.VirtualFS;
-    expect(fs.findChild(fs.DESKTOP, "locked.bin")).toBeNull();
+    expect(
+      fs.getChildren(fs.DESKTOP).filter((node) => /^note/.test(node.name)),
+    ).toHaveLength(1);
+    expect(fs.findChild(fs.DESKTOP, "note.txt").content).toBe("new");
   });
 
   const openMenu = (shell) => {

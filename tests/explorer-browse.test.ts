@@ -297,6 +297,63 @@ test("Recycle Bin tasks restore and delete selected items", async () => {
   ).toBeTrue();
 });
 
+// Like XP, a restore over an item with the same name asks first. One file
+// gets Confirm File Replace with Yes and No, and No leaves it in the bin.
+// A folder gets Confirm Folder Replace with Yes, Yes to All, No and Cancel.
+test("Restore asks Confirm File Replace and Confirm Folder Replace", async () => {
+  const s = await login(await loadShell()),
+    fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "r.txt", { content: "deleted" });
+  const folder = fs.createFolder(fs.DESKTOP, "rf");
+  fs.remove(file.id);
+  fs.remove(folder.id);
+  const newer = fs.createFile(fs.DESKTOP, "r.txt", { content: "newer" });
+  const newerFolder = fs.createFolder(fs.DESKTOP, "rf");
+  await settle();
+  s.document
+    .querySelector('[data-desktop-id="__recycle-bin"]')
+    .dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  await settle();
+  const win = s.document.querySelector('.xp-window[data-game="__recycle-bin"]');
+  const task = (label) =>
+    [
+      ...win.querySelectorAll(".explorer-sidebar > section:first-child button"),
+    ].find((button) => button.textContent === label);
+  const question = () => [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  const buttons = () =>
+    [...question().querySelectorAll("button[data-action]")].map(
+      (button) => button.textContent,
+    );
+  win.querySelector(`.explorer-item[data-node-id="${file.id}"]`).click();
+  task("Restore this item").click();
+  await settle();
+  expect(question().querySelector(".title-text").textContent).toBe(
+    "Confirm File Replace",
+  );
+  expect(buttons()).toEqual(["Yes", "No"]);
+  await answer(s, "no");
+  expect(fs.getNode(file.id).parent).toBe(fs.RECYCLE_BIN);
+  expect(fs.getNode(newer.id).content).toBe("newer");
+  task("Restore this item").click();
+  await settle();
+  await answer(s, "yes");
+  expect(fs.getNode(newer.id)).toBeNull();
+  expect(fs.findChild(fs.DESKTOP, "r.txt").content).toBe("deleted");
+  win.querySelector(`.explorer-item[data-node-id="${folder.id}"]`).click();
+  task("Restore this item").click();
+  await settle();
+  expect(question().querySelector(".title-text").textContent).toBe(
+    "Confirm Folder Replace",
+  );
+  expect(dialogText(s)).toContain(
+    "they will be replaced.  Do you still want to move or copy the folder?",
+  );
+  expect(buttons()).toEqual(["Yes", "Yes to All", "No", "Cancel"]);
+  await answer(s, "cancel");
+  expect(fs.getNode(folder.id).parent).toBe(fs.RECYCLE_BIN);
+  expect(fs.getNode(newerFolder.id).parent).toBe(fs.DESKTOP);
+});
+
 test("Explorer context menus handle declined and failing commands and keyboard use", async () => {
   const h = await openDocuments(),
     { s, fs } = h;
@@ -514,6 +571,16 @@ test("Explorer reports failing menu commands with their message or a default", a
       await h.command("copy");
       expect(dialogText(s)).toContain(expected);
       await answer(s, "ok");
+      // The same command from the item's shortcut menu.
+      h.item(h.note.id).dispatchEvent(
+        new s.window.MouseEvent("contextmenu", { bubbles: true }),
+      );
+      h.win
+        .querySelector('.explorer-context-menu [data-command="copy"]')
+        .click();
+      await settle();
+      expect(dialogText(s)).toContain(expected);
+      await answer(s, "ok");
     }
   } finally {
     s.window.FileOperations.copy = copy;
@@ -583,8 +650,12 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   await h.action("forward");
   expect(h.address().value).toBe(fs.getPath(h.folder.id));
 
-  h.address().value = fs.getPath(other.id);
-  await h.action("go");
+  // Like XP, the first folder opens with Back off, so the history gets
+  // My Documents from the address bar.
+  for (const id of [fs.MY_DOCUMENTS, h.folder.id, other.id]) {
+    h.address().value = fs.getPath(id);
+    await h.action("go");
+  }
   // A folder in the Recycle Bin counts as deleted too. One Back click
   // skips it.
   fs.remove(h.folder.id);

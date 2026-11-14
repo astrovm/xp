@@ -20,6 +20,8 @@ export const renderTerminal = (context, program, programId) => {
   updatePrompt();
 
   input.addEventListener("keydown", async (event) => {
+    // The keys of an input method stay with it: its Enter runs nothing.
+    if (globalThis.XPDialogs.isComposingKey(event)) return;
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       event.preventDefault();
       if (!history.length) return;
@@ -50,9 +52,12 @@ export const renderTerminal = (context, program, programId) => {
       input.focus();
     }
     if (result.exit) return;
+    // Like cmd.exe, a blank line comes after each command, but not after
+    // an empty line, and not before the next question of the command.
+    const blank = command.trim() && !session.question ? "\n" : "";
     if (result.clear) output.textContent = "";
     else
-      output.textContent += `${enteredPrompt}${command}\n${result.output}${result.output ? "\n" : ""}`;
+      output.textContent += `${enteredPrompt}${command}\n${result.output}${result.output ? "\n" : ""}${blank}`;
     input.value = "";
     updatePrompt();
     screen.scrollTop = screen.scrollHeight;

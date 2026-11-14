@@ -935,7 +935,7 @@ export const createSystemRuntime = (context) => {
       // Alt and a menu's letter open that menu, like XP.
       const openExplorerMenuByAccessKey = (event) => {
         const target = explorerMenuButtons.find(
-          (button) => button.dataset.accessKey === event.key.toLowerCase(),
+          (button) => button.dataset.accessKey === XPDialogs.accessKeyOf(event),
         );
         if (!target) return;
         event.preventDefault();

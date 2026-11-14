@@ -109,6 +109,24 @@ const getDesktopSelectionEligibility = () => {
   return { selectedIds, filesystemIds, allFilesystem, movable };
 };
 
+// The item whose Properties a desktop icon shows, like XP: the folder or
+// file itself, and the shell folder of My Computer, My Documents and the
+// Recycle Bin. Icons for programs, such as Internet Games, show none.
+const DESKTOP_PROPERTIES_ITEMS = {
+  "__my-computer": () => fs.MY_COMPUTER,
+  "__my-documents": () => fs.MY_DOCUMENTS,
+  "__recycle-bin": () => fs.RECYCLE_BIN,
+};
+const desktopPropertiesItem = (id) =>
+  DESKTOP_PROPERTIES_ITEMS[id]?.() || (fs.getNode(id) ? id : null);
+// The Properties of the one selected icon, like XP. No icon or many icons
+// show none.
+const showDesktopProperties = () => {
+  const [id, ...more] = getSelectedDesktopIds();
+  const itemId = id && !more.length && desktopPropertiesItem(id);
+  if (itemId) openShellProperties(itemId);
+};
+
 const layoutDesktopIcons = (force = false) => {
   const container = document.getElementById("desktop-icons");
   const positions = force ? {} : getDesktopIconPositions();
@@ -699,14 +717,15 @@ const beginDesktopRename = (id) => {
     if (finished) return;
     finished = true;
     document.removeEventListener("pointerdown", onOutsidePointerDown, true);
-    if (save) {
+    const name = save ? renameBoxName(input.value) : null;
+    if (name !== null && name !== node.name) {
       try {
-        await fileOps.rename(id, input.value);
+        await fileOps.rename(id, name);
       } catch (error) {
         // Like XP, a name Windows refuses shows an error, and the box opens
         // again with that name.
         refreshDesktop();
-        await alertRenameError(error);
+        await alertRenameError(error, node);
         // An icon that went away while the error showed takes no box.
         if (
           !document.querySelector(
@@ -715,7 +734,7 @@ const beginDesktopRename = (id) => {
         )
           return;
         const again = beginDesktopRename(id);
-        again.value = input.value;
+        // Like XP, the box opens again with the old name, all selected.
         again.select();
         return;
       }
@@ -727,6 +746,11 @@ const beginDesktopRename = (id) => {
     if (!input.contains(event.target)) finish(true);
   }
   input.addEventListener("keydown", (event) => {
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key === "Enter" || event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -769,6 +793,11 @@ const beginSystemDesktopRename = (id) => {
     if (keepKeys) focusDesktopIcon(id);
   };
   input.addEventListener("keydown", (event) => {
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) {
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== "Enter" && event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
@@ -932,8 +961,10 @@ const renderDesktopContextMenu = (menu, itemId) => {
       disabled: !movable || selectedFsIds.length !== 1,
     });
     addDesktopSeparator(menu);
+    const selectedIds = getSelectedDesktopIds();
     addDesktopMenuItem(menu, "Properties", "item-properties", {
-      disabled: selectedFsIds.length !== 1,
+      disabled:
+        selectedIds.length !== 1 || !desktopPropertiesItem(selectedIds[0]),
     });
   } else {
     addDesktopSubmenu(menu, "Arrange Icons By", (submenu) => {
@@ -1084,14 +1115,11 @@ const setupDesktopContextMenu = () => {
         input.addEventListener(
           "change",
           async () => {
+            // Like a drop: a name in use is a question, never a new name.
             try {
-              for (const file of input.files) {
-                const content = await fileOps.readFileContent(file);
-                await fileOps.createFile(fs.DESKTOP, file.name, {
-                  content,
-                  size: file.size,
-                });
-              }
+              await importIntoFolder(fs.DESKTOP, () =>
+                fileOps.importItemsFromFiles(input.files),
+              );
             } catch (error) {
               await XPDialogs.alert(
                 error.message || "The file operation failed.",
@@ -1153,7 +1181,7 @@ const setupDesktopContextMenu = () => {
       } else if (action === "rename") {
         beginDesktopRename(selectedFsIds[0]);
       } else if (action === "item-properties") {
-        openShellProperties(selectedFsIds[0]);
+        showDesktopProperties();
       } else {
         // Menus disable Rename and Properties unless exactly one file is
         // selected, and Paste Shortcut is never enabled, so only the

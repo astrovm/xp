@@ -147,7 +147,8 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect(fs.getNode(move.id).parent).toBe(folder.id);
   expect(fs.getNode(move.id).content).toBe("keep me");
   expect(ops.getClipboard()).toEqual({ mode: "copy", ids: [recycle.id] });
-  // Cancel on a name clash leaves the file, its icon and the clipboard.
+  // Like XP, one file asks with Yes and No. No leaves the file, its icon
+  // and the clipboard.
   const clash = fs.createFile(fs.DESKTOP, "move.txt");
   await flushShell();
   const start = [icon(clash.id).style.left, icon(clash.id).style.top];
@@ -156,7 +157,7 @@ test("dropping desktop files on folders moves them and dropping on Recycle Bin r
   expect(icon(clash.id).style.visibility).toBe("hidden");
   [...s.document.querySelectorAll(".xp-dialog")]
     .at(-1)
-    .querySelector('[data-action="cancel"]')
+    .querySelector('[data-action="no"]')
     .click();
   await flushShell();
   await flushShell();

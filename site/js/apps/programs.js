@@ -259,11 +259,15 @@ const systemApplicationContext = () => ({
   wireProjectSettings,
 });
 
-const openSystemWindow = (shortcutId) => {
+// options.folderId opens an Explorer window on that folder instead of the
+// shortcut's own folder, as the first folder of its history. An open window
+// navigates to the folder.
+const openSystemWindow = (shortcutId, options = {}) => {
   const existing = openWindows.get(shortcutId);
   if (existing) {
     restoreWindow(shortcutId);
     focusWindow(shortcutId);
+    if (options.folderId) navigateExplorer(existing, options.folderId);
     return;
   }
 
@@ -275,7 +279,7 @@ const openSystemWindow = (shortcutId) => {
       .load()
       .then(() => {
         if (loggedIn && launchSession === sessionGeneration)
-          openSystemWindow(shortcutId);
+          openSystemWindow(shortcutId, options);
       })
       .catch((error) => {
         if (!loggedIn || launchSession !== sessionGeneration) return;
@@ -318,6 +322,9 @@ const openSystemWindow = (shortcutId) => {
   )}px`;
   document.getElementById("desktop").appendChild(el);
 
+  const firstFolderId = systemFolderShortcuts[shortcutId]
+    ? options.folderId || systemFolderShortcuts[shortcutId]()
+    : null;
   const win = {
     gameId: shortcutId,
     el,
@@ -328,12 +335,8 @@ const openSystemWindow = (shortcutId) => {
     prevRect: null,
     zIndex: 0,
     lastUsed: Date.now(),
-    currentFolderId: systemFolderShortcuts[shortcutId]
-      ? systemFolderShortcuts[shortcutId]()
-      : null,
-    history: systemFolderShortcuts[shortcutId]
-      ? [systemFolderShortcuts[shortcutId]()]
-      : [],
+    currentFolderId: firstFolderId,
+    history: firstFolderId ? [firstFolderId] : [],
     historyIndex: 0,
     maximizeBtn: el.querySelector(".maximize-btn"),
     favoriteBtn: null,

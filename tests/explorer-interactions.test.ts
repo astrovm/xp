@@ -226,6 +226,16 @@ test("search companion finds files from its form", async () => {
   kinds[0].click();
   const query = search.querySelector("#search-filename");
   query.value = "note";
+  // The Enter that ends an input method composition does not search.
+  query.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+    }),
+  );
+  await flushShell();
+  expect(search.textContent.includes("note.txt")).toBeFalse();
   h.key(query, "Enter");
   await flushShell();
   expect(search.textContent).toContain("note.txt");

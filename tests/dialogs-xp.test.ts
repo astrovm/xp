@@ -898,6 +898,8 @@ test("Save As and Open take patterns, paths and the file system's name rules, li
   const fs = s.window.VirtualFS;
   const sub = fs.createFolder(fs.MY_DOCUMENTS, "Sub");
   const inside = fs.createFile(sub.id, "inside.txt", { content: "" });
+  // Like XP, "*.*" also shows a file with no extension.
+  fs.createFile(sub.id, "noext", { content: "" });
   fs.createFile(fs.MY_DOCUMENTS, "notes.txt", { content: "" });
   fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
   fs.createFile(fs.MY_DOCUMENTS, "photo.bmp", { content: "" });
@@ -966,7 +968,7 @@ test("Save As and Open take patterns, paths and the file system's name rules, li
     submit(dialog, label, "sub\\*.*");
     await flushShell();
     expect(folderOf(dialog)).toBe("Sub");
-    expect(names(dialog)).toEqual(["inside.txt"]);
+    expect(names(dialog)).toEqual(["inside.txt", "noext"]);
     expect(box.value).toBe("*.*");
     // A new file type ends the pattern.
     const type = dialog.querySelector(".dlg-file-type");

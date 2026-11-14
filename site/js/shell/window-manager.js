@@ -24,7 +24,7 @@ const isMenuAccessKey = (event) =>
   event.altKey &&
   !event.ctrlKey &&
   !event.metaKey &&
-  /^\p{L}$/u.test(event.key);
+  /^\p{L}$/u.test(XPDialogs.accessKeyOf(event));
 // Call before a redraw that can remove or move the control with the keys.
 // Call the function it returns after the redraw. It gives the keys to the
 // same control again, or to its new copy, found with the selector from
@@ -2161,7 +2161,7 @@ const wireWindowControls = (win) => {
   win.el.addEventListener("keydown", (event) => {
     if (!isMenuAccessKey(event)) return;
     const button = menuButtons.find(
-      (item) => item.dataset.accessKey === event.key.toLowerCase(),
+      (item) => item.dataset.accessKey === XPDialogs.accessKeyOf(event),
     );
     if (!button) return;
     event.preventDefault();

@@ -101,7 +101,7 @@ const openAboutWindows = ({
     <div class="about-windows-copy">
       <p>Microsoft ® ${application}<br>Version 5.1 (Build 2600.xpsp.080413-2111 : Service Pack 3)<br>Copyright © 2007 Microsoft Corporation${otherStuff && `<br>${otherStuff}`}</p>
       <p>This product is licensed under the terms of the <a href="https://www.microsoft.com/useterms/" target="_blank" rel="noreferrer">End-User<br>License Agreement</a> to:</p>
-      <p class="about-windows-user">astro</p>
+      <p class="about-windows-user">${fs.USER_NAME}</p>
       <hr>
       <p>Physical memory available to Windows:&nbsp;&nbsp; 523,696 KB</p>
     </div>
@@ -618,7 +618,7 @@ const buildPlaces = () => {
   container.addEventListener("keydown", (event) => {
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const item = container.querySelector(
-      `[data-access-key="${event.key.toLowerCase()}"]`,
+      `[data-access-key="${CSS.escape(XPDialogs.accessKeyOf(event))}"]`,
     );
     if (!item) return;
     event.preventDefault();
@@ -931,7 +931,7 @@ const wireStartFlyoutKeyboard = (panel, parentButton) => {
       return;
     }
     const item = items.find(
-      (entry) => entry.dataset.accessKey === event.key.toLowerCase(),
+      (entry) => entry.dataset.accessKey === XPDialogs.accessKeyOf(event),
     );
     if (item) {
       event.preventDefault();
@@ -1199,10 +1199,10 @@ const openStartMenu = () => {
     edition.textContent = "Professional";
     user.replaceChildren("Windows XP ", edition);
   } else {
-    user.textContent = "astro";
+    user.textContent = fs.USER_NAME;
   }
   document.getElementById("log-off-button").lastChild.textContent = classic
-    ? " Log Off astro..."
+    ? ` Log Off ${fs.USER_NAME}...`
     : " Log Off";
   document.getElementById("turn-off-button").lastChild.textContent = classic
     ? " Turn Off Computer..."

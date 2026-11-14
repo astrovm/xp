@@ -293,7 +293,7 @@ const wireSearchCompanion = (win) => {
     .querySelector('[data-search-action="search"]')
     .addEventListener("click", render);
   query.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !XPDialogs.isComposingKey(event)) {
       event.preventDefault();
       render();
     }
@@ -549,9 +549,39 @@ const alertFileOperationError = (error) =>
   );
 
 // Explorer and the Desktop report a refused name the same way.
-const alertRenameError = (error) =>
+// The name that a rename box gives, like XP: spaces and periods at the end
+// go away. An empty name, or a device name such as "con" with no
+// extension, keeps the old name with no message: the result is null.
+const renameBoxName = (value) => {
+  const name = value.replace(/[.\s]+$/, "");
+  try {
+    fs.validateName(name);
+  } catch (error) {
+    if (
+      error.code === "name-required" ||
+      (error.code === "name-reserved" && !name.includes("."))
+    )
+      return null;
+  }
+  return name;
+};
+
+// XP's text for a name that a rename box cannot use. A name in use and a
+// device name with an extension, such as "con.txt", get the same text. It
+// names the item without its extension.
+const renameErrorText = (error, node) => {
+  const dot = node.type === "file" ? node.name.lastIndexOf(".") : -1;
+  const shown = dot > 0 ? node.name.slice(0, dot) : node.name;
+  if (error.code === "name-exists" || error.code === "name-reserved")
+    return `Cannot rename ${shown}: A file with the name you specified already exists. Specify a different file name.`;
+  if (error.code === "name-invalid")
+    return 'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |';
+  return error.message || "The file operation failed.";
+};
+
+const alertRenameError = (error, node) =>
   XPDialogs.alert(
-    error.message || "The file operation failed.",
+    renameErrorText(error, node),
     "Error Renaming File or Folder",
     "error",
   );
@@ -615,35 +645,60 @@ const confirmEmptyRecycleBin = () => {
   });
 };
 
-// XP's question for a name in use, with Yes, Yes to All, No and Cancel.
-// Each move, copy or import asks with its own function, so Yes to All
-// answers the rest of its questions. The answers are the ones that
-// pasteWithConflicts takes: "replace", "skip" or "cancel".
-const describeReplacedFile = (node) =>
-  `${XPDialogs.formatBytes(node.size).replace(/ \(.*\)$/, "")}\nmodified on ${new Date(
-    node.modified,
-  ).toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  })}, ${new Date(node.modified).toLocaleTimeString("en-US")}`;
-const createReplaceQuestion = () => {
+// XP's question for a name in use. Each move, copy, import or restore asks
+// with its own function, so Yes to All answers the rest of its questions.
+// The answers are the ones that pasteWithConflicts takes: "replace", "skip"
+// or "cancel".
+// Like XP, the size, then "modified: Today, November 14, 2026, 1:31:59 AM".
+// A day before today shows its weekday.
+const describeReplacedFile = (node) => {
+  const modified = new Date(node.modified);
+  const day =
+    modified.toDateString() === new Date().toDateString()
+      ? "Today"
+      : modified.toLocaleDateString("en-US", { weekday: "long" });
+  return `${XPDialogs.formatBytes(node.size).replace(/ \(.*\)$/, "")}\nmodified: ${day}, ${modified.toLocaleDateString(
+    "en-US",
+    { year: "numeric", month: "long", day: "numeric" },
+  )}, ${modified.toLocaleTimeString("en-US")}`;
+};
+// many is true when the operation has more than one item. Like XP, a file
+// question for one item has only Yes and No. A folder question, and the
+// questions about the items in that folder, have Yes, Yes to All, No and
+// Cancel.
+const createReplaceQuestion = (many) => {
   let replaceAll = false;
   return async ({ source, existing }) => {
     if (replaceAll) return "replace";
     const folder = existing.type === "folder";
+    if (folder) many = true;
     const answer = await XPDialogs.message({
       title: folder ? "Confirm Folder Replace" : "Confirm File Replace",
       text: folder
-        ? `This folder already contains a folder named '${existing.name}'.\n\nIf the files in the existing folder have the same name as files in the folder you are moving or copying, they will be replaced. Do you still want to move or copy the folder?`
+        ? `This folder already contains a folder named '${existing.name}'.\n\nIf the files in the existing folder have the same name as files in the folder you are moving or copying, they will be replaced.  Do you still want to move or copy the folder?`
         : `This folder already contains a file named '${existing.name}'.\n\nWould you like to replace the existing file\n\n${describeReplacedFile(existing)}\n\nwith this one?\n\n${describeReplacedFile(source)}`,
       icon: "warning",
-      buttons: XPDialogs.BUTTON_SETS.yesAllNoCancel,
+      buttons: many
+        ? XPDialogs.BUTTON_SETS.yesAllNoCancel
+        : XPDialogs.BUTTON_SETS.yesNo,
     });
     replaceAll = answer === "all";
     return { yes: "replace", all: "replace", no: "skip" }[answer] || "cancel";
   };
+};
+// Restore asks before it replaces an item, like XP, and reports a failed
+// restore itself.
+const restoreFromRecycleBin = async (ids) => {
+  try {
+    return await fileOps.restore(ids, createReplaceQuestion(ids.length > 1));
+  } catch (error) {
+    await XPDialogs.alert(
+      error.message || "The file operation failed.",
+      "Restore files",
+      "error",
+    );
+    return null;
+  }
 };
 // Every caller checks canPaste or fills the clipboard first. Pastes cannot
 // overlap: the conflict and progress dialogs are modal.
@@ -666,7 +721,7 @@ const pasteIntoFolder = async (destinationId, items = null) => {
   try {
     const result = await fileOps.pasteWithConflicts(
       destinationId,
-      createReplaceQuestion(),
+      createReplaceQuestion(source.ids.length > 1),
       {
         items,
         isCancelled: () => cancelled,
@@ -706,114 +761,70 @@ const readAllDirectoryEntries = (reader) =>
       }, reject);
     read();
   });
-const importFileEntry = (entry, destinationId, state) =>
-  new Promise((resolve, reject) =>
-    entry.file(async (file) => {
-      try {
-        if (state.cancelled) return resolve(false);
-        const content = await fileOps.readFileContent(file);
-        const existing = fs.findChild(destinationId, file.name);
-        let replaceId;
-        if (existing) {
-          if (existing.type !== "file")
-            throw fileOps.nameInUseError(file.name, existing, "copy");
-          const choice = await state.ask({
-            source: {
-              type: "file",
-              name: file.name,
-              size: file.size,
-              modified: file.lastModified,
-            },
-            existing,
-          });
-          if (choice === "cancel") state.cancelled = true;
-          if (choice !== "replace") return resolve(false);
-          replaceId = existing.id;
-        }
-        await fs.transaction(() => {
-          if (replaceId) fs.destroy(replaceId);
-          return fileOps.createFile(destinationId, file.name, {
-            content,
-            size: file.size,
-          });
-        });
-        state.completed = (state.completed || 0) + 1;
-        state.progress?.update(0, `Imported ${state.completed} item(s)...`);
-        resolve(true);
-      } catch (error) {
-        reject(error);
-      }
-    }, reject),
-  );
-// Callers check state.cancelled before importing each entry.
-// A folder joins the folder with its name, like XP, after a Yes.
-const importDirectoryEntry = async (entry, destinationId, state) => {
-  let folder = null;
-  try {
-    const existing = fs.findChild(destinationId, entry.name);
-    if (existing) {
-      if (existing.type !== "folder")
-        throw fileOps.nameInUseError(entry.name, existing, "copy");
-      const choice = await state.ask({
-        source: { type: "folder", name: entry.name },
-        existing,
-      });
-      if (choice === "cancel") state.cancelled = true;
-      if (choice !== "replace") return;
-    } else folder = await fileOps.createFolder(destinationId, entry.name);
-    const target = folder || existing;
-    const entries = await readAllDirectoryEntries(entry.createReader());
-    for (const child of entries) {
-      if (state.cancelled) throw new Error("Directory import cancelled");
-      if (child.isDirectory)
-        await importDirectoryEntry(child, target.id, state);
-      else if (child.isFile) await importFileEntry(child, target.id, state);
+// A dropped file or folder as an item for fileOps.importWithConflicts.
+// Only the folder tree is read here; the files are read after the
+// questions.
+const importItemFromEntry = async (entry) => {
+  if (entry.isDirectory) {
+    const children = [];
+    for (const child of await readAllDirectoryEntries(entry.createReader())) {
+      const item = await importItemFromEntry(child);
+      if (item) children.push(item);
     }
-  } catch (error) {
-    // A failed child has already removed its own folder, so a folder that
-    // this import made is still present. A folder that was there stays.
-    if (folder) await fs.destroy(folder.id);
-    if (error.message === "Directory import cancelled") return;
-    throw error;
+    return { type: "folder", name: entry.name, children };
   }
+  if (!entry.isFile) return null;
+  const file = await new Promise((resolve, reject) =>
+    entry.file(resolve, reject),
+  );
+  return fileOps.importItemsFromFiles([file])[0];
 };
-// Only writable folders are wired as drop targets (see wireFolderDropTarget).
-const importDroppedFiles = async (destinationId, dataTransfer) => {
-  const state = {
-    cancelled: false,
-    completed: 0,
-    ask: createReplaceQuestion(),
-  };
-  state.progress = XPDialogs.progress({
-    title: "Importing...",
-    text: "Preparing dropped files...",
+// Imports files from the user's computer into a folder, like a copy: every
+// question comes first, so Cancel imports nothing. Errors go to the caller.
+const importIntoFolder = async (destinationId, readItems) => {
+  let cancelled = false;
+  const progress = XPDialogs.progress({
+    title: "Copying...",
+    text: "Preparing to copy...",
     cancellable: true,
     onCancel: () => {
-      state.cancelled = true;
+      cancelled = true;
     },
   });
   try {
+    const items = await readItems();
+    return await fileOps.importWithConflicts(
+      destinationId,
+      items,
+      createReplaceQuestion(items.length > 1),
+      {
+        isCancelled: () => cancelled,
+        onProgress: ({ completed, total }) =>
+          progress.update(
+            completed / total,
+            `Copying ${completed} of ${total}...`,
+          ),
+      },
+    );
+  } finally {
+    progress.close();
+  }
+};
+// Only writable folders are wired as drop targets (see wireFolderDropTarget).
+const importDroppedFiles = (destinationId, dataTransfer) =>
+  importIntoFolder(destinationId, async () => {
     const entries = [...(dataTransfer.items || [])]
       .map((item) => item.webkitGetAsEntry?.())
       .filter(Boolean);
-    if (entries.length) {
-      for (const entry of entries) {
-        if (state.cancelled) break;
-        if (entry.isDirectory)
-          await importDirectoryEntry(entry, destinationId, state);
-        else if (entry.isFile)
-          await importFileEntry(entry, destinationId, state);
-      }
-      return;
+    if (!entries.length)
+      return fileOps.importItemsFromFiles(dataTransfer.files || []);
+    const items = [];
+    for (const entry of entries) {
+      const item = await importItemFromEntry(entry);
+      if (item) items.push(item);
     }
-    for (const file of [...(dataTransfer.files || [])]) {
-      if (state.cancelled) break;
-      await importFileEntry({ file: (ok) => ok(file) }, destinationId, state);
-    }
-  } finally {
-    state.progress.close();
-  }
-};
+    return items;
+  });
 // The items an Explorer drag carries. A folder never shows as a drop target
 // for itself or for a folder inside it. A drop, a dragend that reaches the
 // document, or the next dragstart ends the list.
@@ -892,7 +903,7 @@ const systemFolderShortcuts = {
 };
 
 // XP shows the All Users documents folder as "Shared Documents", and lists
-// the user's documents in My Computer as "astro's Documents".
+// the user's documents in My Computer as "<user name>'s Documents".
 const explorerDisplayName = (node) =>
   node.id === fs.SHARED_DOCUMENTS ? "Shared Documents" : node.name;
 
@@ -1171,21 +1182,23 @@ const startExplorerRename = (win, nodeId) => {
     finished = true;
     input.replaceWith(label);
     if (refocus) item.focus();
-    if (!commit || input.value === node.name) return;
+    if (!commit) return;
+    const name = renameBoxName(input.value);
+    if (name === null || name === node.name) return;
     try {
-      await fileOps.rename(nodeId, input.value);
+      await fileOps.rename(nodeId, name);
     } catch (error) {
       // A window that is closing drops the rename and shows nothing.
       if (win.closing) return;
       // Like XP, the error shows, and the box opens again with the name.
-      await alertRenameError(error);
+      await alertRenameError(error, node);
       // A window that closed, or an item that went away, gets no box.
       const shown = win.el.querySelector(
         `.explorer-item[data-node-id="${CSS.escape(nodeId)}"]`,
       );
       if (win.closing || !shown) return;
       const again = startExplorerRename(win, nodeId);
-      again.value = input.value;
+      // Like XP, the box opens again with the old name, all selected.
       again.select();
     }
   };
@@ -1195,6 +1208,8 @@ const startExplorerRename = (win, nodeId) => {
   input.addEventListener("keydown", (event) => {
     if (isShellWindowKey(event) || isMenuAccessKey(event)) return;
     event.stopPropagation();
+    // The keys of an input method stay in the box.
+    if (XPDialogs.isComposingKey(event)) return;
     if (event.key !== "Enter" && event.key !== "Escape") return;
     // The key ends here, so it cannot also press a button in an error box.
     event.preventDefault();
@@ -1270,28 +1285,17 @@ const renderExplorerTaskPane = (win) => {
         "RecyclerFull.png",
         confirmEmptyRecycleBin,
       );
-    const restore = async (ids) => {
-      try {
-        await fileOps.restore(ids);
-      } catch (error) {
-        await XPDialogs.alert(
-          error.message || "The file operation failed.",
-          "Restore files",
-          "error",
-        );
-      }
-    };
     if (selected.length)
       addTask(
         selected.length === 1
           ? "Restore this item"
           : "Restore the selected items",
         "RecyclerEmpty.png",
-        () => restore(selected),
+        () => restoreFromRecycleBin(selected),
       );
     else if (binItems.length)
       addTask("Restore all items", "RecyclerEmpty.png", () =>
-        restore(binItems),
+        restoreFromRecycleBin(binItems),
       );
     section.hidden = !body.children.length;
     return giveKeysBack(list);
@@ -1578,7 +1582,7 @@ const openExplorerContextMenu = (win, clientX, clientY) => {
       if (command === "open") openExplorerNode(win, fs.getNode(selected[0]));
       if (command === "cut") fileOps.cut(selected);
       if (command === "copy") fileOps.copy(selected);
-      if (command === "restore") await fileOps.restore(selected);
+      if (command === "restore") await restoreFromRecycleBin(selected);
       if (command === "properties") XPDialogs.properties(selected[0]);
       if (command === "rename") startExplorerRename(win, selected[0]);
       if (command === "delete") await confirmRecycleDelete(selected);
@@ -2035,16 +2039,15 @@ const resetAstroXp = async () => {
   await syncGameFiles();
 };
 
-fs.registerFolderHandler((folder) => {
-  const show = () => {
-    const win = openWindows.get("__my-documents");
-    if (win) navigateExplorer(win, folder.id);
-  };
-  // The first Explorer window waits for its code to load.
-  const opening = openSystemWindow("__my-documents");
-  if (opening) opening.then(show);
-  else show();
-});
+// A new Explorer window opens on the folder itself, so Back starts off,
+// like XP. The first one waits for its code to load.
+// Explorer never browses into a folder in the Recycle Bin.
+fs.registerFolderHandler((folder) =>
+  openSystemWindow(
+    "__my-documents",
+    isDeletedNode(folder.id) ? {} : { folderId: folder.id },
+  ),
+);
 
 // Keep open explorer windows and desktop shortcuts in sync with filesystem changes.
 const setupExplorerFilesystemSync = () =>

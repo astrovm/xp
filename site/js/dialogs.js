@@ -109,6 +109,22 @@
     return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
   };
 
+  // The letter of an access key, such as F in Alt+F. On a Mac, Option
+  // changes the character (Option+F types "ƒ", and Option+E starts an
+  // accent), so a key that is not a plain letter or digit gives the letter
+  // of its place on the keyboard.
+  const accessKeyOf = (event) => {
+    const key = event.key.toLowerCase();
+    if (/^[a-z0-9]$/.test(key)) return key;
+    const place = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
+    return place ? (place[1] ?? place[2]).toLowerCase() : key;
+  };
+
+  // A key that an input method takes, such as the Enter that ends a
+  // composition. A text box never acts on it.
+  const isComposingKey = (event) =>
+    event.isComposing === true || event.keyCode === 229;
+
   const hasDOM = typeof document !== "undefined";
   const getFS = () => globalThis.VirtualFS;
 
@@ -118,6 +134,8 @@
       ICONS,
       BUTTON_SETS,
       parseAccessKey,
+      accessKeyOf,
+      isComposingKey,
       describeFileType,
       formatBytes,
       formatDetailsDate,
@@ -208,11 +226,14 @@
 
   // A file name box takes no character that Windows refuses in a name.
   // Like XP's rename box, it drops the character and shows a balloon. Typed,
-  // pasted and dropped text never gets in. Text from an input method gets
-  // in while it is composed, and the box removes the bad characters when
-  // the composition ends.
+  // pasted and dropped text never gets in. A line break in pasted text goes
+  // away with no balloon, as in any one-line text box. Text from an input
+  // method gets in while it is composed, and the box removes the bad
+  // characters when the composition ends. Undo and Redo skip each state
+  // with a bad character, so they never bring one back.
   const guardFileName = (input) => {
     const invalid = new RegExp(fs().INVALID_NAME_CHARACTERS.source, "g");
+    const hasInvalid = (text) => new RegExp(invalid.source).test(text);
     const warn = () =>
       showBalloon(input, [
         "A file name cannot contain any of the following characters:",
@@ -222,17 +243,17 @@
       if (event.isComposing) return;
       const text =
         event.data || event.dataTransfer?.getData("text/plain") || "";
-      const clean = text.replace(invalid, "");
-      if (clean === text) return;
+      const oneLine = text.replace(/[\r\n]/g, "");
+      if (!hasInvalid(oneLine)) return;
       event.preventDefault();
-      if (clean)
-        replaceText(input, input.selectionStart, input.selectionEnd, clean);
+      const kept = oneLine.replace(invalid, "");
+      if (kept)
+        replaceText(input, input.selectionStart, input.selectionEnd, kept);
       warn();
     });
-    input.addEventListener("compositionend", () => {
+    const clean = () => {
       const { value, selectionStart } = input;
       const bad = [...value.matchAll(invalid)];
-      if (!bad.length) return;
       const start = bad[0].index;
       const end = bad.at(-1).index + 1;
       const caret = value.slice(0, selectionStart).replace(invalid, "").length;
@@ -243,7 +264,24 @@
         value.slice(start, end).replace(invalid, ""),
       );
       input.setSelectionRange(caret, caret);
+    };
+    input.addEventListener("compositionend", () => {
+      if (!hasInvalid(input.value)) return;
+      clean();
       warn();
+    });
+    input.addEventListener("input", (event) => {
+      const step = { historyUndo: "undo", historyRedo: "redo" }[
+        event.inputType
+      ];
+      if (!step || !hasInvalid(input.value)) return;
+      // The state came from an input method before its bad characters
+      // went away. The next step in the same direction is the state
+      // before or after it. With no such step, the characters go away
+      // here.
+      const before = input.value;
+      document.execCommand?.(step);
+      if (input.value === before) clean();
     });
   };
 
@@ -404,6 +442,8 @@
       },
       cancel: onCancel || (() => dialog.close(null)),
       onKeydown(e) {
+        // The keys of an input method stay in its text box.
+        if (isComposingKey(e)) return;
         // An open drop-down list or menu in the dialog takes keys first.
         if (dialog.popupKeydown?.(e)) return;
         if (
@@ -472,12 +512,13 @@
 
     // Alt+key always works; the bare key works outside text fields.
     const handleAccessKey = (e) => {
-      if (e.ctrlKey || e.metaKey || e.key.length !== 1) return;
+      const letter = accessKeyOf(e);
+      if (e.ctrlKey || e.metaKey || letter.length !== 1) return;
       const inTextField = /^(INPUT|TEXTAREA|SELECT)$/.test(
         document.activeElement?.tagName,
       );
       if (!e.altKey && inTextField) return;
-      const button = dialog.accessKeys.get(e.key.toLowerCase());
+      const button = dialog.accessKeys.get(letter);
       if (button && !button.disabled) {
         e.preventDefault();
         button.click();
@@ -1038,15 +1079,19 @@
         if (row) choose(row);
         return true;
       }
+      // A menu matches its access keys by their place on the keyboard,
+      // and a list matches the typed character.
+      const letter = chooseLetter
+        ? accessKeyOf(event)
+        : String(event.key).toLowerCase();
       if (
         !letterOf ||
-        event.key.length !== 1 ||
+        letter.length !== 1 ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey
       )
         return false;
-      const letter = event.key.toLowerCase();
       const index = all
         .map((row, offset) => (getIndex() + 1 + offset) % all.length)
         .find((rowIndex) => letterOf(all[rowIndex]) === letter);
@@ -1610,7 +1655,9 @@
       // The folder that the typed folders name, from the open folder, like
       // XP: "Sub", "..", "C:". Null when one of them is not a folder.
       // A path starts in the open folder. A drive such as "C:", or a "\"
-      // at the start, starts it at the top of the drive.
+      // at the start, starts it at the top of the drive. Like Windows, ".."
+      // stops at the top of a drive, and goes from My Computer to the
+      // Desktop.
       const folderOfPath = (segments) => {
         let id = currentFolderId;
         for (const [index, segment] of segments.entries()) {
@@ -1619,7 +1666,9 @@
           const node = top
             ? fs().getNode(fs().resolvePath(`${segment || "C:"}\\`))
             : segment === ".."
-              ? fs().getParent(id) || fs().getNode(id)
+              ? fs().getNode(id).parent === fs().MY_COMPUTER
+                ? fs().getNode(id)
+                : fs().getParent(id) || fs().getNode(fs().DESKTOP)
               : findChildByName(id, segment);
           if (node?.type !== "folder") return null;
           id = node.id;
@@ -1649,14 +1698,18 @@
           warn(`${typed}\nPath does not exist.\nCheck the path and try again.`);
           return;
         }
-        // A name with * or ? shows only the files that match it.
+        // A name with * or ? shows only the files that match it. Like the
+        // XP dialog, "?" is exactly one character, and a ".*" at the end
+        // also takes a name with no extension, so "*.*" shows all files.
         const pattern = last.replace(/[*?]/g, "");
         if (pattern !== last && !fs().INVALID_NAME_CHARACTERS.test(pattern)) {
+          const anyExtension = last.endsWith(".*");
+          const source = (anyExtension ? last.slice(0, -2) : last)
+            .replace(/[.+^${}()[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*")
+            .replace(/\?/g, ".");
           namePattern = new RegExp(
-            `^${last
-              .replace(/[.+^${}()[\]\\]/g, "\\$&")
-              .replace(/\*/g, ".*")
-              .replace(/\?/g, ".")}$`,
+            `^${source}${anyExtension ? "(\\..*)?" : ""}$`,
             "i",
           );
           nameInput.value = last;
@@ -1877,6 +1930,15 @@
         withDefaultExtension(name, defaultExtension, activeFilter),
       onAccept: ({ folderId, name }) => {
         if (!name) return false;
+        // Like XP, My Computer takes no files. The dialog stays open for
+        // another folder. The dialog cannot open the Recycle Bin.
+        if (folderId === fs().MY_COMPUTER)
+          return message({
+            title: "Save As",
+            text: "You cannot save in the folder you specified. Please choose another location.",
+            icon: "warning",
+            buttons: BUTTON_SETS.ok,
+          }).then(() => false);
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,
@@ -1898,6 +1960,8 @@
     ICONS,
     BUTTON_SETS,
     parseAccessKey,
+    accessKeyOf,
+    isComposingKey,
     fillThumbnail,
     describeFileType,
     describeNodeType,

@@ -36,10 +36,15 @@ async function setup() {
     });
     el.dispatchEvent(event);
   };
-  const file = (name, text = "contents", type = "text/plain") => ({
+  const file = (
+    name,
+    text = "contents",
+    type = "text/plain",
+    lastModified,
+  ) => ({
     isFile: true,
     name,
-    file: (ok) => ok(new s.window.File([text], name, { type })),
+    file: (ok) => ok(new s.window.File([text], name, { type, lastModified })),
   });
   const folder = (name, batches) => ({
     isDirectory: true,
@@ -230,4 +235,71 @@ test("invalid internal drag data reports an error without changing destination",
       ?.textContent.includes("Invalid dropped item list"),
   );
   expect(h.fs.getChildren(h.target.id)).toEqual([]);
+});
+// The open question about a name in use.
+const question = (h) =>
+  [...h.s.document.querySelectorAll(".xp-dialog")].find((dialog) =>
+    dialog.textContent.includes("already contains"),
+  );
+// Like XP, a drop asks every question before it changes anything, so
+// Cancel on a later question leaves out the earlier files too.
+test("Cancel on a later question imports none of the dropped files", async () => {
+  const h = await setup();
+  h.fs.createFile(h.target.id, "duplicate.txt", { content: "old" });
+  h.drop([h.file("first.txt"), h.file("duplicate.txt", "new")]);
+  await h.choose("cancel");
+  await settle(() => !h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.getChildren(h.target.id).map((node) => node.name)).toEqual([
+    "duplicate.txt",
+  ]);
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("old");
+});
+// The old file can get a new name while the question is open. Yes then
+// keeps that file, and the dropped file takes the free name.
+test("Yes never destroys a file that left the name while the question was open", async () => {
+  const h = await setup();
+  const old = h.fs.createFile(h.target.id, "duplicate.txt", {
+    content: "old",
+  });
+  h.drop([h.file("duplicate.txt", "new")]);
+  await settle(() => question(h));
+  h.fs.rename(old.id, "kept.txt");
+  await h.choose("yes");
+  await settle(() => h.fs.findChild(h.target.id, "duplicate.txt"));
+  expect(h.fs.getNode(old.id)).toMatchObject({
+    name: "kept.txt",
+    content: "old",
+  });
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("new");
+});
+// Like XP, one file asks Confirm File Replace with only Yes and No.
+test("one dropped file asks Confirm File Replace with Yes and No", async () => {
+  const h = await setup();
+  h.fs.createFile(h.target.id, "duplicate.txt", { content: "old" });
+  // The dropped file was saved on Friday, January 2, 2026.
+  h.drop([
+    h.file(
+      "duplicate.txt",
+      "new",
+      "text/plain",
+      new Date(2026, 0, 2, 13, 5, 9).getTime(),
+    ),
+  ]);
+  await settle(() => question(h));
+  const dialog = question(h);
+  expect(dialog.textContent).toContain(
+    "with this one?\n\n3 bytes\nmodified: Friday, January 2, 2026, 1:05:09 PM",
+  );
+  expect(dialog.querySelector(".title-text").textContent).toBe(
+    "Confirm File Replace",
+  );
+  expect(
+    [...dialog.querySelectorAll("button[data-action]")].map(
+      (button) => button.textContent,
+    ),
+  ).toEqual(["Yes", "No"]);
+  expect(dialog.textContent).toContain("3 bytes\nmodified: Today, ");
+  await h.choose("no");
+  await settle(() => !h.s.document.querySelector(".xp-dialog"));
+  expect(h.fs.findChild(h.target.id, "duplicate.txt").content).toBe("old");
 });

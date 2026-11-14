@@ -103,11 +103,17 @@ describe("virtual filesystem", () => {
       expect(
         () => fs.validateName(name),
         `rejects ${JSON.stringify(name)}`,
-      ).toThrow(/VirtualFS:/);
+      ).toThrow(
+        /You must type a file name|cannot contain|file name is invalid|reserved for use by Windows/,
+      );
+      expect(
+        () => fs.validateName(name),
+        `rejects ${JSON.stringify(name)} without a module name`,
+      ).not.toThrow(/VirtualFS|FileOperations/);
     });
 
     expect(() => fs.createFolder(fs.MY_DOCUMENTS, "invalid?folder")).toThrow(
-      /invalid characters/,
+      /cannot contain any of the following characters/,
     );
   });
 
@@ -149,7 +155,9 @@ describe("virtual filesystem", () => {
 
     fs.rename(file.id, "todo.txt");
     expect(fs.getNode(file.id).name).toBe("todo.txt");
-    expect(() => fs.rename(file.id, "AUX.txt")).toThrow(/reserved device name/);
+    expect(() => fs.rename(file.id, "AUX.txt")).toThrow(
+      /reserved for use by Windows/,
+    );
     expect(
       fs.getNode(file.id).name,
       "invalid rename leaves node unchanged",
@@ -196,9 +204,15 @@ describe("virtual filesystem", () => {
     const { folder } = createTestFolder();
     const subFolder = fs.createFolder(folder.id, "Sub");
 
-    expect(() => fs.move(folder.id, subFolder.id)).toThrow(/into itself/);
-    expect(() => fs.move(folder.id, folder.id)).toThrow(/into itself/);
-    expect(() => fs.copy(folder.id, subFolder.id)).toThrow(/into itself/);
+    expect(() => fs.move(folder.id, subFolder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
+    expect(() => fs.move(folder.id, folder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
+    expect(() => fs.copy(folder.id, subFolder.id)).toThrow(
+      /subfolder of the source folder/,
+    );
     fs.move(subFolder.id, fs.MY_PICTURES);
     expect(fs.getNode(subFolder.id).parent).toBe(fs.MY_PICTURES);
   });
@@ -206,11 +220,11 @@ describe("virtual filesystem", () => {
   test("denies changes to protected system items", () => {
     const { folder } = createTestFolder();
 
-    expect(() => fs.remove(fs.MY_DOCUMENTS)).toThrow(/access is denied/);
-    expect(() => fs.destroy(fs.DESKTOP)).toThrow(/access is denied/);
-    expect(() => fs.rename(fs.DRIVE_C, "X")).toThrow(/access is denied/);
+    expect(() => fs.remove(fs.MY_DOCUMENTS)).toThrow(/Access is denied/);
+    expect(() => fs.destroy(fs.DESKTOP)).toThrow(/Access is denied/);
+    expect(() => fs.rename(fs.DRIVE_C, "X")).toThrow(/Access is denied/);
     expect(() => fs.move(fs.MY_PICTURES, folder.id)).toThrow(
-      /access is denied/,
+      /Access is denied/,
     );
     expect(fs.isProtected(fs.RECYCLE_BIN)).toBeTruthy();
   });
@@ -478,7 +492,7 @@ describe("virtual filesystem edge cases", () => {
     expect(fs.resolvePath("\\\\")).toBeNull();
     expect(fs.resolvePath("Recycle Bin")).toBe(fs.RECYCLE_BIN);
     expect(() => fs.createFolder(fs.DESKTOP, null)).toThrow(
-      "a name is required",
+      "You must type a file name.",
     );
     expect(fs.createFolder(fs.DESKTOP, 2026).name).toBe("2026");
     expect(fs.createFile(fs.DESKTOP, "README").ext).toBe("");
@@ -537,12 +551,14 @@ describe("virtual filesystem edge cases", () => {
     installMemoryStorage();
     const fs = loadFilesystem();
     const file = fs.createFile(fs.DESKTOP, "note.txt");
-    expect(() => fs.rename("missing", "x")).toThrow('item "missing" not found');
+    expect(() => fs.rename("missing", "x")).toThrow(
+      "Cannot find the file or folder.",
+    );
     expect(() => fs.createFile(file.id, "child.txt")).toThrow(
-      "is not a folder",
+      "is not a folder.",
     );
     expect(() => fs.restore(file.id)).toThrow("Only items in the Recycle Bin");
-    expect(() => fs.setContent(fs.DESKTOP, "text")).toThrow("is not a file");
+    expect(() => fs.setContent(fs.DESKTOP, "text")).toThrow("is not a file.");
     expect(fs.getContent(fs.DESKTOP)).toBeNull();
     expect(fs.move(file.id, fs.DESKTOP)).toBe(fs.getNode(file.id));
     expect(fs.destroy("missing")).toBeUndefined();

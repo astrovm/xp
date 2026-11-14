@@ -2,7 +2,7 @@ import { defineApplication } from "../core/application.js";
 import { wireMenuBar } from "../core/menu-bar.js";
 import { applicationMetadata } from "./metadata.js";
 
-const USER = "astro";
+const USER = globalThis.VirtualFS.USER_NAME;
 // Full paths, so the build can fingerprint them.
 const TRAY_ICONS = [
   "assets/xp/task-manager/tray-0.png",

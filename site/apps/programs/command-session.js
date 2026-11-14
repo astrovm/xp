@@ -31,17 +31,28 @@ const formatDate = (timestamp) => {
   return `${part(date.getMonth() + 1)}/${part(date.getDate())}/${date.getFullYear()}  ${part(hour)}:${part(date.getMinutes())} ${suffix}`;
 };
 
-const displaySize = (size) => Number(size || 0).toLocaleString("en-US");
-
 // A name matches a pattern with * and ?, like cmd.exe. Case does not count.
-const matchesPattern = (name, pattern) =>
-  new RegExp(
-    `^${pattern
-      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/\?/g, ".")}$`,
-    "i",
-  ).test(name);
+// cmd.exe adds DOS rules: "?" at the end of a name part also matches no
+// character, so "note?.txt" matches "note.txt". A "." before only
+// wildcards also matches the end of the name, so "*.*" matches "noext". A
+// "*" before a "." stops at the last period of the name.
+const wildcardRegExp = (pattern) => {
+  let source = "";
+  const characters = [...pattern];
+  for (const [index, character] of characters.entries()) {
+    const rest = characters.slice(index + 1).join("");
+    if (character === "*")
+      source += rest.startsWith(".") ? "(?:[^.]*|.*(?=\\.[^.]*$))" : ".*";
+    else if (character === "?")
+      source += /^\?*(?:\.|$)/.test(rest) ? "[^.]?" : ".";
+    else if (character === "." && /^[*?]*$/.test(rest)) source += "(?:\\.|$)";
+    else source += character.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`, "i");
+};
+export const matchesPattern = (name, pattern) =>
+  wildcardRegExp(pattern).test(name);
+const hasWildcards = (value) => /[*?]/.test(value);
 
 // The new name that REN makes from a name and a template with * and ?,
 // like cmd.exe: "*.bak" makes "notes.txt" into "notes.bak", and "???.x"
@@ -81,29 +92,103 @@ const renameByTemplate = (name, template) => {
 };
 
 const errorText = (error) =>
-  error instanceof Error
-    ? error.message.replace(/^(?:VirtualFS|FileOperations):\s*/, "")
-    : String(error);
+  error instanceof Error ? error.message : String(error);
+
+const SYNTAX_ERROR = "The syntax of the command is incorrect.";
+const NOT_FOUND = "The system cannot find the file specified.";
+const PATH_NOT_FOUND = "The system cannot find the path specified.";
+const BAD_NAME =
+  "The filename, directory name, or volume label syntax is incorrect.";
+const DUPLICATE_NAME =
+  "A duplicate file name exists, or the file\ncannot be found.";
+const ACCESS_DENIED = "Access is denied.";
+const FREE_BYTES = 5952212992;
+const SERIAL_NUMBERS = { C: "B836-2A76", D: "4C1F-90E3", F: "2E7A-15B8" };
+const COMPUTER_NAME = "XP";
+const SCREEN_WIDTH = 80;
+
+const isFile = (node) => node?.type === "file";
+
+// NTFS keeps names in the order of their uppercase text, and cmd.exe
+// works on the files in that order.
+const byName = (left, right) => {
+  const a = left.name.toUpperCase();
+  const b = right.name.toUpperCase();
+  return Number(a > b) - Number(a < b);
+};
+const filesMatching = (children, pattern) =>
+  children
+    .filter((child) => isFile(child) && matchesPattern(child.name, pattern))
+    .sort(byName);
+
+// The 8.3 name of a long name, like XP makes it: "Documents and Settings"
+// becomes "DOCUME~1". A name that is already a short name stays as it is.
+const shortName = (name) => {
+  const dot = name.lastIndexOf(".");
+  const base = dot > 0 ? name.slice(0, dot) : name;
+  const extension = dot > 0 ? name.slice(dot + 1) : "";
+  const allowed = /^[^\s.+,;=[\]]+$/;
+  if (
+    base.length <= 8 &&
+    extension.length <= 3 &&
+    allowed.test(base) &&
+    (!extension || allowed.test(extension))
+  )
+    return name;
+  const clean = (value) => value.toUpperCase().replace(/[\s.+,;=[\]]/g, "");
+  const shortBase = `${clean(base).slice(0, 6)}~1`;
+  const shortExtension = clean(extension).slice(0, 3);
+  return shortExtension ? `${shortBase}.${shortExtension}` : shortBase;
+};
+
+// A file saved by an old version can have no size. DIR shows it as 0.
+const sizeOf = (node) => node.size || 0;
+
+const groupDigits = (value, separators) =>
+  separators ? Number(value).toLocaleString("en-US") : String(Number(value));
+
+// A text for each choice, such as "y" or "n", ends a question. Any other
+// answer asks the question again, like cmd.exe.
+function* ask(text, choices) {
+  for (;;) {
+    const reply = yield text;
+    const choice = String(reply).trim()[0]?.toLowerCase();
+    if (choice && choices.includes(choice)) return choice;
+  }
+}
 
 export class CommandSession {
   constructor(context) {
     this.context = context;
     this.fs = context.fs;
     this.cwd = this.fs.USER_PROFILE;
+    // The profile folder and the user name come from the file system, so
+    // the prompt and the variables always show the real user.
+    const profile = this.fs.getPath(this.fs.USER_PROFILE);
+    const userName = this.fs.getNode(this.fs.USER_PROFILE).name;
+    // The owner that DIR /Q shows. SET never changes it.
+    this.userName = userName;
+    const shortProfile = profile
+      .split("\\")
+      .map((part, index) => (index ? shortName(part) : part))
+      .join("\\");
+    const temp = `${shortProfile}\\LOCALS~1\\Temp`;
     this.environment = new Map([
+      ["COMPUTERNAME", COMPUTER_NAME],
       ["COMSPEC", DEFAULT_TITLE],
       ["HOMEDRIVE", "C:"],
-      ["HOMEPATH", "\\Documents and Settings\\Administrator"],
+      ["HOMEPATH", profile.replace(/^[A-Z]:/i, "")],
       ["OS", "Windows_NT"],
       ["PATH", "C:\\WINDOWS\\system32;C:\\WINDOWS"],
       ["PATHEXT", ".COM;.EXE;.BAT;.CMD"],
       ["PROMPT", "$P$G"],
       ["SYSTEMDRIVE", "C:"],
       ["SYSTEMROOT", "C:\\WINDOWS"],
-      ["TEMP", "C:\\DOCUME~1\\ADMINI~1\\LOCALS~1\\Temp"],
-      ["TMP", "C:\\DOCUME~1\\ADMINI~1\\LOCALS~1\\Temp"],
-      ["USERNAME", "Administrator"],
-      ["USERPROFILE", "C:\\Documents and Settings\\Administrator"],
+      ["TEMP", temp],
+      ["TMP", temp],
+      ["USERDOMAIN", COMPUTER_NAME],
+      ["USERNAME", userName],
+      ["USERPROFILE", profile],
       ["WINDIR", "C:\\WINDOWS"],
     ]);
   }
@@ -113,14 +198,13 @@ export class CommandSession {
   }
 
   displayPath(id = this.cwd) {
-    const path = this.fs.getPath(id) || "C:\\";
-    if (id === this.fs.USER_PROFILE) {
-      return "C:\\Documents and Settings\\Administrator";
-    }
-    const profilePath = this.fs.getPath(this.fs.USER_PROFILE);
-    return profilePath && path.startsWith(profilePath)
-      ? `C:\\Documents and Settings\\Administrator${path.slice(profilePath.length)}`
-      : path;
+    return this.fs.getPath(id) || "C:\\";
+  }
+
+  // The full path of a name in a folder, such as "C:\t\a.txt".
+  joinPath(folderId, name) {
+    const base = this.displayPath(folderId);
+    return `${base}${base.endsWith("\\") ? "" : "\\"}${name}`;
   }
 
   // A question, such as "Overwrite ...? (Yes/No/All): ", takes the place
@@ -134,6 +218,8 @@ export class CommandSession {
     if (!value || value === ".") return this.cwd;
     value = value.replaceAll("/", "\\");
     const driveMatch = value.match(/^([cdf]):(?:\\|$)/i);
+    // A drive that does not exist has no path.
+    if (!driveMatch && /^[a-z]:/i.test(value)) return null;
     let current = driveMatch
       ? {
           c: this.fs.DRIVE_C,
@@ -187,12 +273,14 @@ export class CommandSession {
   }
 
   executeInTransaction(rawLine) {
-    if (this.question) return this.question.answer(rawLine.trim());
-    const line = this.expandEnvironment(rawLine).trim();
-    if (!line) return { output: "" };
-    const tokens = tokenize(line);
-    const command = tokens.shift().toLowerCase();
     try {
+      // An answer runs in this try too, so an error that it meets shows
+      // as a message, like the error of a command.
+      if (this.question) return this.question.answer(rawLine);
+      const line = this.expandEnvironment(rawLine).trim();
+      if (!line) return { output: "" };
+      const tokens = tokenize(line);
+      const command = tokens.shift().toLowerCase();
       if (/^[cdf]:$/i.test(command)) return this.changeDrive(command);
       const method = this[`command_${command}`];
       if (method) return method.call(this, tokens, line);
@@ -201,8 +289,309 @@ export class CommandSession {
         output: `'${command}' is not recognized as an internal or external command,\noperable program or batch file.`,
       };
     } catch (error) {
-      return { output: errorText(error) };
+      this.question = null;
+      // A name that Windows refuses gets the text of cmd.exe.
+      return {
+        output: /^name-(?:required|invalid|reserved)$/.test(error?.code)
+          ? BAD_NAME
+          : errorText(error),
+      };
     }
+  }
+
+  // A job is a generator that writes lines to `out` and yields the text of
+  // a question. The next line that the user types answers the question,
+  // and the job goes on from there.
+  runJob(job, out, reply) {
+    out.length = 0;
+    this.question = null;
+    try {
+      const step = reply === undefined ? job.next() : job.next(reply);
+      if (!step.done)
+        this.question = {
+          text: step.value,
+          answer: (value) => this.runJob(job, out, value),
+        };
+    } catch (error) {
+      out.push(errorText(error));
+    }
+    return { output: out.join("\n") };
+  }
+
+  // The folder and the name part of a path, as typed: "d\*.txt" gives the
+  // folder "d" and the name "*.txt".
+  splitPath(path) {
+    const value = path.replaceAll("/", "\\");
+    const slash = value.lastIndexOf("\\");
+    const colon = slash < 0 ? value.indexOf(":") : -1;
+    const cut = Math.max(slash, colon);
+    const folderText = value.slice(0, cut + 1);
+    const folderId = !folderText
+      ? this.cwd
+      : this.resolve(
+          /^[A-Z]:$|^[A-Z]:\\$|^\\$/i.test(folderText)
+            ? folderText
+            : folderText.slice(0, -1),
+        );
+    return { folderId, folderText, name: value.slice(cut + 1) };
+  }
+
+  // The items that a source path names, like cmd.exe: a name with * or ?
+  // names the files that match it, and a folder names its files (or, for
+  // MOVE, the folder itself).
+  sources(path, { folderItself }) {
+    const id = this.resolve(path);
+    const node = id && this.fs.getNode(id);
+    if (node?.type === "folder" && !folderItself)
+      return {
+        items: filesMatching(this.fs.getChildren(id), "*"),
+        prefix: path.replace(/[\\/]?$/, "\\"),
+        many: true,
+      };
+    const { folderId, folderText, name } = this.splitPath(path);
+    if (node) return { items: [node], prefix: folderText, many: false };
+    if (!folderId || !hasWildcards(name))
+      return { items: [], prefix: folderText, many: false };
+    return {
+      items: filesMatching(this.fs.getChildren(folderId), name),
+      prefix: folderText,
+      many: true,
+    };
+  }
+
+  // Where COPY and MOVE put each item: into a folder, onto a file, or to a
+  // new name. A new name with * or ? is a template, like REN.
+  destination(path) {
+    const id = this.resolve(path);
+    const node = id && this.fs.getNode(id);
+    if (node?.type === "folder")
+      return { folderId: id, nameOf: (item) => item.name, single: false };
+    if (node)
+      return { folderId: node.parent, nameOf: () => node.name, single: true };
+    const { folderId, name } = this.splitPath(path);
+    if (!folderId || !name) return null;
+    return hasWildcards(name)
+      ? {
+          folderId,
+          nameOf: (item) => renameByTemplate(item.name, name),
+          single: false,
+        }
+      : { folderId, nameOf: () => name, single: true };
+  }
+
+  // The Overwrite question shows the target as typed for COPY and as a
+  // full path for MOVE, like cmd.exe.
+  overwriteText(move, typed, target, folderId, name) {
+    const shown = move
+      ? this.joinPath(folderId, name)
+      : target.single
+        ? typed
+        : typed
+          ? `${typed}${/[\\:]$/.test(typed) ? "" : "\\"}${name}`
+          : name;
+    return `Overwrite ${shown}? (Yes/No/All): `;
+  }
+
+  // COPY and MOVE take * and ?, ask before they replace a file, and look
+  // at the files again after each answer, because another window can
+  // change them while the question is open.
+  copyOrMove(args, move) {
+    const paths = args.filter((value) => !value.startsWith("/"));
+    const switches = args.map((value) => value.toLowerCase());
+    let all = switches.includes("/y");
+    if (!paths.length || paths.length > 2 || (move && paths.length < 2))
+      return { output: SYNTAX_ERROR };
+    const source = this.sources(paths[0], { folderItself: move });
+    if (!source.items.length) return { output: NOT_FOUND };
+    const typed = paths[1] ?? "";
+    const target = this.destination(typed || ".");
+    if (!target) return { output: PATH_NOT_FOUND };
+    if (target.single && source.many) {
+      if (move)
+        return { output: "Cannot move multiple files to a single file." };
+      return this.combine(source, target, typed, all);
+    }
+    const out = [];
+    const session = this;
+    function* job() {
+      let count = 0;
+      for (const item of source.items) {
+        const from = item.parent;
+        if (source.many)
+          out.push(
+            move
+              ? session.joinPath(item.parent, item.name)
+              : `${source.prefix}${item.name}`,
+          );
+        const name = target.nameOf(item);
+        const folderId = target.folderId;
+        if (
+          !move &&
+          item.parent === folderId &&
+          item.name.toLowerCase() === name.toLowerCase()
+        ) {
+          out.push("The file cannot be copied onto itself.");
+          continue;
+        }
+        try {
+          session.fs.validateName(name);
+        } catch {
+          out.push(BAD_NAME);
+          continue;
+        }
+        const existing = session.fs.findChild(folderId, name);
+        if (
+          existing &&
+          existing.id !== item.id &&
+          (!isFile(existing) || !isFile(item))
+        ) {
+          out.push(ACCESS_DENIED);
+          continue;
+        }
+        if (existing && existing.id !== item.id && !all) {
+          const text = session.overwriteText(
+            move,
+            typed,
+            target,
+            folderId,
+            name,
+          );
+          const choice = yield* ask(text, "yna");
+          if (choice === "n") continue;
+          if (choice === "a") all = true;
+        }
+        if (session.fs.getNode(item.id)?.parent !== from) {
+          out.push(NOT_FOUND);
+          continue;
+        }
+        // Whatever file holds the name now is the one that goes, like
+        // cmd.exe. A folder that holds it stops this item.
+        const current = session.fs.findChild(folderId, name);
+        if (current && current.id !== item.id) {
+          if (!isFile(current) || !isFile(item)) {
+            out.push(ACCESS_DENIED);
+            continue;
+          }
+          session.fs.destroy(current.id);
+        }
+        const placed = move
+          ? session.fs.move(item.id, folderId)
+          : session.fs.copy(item.id, folderId);
+        if (placed.name !== name) session.fs.rename(placed.id, name);
+        count += 1;
+      }
+      if (!move) out.push(`        ${count} file(s) copied.`);
+    }
+    return this.runJob(job(), out);
+  }
+
+  // COPY of many files onto one name joins their text into one file.
+  combine(source, target, typed, all) {
+    const out = [];
+    const session = this;
+    const name = target.nameOf();
+    function* job() {
+      for (const item of source.items) out.push(`${source.prefix}${item.name}`);
+      session.fs.validateName(name);
+      const existing = session.fs.findChild(target.folderId, name);
+      const joinsItself = source.items.some((item) => item.id === existing?.id);
+      if (existing && !joinsItself && !all) {
+        const choice = yield* ask(`Overwrite ${typed}? (Yes/No/All): `, "yna");
+        if (choice === "n") {
+          out.push("        0 file(s) copied.");
+          return;
+        }
+      }
+      const content = source.items
+        .filter((item) => session.fs.getNode(item.id))
+        .map((item) => session.fs.getContent(item.id))
+        .join("");
+      const current = session.fs.findChild(target.folderId, name);
+      if (current && !isFile(current)) {
+        out.push(ACCESS_DENIED, "        0 file(s) copied.");
+        return;
+      }
+      if (current) session.fs.setContent(current.id, content);
+      else
+        session.context.fileOps.createFile(target.folderId, name, { content });
+      out.push("        1 file(s) copied.");
+    }
+    return this.runJob(job(), out);
+  }
+
+  command_copy(args) {
+    return this.copyOrMove(args, false);
+  }
+
+  command_move(args) {
+    return this.copyOrMove(args, true);
+  }
+
+  // DEL takes * and ? and several names. It asks before it deletes every
+  // file in a folder, like cmd.exe. /Q does not ask, and /P asks for each
+  // file.
+  command_del(args) {
+    const switches = args
+      .filter((value) => value.startsWith("/"))
+      .map((value) => value.toLowerCase());
+    const quiet = switches.includes("/q");
+    const eachFile = switches.includes("/p");
+    const paths = args.filter((value) => !value.startsWith("/"));
+    if (!paths.length) return { output: SYNTAX_ERROR };
+    const out = [];
+    const session = this;
+    function* job() {
+      for (const path of paths) {
+        const id = session.resolve(path);
+        const node = id && session.fs.getNode(id);
+        const split = node?.type === "folder" ? null : session.splitPath(path);
+        const folderId = split ? split.folderId : id;
+        const pattern = split ? split.name : "*";
+        if (!folderId) {
+          out.push(PATH_NOT_FOUND);
+          continue;
+        }
+        const shown = session.joinPath(folderId, pattern);
+        const matches = () =>
+          isFile(node)
+            ? [session.fs.getNode(node.id)].filter(Boolean)
+            : hasWildcards(pattern)
+              ? filesMatching(session.fs.getChildren(folderId), pattern)
+              : [];
+        const everything = !split || /^\*(?:\.\*)?$/.test(pattern);
+        if (!everything && !matches().length) {
+          out.push(`Could Not Find ${shown}`);
+          continue;
+        }
+        if (everything && !quiet && !eachFile) {
+          const choice = yield* ask(`${shown}, Are you sure (Y/N)? `, "yn");
+          if (choice === "n") continue;
+        }
+        for (const file of matches()) {
+          if (eachFile) {
+            const choice = yield* ask(
+              `${session.joinPath(file.parent, file.name)}, Delete (Y/N)? `,
+              "yn",
+            );
+            if (
+              choice === "n" ||
+              session.fs.getNode(file.id)?.parent !== folderId
+            )
+              continue;
+          }
+          try {
+            session.fs.destroy(file.id);
+          } catch {
+            out.push(session.joinPath(file.parent, file.name), ACCESS_DENIED);
+          }
+        }
+      }
+    }
+    return this.runJob(job(), out);
+  }
+
+  command_erase(args) {
+    return this.command_del(args);
   }
 
   changeDrive(drive) {
@@ -242,48 +631,326 @@ export class CommandSession {
     return this.command_cd(args);
   }
 
-  command_dir(args) {
-    const target = args.find((value) => !value.startsWith("/")) || ".";
-    const id = this.resolve(target);
-    const node = id && this.fs.getNode(id);
-    if (!node) return { output: "File Not Found" };
-    const folder = node.type === "folder" ? node : this.fs.getParent(node.id);
-    const children =
-      node.type === "folder" ? this.fs.getChildren(node.id) : [node];
-    const lines = [
-      " Volume in drive C has no label.",
-      " Volume Serial Number is B836-2A76",
-      "",
-      ` Directory of ${this.displayPath(folder.id)}`,
-      "",
-    ];
-    if (node.type === "folder") {
-      lines.push(`${formatDate(folder.modified)}    <DIR>          .`);
-      if (folder.parent && folder.parent !== this.fs.MY_COMPUTER) {
-        lines.push(`${formatDate(folder.modified)}    <DIR>          ..`);
-      }
-    }
-    let fileCount = 0;
-    let directoryCount = 0;
-    let totalSize = 0;
-    for (const child of children) {
-      if (child.type === "folder") {
-        directoryCount += 1;
-        lines.push(
-          `${formatDate(child.modified)}    <DIR>          ${child.name}`,
+  // REN takes * and ? in both names, like cmd.exe. A name that REN cannot
+  // use leaves that file as it is, and REN goes on with the next file. A
+  // new name with a path is a syntax error, because REN keeps each file in
+  // its folder.
+  command_ren(args) {
+    if (args.length !== 2 || /[\\/:]/.test(args[1]))
+      return { output: SYNTAX_ERROR };
+    const [source, template] = args;
+    const { folderId, name: pattern } = this.splitPath(source);
+    const nodes = !folderId
+      ? []
+      : hasWildcards(pattern)
+        ? filesMatching(this.fs.getChildren(folderId), pattern)
+        : [this.fs.findChild(folderId, pattern)].filter(Boolean);
+    if (!nodes.length) return { output: NOT_FOUND };
+    const lines = [];
+    for (const node of nodes) {
+      try {
+        this.context.fileOps.rename(
+          node.id,
+          renameByTemplate(node.name, template),
         );
-      } else {
-        fileCount += 1;
-        totalSize += child.size || 0;
+      } catch (error) {
         lines.push(
-          `${formatDate(child.modified)}    ${displaySize(child.size).padStart(14)} ${child.name}`,
+          error?.code === "name-exists" || error?.code === "name-required"
+            ? DUPLICATE_NAME
+            : error?.code
+              ? SYNTAX_ERROR
+              : errorText(error),
         );
       }
     }
-    lines.push(
-      `${String(fileCount).padStart(15)} File(s) ${displaySize(totalSize).padStart(14)} bytes`,
-      `${String(directoryCount + (node.type === "folder" ? (folder.parent === this.fs.MY_COMPUTER ? 1 : 2) : 0)).padStart(15)} Dir(s)  5,952,212,992 bytes free`,
+    return { output: lines.join("\n") };
+  }
+
+  command_rename(args) {
+    return this.command_ren(args);
+  }
+
+  // The switches of DIR, like cmd.exe. One argument can hold several
+  // switches, such as "/b/s". A "-" before a letter turns that switch off.
+  dirOptions(args) {
+    const options = {
+      attributes: null,
+      bare: false,
+      columns: false,
+      lower: false,
+      order: null,
+      owner: false,
+      recurse: false,
+      separators: true,
+      short: false,
+      time: "w",
+      wide: false,
+      paths: [],
+    };
+    for (const arg of args) {
+      if (!arg.startsWith("/")) {
+        options.paths.push(arg);
+        continue;
+      }
+      for (const part of arg.slice(1).split("/")) {
+        const match = /^(-?)([a-z0-9])(?::?(.*))$/i.exec(part);
+        if (!match) return { error: `Invalid switch - "${part}".` };
+        const on = !match[1];
+        const value = match[3];
+        const letter = match[2].toLowerCase();
+        // Only /A, /O and /T take a value after the letter.
+        if (value && !"aot".includes(letter))
+          return { error: `Invalid switch - "${part}".` };
+        switch (letter) {
+          case "a":
+            options.attributes = value.toLowerCase();
+            break;
+          case "o":
+            options.order = on ? value.toLowerCase() || "gn" : null;
+            break;
+          case "t":
+            options.time = value.toLowerCase()[0] || "w";
+            break;
+          case "b":
+            options.bare = on;
+            break;
+          case "c":
+            options.separators = on;
+            break;
+          case "d":
+            options.columns = on;
+            break;
+          case "l":
+            options.lower = on;
+            break;
+          case "q":
+            options.owner = on;
+            break;
+          case "s":
+            options.recurse = on;
+            break;
+          case "w":
+            options.wide = on;
+            break;
+          case "x":
+            options.short = on;
+            break;
+          // /N, /4 and /P are on or have no effect here: the names are
+          // always on the right, years have 4 digits, and the window
+          // scrolls.
+          case "n":
+          case "4":
+          case "p":
+            break;
+          default:
+            return { error: `Invalid switch - "${part}".` };
+        }
+      }
+    }
+    return options;
+  }
+
+  // The entries that DIR shows for one folder: "." and ".." (but not in a
+  // drive root), then the items that match the pattern and the /A switch,
+  // in the /O order. With no /O, the order is the NTFS order: by name, as
+  // uppercase text.
+  dirEntries(folderId, pattern, options) {
+    const folder = this.fs.getNode(folderId);
+    const entries = [];
+    const atRoot = !folder.parent || folder.parent === this.fs.MY_COMPUTER;
+    if (!atRoot && !options.bare) {
+      entries.push({ name: ".", node: folder, folder: true });
+      entries.push({
+        name: "..",
+        node: this.fs.getParent(folderId),
+        folder: true,
+      });
+    }
+    for (const node of this.fs.getChildren(folderId))
+      entries.push({ name: node.name, node, folder: node.type === "folder" });
+    const attributes = options.attributes;
+    const keep = (entry) => {
+      if (pattern && !matchesPattern(entry.name, pattern)) return false;
+      if (attributes === null) return true;
+      for (const [, not, letter] of attributes.matchAll(/(-?)([a-z])/g)) {
+        // New files have the Archive attribute. No item is hidden, a
+        // system file or read-only here.
+        const has =
+          letter === "d"
+            ? entry.folder
+            : letter === "a"
+              ? !entry.folder
+              : false;
+        if (has === !!not) return false;
+      }
+      return true;
+    };
+    const kept = entries.filter(keep);
+    const upper = (entry) => entry.name.toUpperCase();
+    const compareText = (left, right) =>
+      left < right ? -1 : left > right ? 1 : 0;
+    const extension = (entry) =>
+      entry.folder ? "" : this.fs.extractExtension(entry.name).toUpperCase();
+    const keys = {
+      n: (left, right) => compareText(upper(left), upper(right)),
+      e: (left, right) => compareText(extension(left), extension(right)),
+      s: (left, right) =>
+        (left.folder ? 0 : sizeOf(left.node)) -
+        (right.folder ? 0 : sizeOf(right.node)),
+      d: (left, right) =>
+        this.dirTime(left, options) - this.dirTime(right, options),
+      g: (left, right) => Number(right.folder) - Number(left.folder),
+    };
+    const dots = kept.filter(
+      (entry) => entry.name === "." || entry.name === "..",
     );
+    const items = kept.filter((entry) => !dots.includes(entry)).sort(keys.n);
+    if (!options.order) return [...dots, ...items];
+    const order = [...options.order.matchAll(/(-?)([nesdg])/g)];
+    return [...dots, ...items].sort((left, right) => {
+      for (const [, reverse, letter] of order) {
+        const result = keys[letter](left, right);
+        if (result) return reverse ? -result : result;
+      }
+      return 0;
+    });
+  }
+
+  dirTime(entry, options) {
+    const node = entry.node;
+    return options.time === "c" ? node.created : node.modified;
+  }
+
+  dirName(entry, options) {
+    return options.lower ? entry.name.toLowerCase() : entry.name;
+  }
+
+  // One folder of a DIR listing, in the long, wide or bare format.
+  dirSection(folderId, pattern, options) {
+    const entries = this.dirEntries(folderId, pattern, options);
+    const files = entries.filter((entry) => !entry.folder);
+    const bytes = files.reduce((sum, entry) => sum + sizeOf(entry.node), 0);
+    const lines = [];
+    const user = this.userName;
+    if (options.bare) {
+      for (const entry of entries)
+        lines.push(
+          options.recurse
+            ? this.joinPath(folderId, this.dirName(entry, options))
+            : this.dirName(entry, options),
+        );
+    } else if (options.wide || options.columns) {
+      // Like cmd.exe, each column is 3 characters wider than the longest
+      // name, and as many columns fit as the 80 characters of the screen
+      // take. /D fills the columns from top to bottom.
+      const names = entries.map((entry) =>
+        entry.folder
+          ? `[${this.dirName(entry, options)}]`
+          : this.dirName(entry, options),
+      );
+      const width = Math.max(0, ...names.map((name) => name.length)) + 3;
+      const count = Math.max(1, Math.floor(SCREEN_WIDTH / width));
+      const rows = options.columns
+        ? Math.floor(names.length / count) + 1
+        : Math.ceil(names.length / count);
+      for (let row = 0; row < rows; row += 1) {
+        const cells = [];
+        for (let column = 0; column < count; column += 1) {
+          const index = options.columns
+            ? column * rows + row
+            : row * count + column;
+          if (index < names.length) cells.push(names[index].padEnd(width));
+        }
+        if (cells.length) lines.push(cells.join("").trimEnd());
+      }
+    } else {
+      for (const entry of entries) {
+        const size = entry.folder
+          ? "<DIR>         "
+          : groupDigits(sizeOf(entry.node), options.separators).padStart(14);
+        const owner = options.owner
+          ? `${`${COMPUTER_NAME}\\${user}`.padEnd(22)} `
+          : "";
+        const short = options.short
+          ? `${(entry.name.startsWith(".") ? "" : shortName(entry.name) === entry.name ? "" : shortName(entry.name)).padEnd(12)} `
+          : "";
+        lines.push(
+          `${formatDate(this.dirTime(entry, options))}    ${size} ${owner}${short}${this.dirName(entry, options)}`,
+        );
+      }
+    }
+    return {
+      lines,
+      files: files.length,
+      folders: entries.length - files.length,
+      bytes,
+      empty: !entries.length,
+    };
+  }
+
+  // DIR shows XP's long format by default, and takes /W, /D, /B, /A, /O,
+  // /S, /L, /-C, /Q, /X and /T. A name can have * and ?.
+  command_dir(args) {
+    const options = this.dirOptions(args);
+    if (options.error) return { output: options.error };
+    const path = options.paths[0] ?? ".";
+    const id = this.resolve(path);
+    const node = id && this.fs.getNode(id);
+    const split = node?.type === "folder" ? null : this.splitPath(path);
+    const folderId = split ? split.folderId : id;
+    if (!folderId) return { output: PATH_NOT_FOUND };
+    const pattern = split ? split.name : null;
+    const sizeText = (value) => groupDigits(value, options.separators);
+    const filesLine = (files, bytes) =>
+      `${String(files).padStart(16)} File(s) ${sizeText(bytes).padStart(14)} bytes`;
+    const freeLine = (folders) =>
+      `${String(folders).padStart(16)} Dir(s) ${sizeText(FREE_BYTES).padStart(15)} bytes free`;
+    const drive = this.displayPath(this.driveRoot(folderId))[0];
+    const lines = options.bare
+      ? []
+      : [
+          ` Volume in drive ${drive} has no label.`,
+          ` Volume Serial Number is ${SERIAL_NUMBERS[drive]}`,
+        ];
+    const total = { files: 0, folders: 0, bytes: 0, shown: 0 };
+    const visit = (currentId) => {
+      const section = this.dirSection(currentId, pattern, options);
+      if (!section.empty) {
+        total.shown += 1;
+        if (!options.bare)
+          lines.push("", ` Directory of ${this.displayPath(currentId)}`, "");
+        lines.push(...section.lines);
+        if (!options.bare && options.recurse)
+          lines.push(filesLine(section.files, section.bytes));
+      }
+      total.files += section.files;
+      total.folders += section.folders;
+      total.bytes += section.bytes;
+      if (!options.recurse) return;
+      const children = this.dirEntries(currentId, null, {
+        ...options,
+        attributes: "d",
+        bare: true,
+        order: null,
+      });
+      for (const child of children) visit(child.node.id);
+    };
+    visit(folderId);
+    if (!total.shown) {
+      if (!options.bare && !options.recurse)
+        lines.push("", ` Directory of ${this.displayPath(folderId)}`, "");
+      lines.push("File Not Found");
+      return { output: lines.join("\n") };
+    }
+    if (options.bare) return { output: lines.join("\n") };
+    if (options.recurse)
+      lines.push(
+        "",
+        "     Total Files Listed:",
+        filesLine(total.files, total.bytes),
+      );
+    else lines.push(filesLine(total.files, total.bytes));
+    lines.push(freeLine(total.folders));
     return { output: lines.join("\n") };
   }
 
@@ -325,31 +992,29 @@ export class CommandSession {
     return { output: this.fs.getContent(node.id).replace(/\n$/, "") };
   }
 
+  // MD names the path as typed when it exists, and makes the folders on
+  // the way that do not exist yet, like cmd.exe.
   command_md(args) {
-    const target = this.resolve(args.join(" "), { parent: true });
-    if (!target || target.node) {
-      return { output: "A subdirectory or file already exists." };
+    const typed = args.join(" ");
+    if (!typed) return { output: SYNTAX_ERROR };
+    if (this.resolve(typed))
+      return { output: `A subdirectory or file ${typed} already exists.` };
+    const parts = typed.replaceAll("/", "\\").split("\\");
+    for (let index = 1; index <= parts.length; index += 1) {
+      if (!parts[index - 1]) continue;
+      const target = this.resolve(parts.slice(0, index).join("\\"), {
+        parent: true,
+      });
+      if (target?.node) continue;
+      if (this.fs.getNode(target?.parentId)?.type !== "folder")
+        return { output: PATH_NOT_FOUND };
+      this.context.fileOps.createFolder(target.parentId, target.name);
     }
-    this.context.fileOps.createFolder(target.parentId, target.name);
     return { output: "" };
   }
 
   command_mkdir(args) {
     return this.command_md(args);
-  }
-
-  command_del(args) {
-    const target = args.filter((value) => !value.startsWith("/"));
-    const id = this.resolve(target.join(" "));
-    const node = id && this.fs.getNode(id);
-    if (!node || node.type !== "file")
-      return { output: "Could Not Find the file specified." };
-    this.fs.destroy(node.id);
-    return { output: "" };
-  }
-
-  command_erase(args) {
-    return this.command_del(args);
   }
 
   command_rd(args) {
@@ -369,107 +1034,6 @@ export class CommandSession {
 
   command_rmdir(args) {
     return this.command_rd(args);
-  }
-
-  // REN takes * and ? in both names, like cmd.exe. A name in use leaves
-  // that file as it is.
-  command_ren(args) {
-    if (args.length < 2)
-      return { output: "The syntax of the command is incorrect." };
-    const source = args[0].replaceAll("/", "\\");
-    const slash = source.lastIndexOf("\\");
-    const folderId =
-      slash < 0 ? this.cwd : this.resolve(source.slice(0, slash) || "\\");
-    const pattern = source.slice(slash + 1);
-    const template = args.slice(1).join(" ");
-    const nodes = !folderId
-      ? []
-      : /[*?]/.test(pattern)
-        ? this.fs
-            .getChildren(folderId)
-            .filter(
-              (node) =>
-                node.type === "file" && matchesPattern(node.name, pattern),
-            )
-        : [this.fs.findChild(folderId, pattern)].filter(Boolean);
-    if (!nodes.length)
-      return { output: "The system cannot find the file specified." };
-    const lines = [];
-    for (const node of nodes) {
-      try {
-        this.context.fileOps.rename(
-          node.id,
-          renameByTemplate(node.name, template),
-        );
-      } catch (error) {
-        if (error.code !== "name-exists") throw error;
-        lines.push(
-          "A duplicate file name exists, or the file cannot be found.",
-        );
-      }
-    }
-    return { output: lines.join("\n") };
-  }
-
-  command_rename(args) {
-    return this.command_ren(args);
-  }
-
-  // COPY and MOVE ask before they replace a file, like cmd.exe. A copy
-  // into its own folder copies nothing.
-  copyOrMove(args, move) {
-    if (args.length < 2)
-      return { output: "The syntax of the command is incorrect." };
-    const sourceId = this.resolve(args[0]);
-    const destinationId = this.resolve(args.slice(1).join(" "));
-    const source = sourceId && this.fs.getNode(sourceId);
-    const destination = destinationId && this.fs.getNode(destinationId);
-    if (!source || !destination || destination.type !== "folder") {
-      return { output: "The system cannot find the path specified." };
-    }
-    const done = (count) => ({
-      output: `        ${count} file(s) ${move ? "moved" : "copied"}.`,
-    });
-    if (!move && source.parent === destination.id)
-      return {
-        output: `The file cannot be copied onto itself.\n${done(0).output}`,
-      };
-    const put = () => {
-      if (move) this.fs.move(source.id, destination.id);
-      else this.fs.copy(source.id, destination.id);
-      return done(1);
-    };
-    const existing = this.fs.findChild(destination.id, source.name);
-    if (!existing || existing.id === source.id) return put();
-    if (existing.type !== "file" || source.type !== "file")
-      return { output: "Access is denied." };
-    const from = source.parent;
-    const text = `Overwrite ${this.displayPath(destination.id).replace(/\\?$/, "\\")}${existing.name}? (Yes/No/All): `;
-    this.question = {
-      text,
-      answer: (reply) => {
-        const choice = reply[0]?.toLowerCase();
-        // Any other answer asks again.
-        if (!["y", "n", "a"].includes(choice)) return { output: "" };
-        this.question = null;
-        if (choice === "n") return done(0);
-        // Another window may change the files while the question is open.
-        if (this.fs.getNode(source.id)?.parent !== from)
-          return { output: "The system cannot find the file specified." };
-        const current = this.fs.findChild(destination.id, source.name);
-        if (current?.id === existing.id) this.fs.destroy(existing.id);
-        return put();
-      },
-    };
-    return { output: "" };
-  }
-
-  command_copy(args) {
-    return this.copyOrMove(args, false);
-  }
-
-  command_move(args) {
-    return this.copyOrMove(args, true);
   }
 
   command_set(args, line) {

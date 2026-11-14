@@ -93,3 +93,58 @@ test("the Command Prompt reports thrown errors and closes on exit", async () => 
   await h.enter("exit");
   expect(h.win.isConnected).toBeFalse();
 });
+
+test("the Command Prompt puts a blank line after each command, like cmd.exe", async () => {
+  const h = await openCommandPrompt();
+  const prompt = "C:\\Documents and Settings\\astro>";
+  expect(h.output.textContent).toBe(
+    "Microsoft Windows XP [Version 5.1.2600]\n(C) Copyright 1985-2001 Microsoft Corp.\n\n",
+  );
+  const start = h.output.textContent.length;
+  await h.enter("");
+  await h.enter("cd .");
+  await h.enter("echo hi");
+  await h.enter("ver");
+  await h.enter("echo a>a.txt");
+  await h.enter("md Box");
+  await h.enter("echo b>Box\\a.txt");
+  await h.enter("copy a.txt Box");
+  await h.enter("x");
+  await h.enter("y");
+  const question = "Overwrite Box\\a.txt? (Yes/No/All): ";
+  expect(h.output.textContent.slice(start)).toBe(
+    [
+      `${prompt}\n`,
+      `${prompt}cd .\n\n`,
+      `${prompt}echo hi\nhi\n\n`,
+      `${prompt}ver\n\nMicrosoft Windows XP [Version 5.1.2600]\n\n`,
+      `${prompt}echo a>a.txt\n\n`,
+      `${prompt}md Box\n\n`,
+      `${prompt}echo b>Box\\a.txt\n\n`,
+      `${prompt}copy a.txt Box\n`,
+      `${question}x\n`,
+      `${question}y\n        1 file(s) copied.\n\n`,
+    ].join(""),
+  );
+});
+
+test("the Command Prompt runs nothing on an Enter of an input method", async () => {
+  const h = await openCommandPrompt();
+  const before = h.output.textContent;
+  h.input.value = "ver";
+  for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+    h.input.dispatchEvent(
+      new h.s.window.KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      }),
+    );
+    await settle();
+  }
+  expect(h.output.textContent).toBe(before);
+  expect(h.input.value).toBe("ver");
+  await h.press("Enter");
+  expect(h.output.textContent).toContain("ver\n\nMicrosoft Windows XP");
+});

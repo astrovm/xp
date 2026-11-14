@@ -18,6 +18,9 @@
 })(globalThis, function (root) {
   const STORAGE_KEY = "virtualFileSystem";
   const FS_VERSION = 1;
+  // The one user account. Its profile folder in Documents and Settings has
+  // its name, and every program that shows the user takes it from here.
+  const USER_NAME = "astro";
 
   const WELL_KNOWN = {
     MY_COMPUTER: "my-computer",
@@ -119,34 +122,34 @@
   // "name-invalid" (a character, or a period or space at the end) or
   // "name-reserved" (a DOS device name).
   const nameError = (code, message) =>
-    Object.assign(new Error(`VirtualFS: ${message}`), { code });
+    Object.assign(new Error(message), { code });
   const validateName = (name) => {
     if (typeof name !== "string" && typeof name !== "number") {
-      throw nameError("name-required", "a name is required");
+      throw nameError("name-required", "You must type a file name.");
     }
 
     const rawName = String(name);
     const normalizedName = rawName.trim();
     if (!normalizedName) {
-      throw nameError("name-required", "a name is required");
+      throw nameError("name-required", "You must type a file name.");
     }
     if (INVALID_NAME_CHARACTERS.test(rawName)) {
       throw nameError(
         "name-invalid",
-        `"${rawName}" contains invalid characters`,
+        'A file name cannot contain any of the following characters:\n\t\\ / : * ? " < > |',
       );
     }
     if (/[.\s]$/.test(rawName)) {
       throw nameError(
         "name-invalid",
-        `"${rawName}" cannot end with a period or space`,
+        `${rawName}\nThe above file name is invalid.`,
       );
     }
     const baseName = normalizedName.split(".")[0].trimEnd();
     if (RESERVED_DEVICE_NAMES.test(baseName)) {
       throw nameError(
         "name-reserved",
-        `"${rawName}" is a reserved device name`,
+        `${rawName}\nThis file name is reserved for use by Windows.\nChoose another name and try again.`,
       );
     }
     return normalizedName;
@@ -186,7 +189,11 @@
       "Documents and Settings",
       WELL_KNOWN.DRIVE_C,
     );
-    folder(WELL_KNOWN.USER_PROFILE, "astro", WELL_KNOWN.DOCUMENTS_AND_SETTINGS);
+    folder(
+      WELL_KNOWN.USER_PROFILE,
+      USER_NAME,
+      WELL_KNOWN.DOCUMENTS_AND_SETTINGS,
+    );
     folder(
       WELL_KNOWN.ALL_USERS,
       "All Users",
@@ -501,7 +508,9 @@
   const requireNode = (id) => {
     const node = nodes[id];
     if (!node) {
-      throw new Error(`VirtualFS: item "${id}" not found`);
+      throw new Error(
+        "Cannot find the file or folder. Make sure the path and file name are correct.",
+      );
     }
     return node;
   };
@@ -509,7 +518,7 @@
   const requireFolder = (id) => {
     const node = requireNode(id);
     if (!isFolder(node)) {
-      throw new Error(`VirtualFS: "${node.name}" is not a folder`);
+      throw new Error(`${node.name} is not a folder.`);
     }
     return node;
   };
@@ -565,7 +574,7 @@
   const rename = (id, newName) => {
     const node = requireNode(id);
     if (node.protected) {
-      throw new Error(`Cannot rename "${node.name}": access is denied`);
+      throw new Error(`Cannot rename ${node.name}: Access is denied.`);
     }
     const validName = validateName(newName);
     if (node.name === validName) return node;
@@ -594,10 +603,12 @@
     const node = requireNode(id);
     const target = requireFolder(targetParentId);
     if (node.protected) {
-      throw new Error(`Cannot move "${node.name}": access is denied`);
+      throw new Error(`Cannot move ${node.name}: Access is denied.`);
     }
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
-      throw new Error(`Cannot move "${node.name}" into itself`);
+      throw new Error(
+        `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
+      );
     }
     if (node.parent === targetParentId) return node;
 
@@ -619,7 +630,9 @@
     const node = requireNode(id);
     requireFolder(targetParentId);
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
-      throw new Error(`Cannot copy "${node.name}" into itself`);
+      throw new Error(
+        `Cannot copy ${node.name}: The destination folder is a subfolder of the source folder.`,
+      );
     }
 
     const cloneRecursive = (sourceId, parentId, forcedName) => {
@@ -659,7 +672,7 @@
     const node = nodes[id];
     if (!node) return;
     if (node.protected) {
-      throw new Error(`Cannot delete "${node.name}": access is denied`);
+      throw new Error(`Cannot delete ${node.name}: Access is denied.`);
     }
     const erase = (nodeId) => {
       const current = nodes[nodeId];
@@ -676,7 +689,7 @@
   const remove = (id) => {
     const node = requireNode(id);
     if (node.protected) {
-      throw new Error(`Cannot delete "${node.name}": access is denied`);
+      throw new Error(`Cannot delete ${node.name}: Access is denied.`);
     }
     if (isInRecycleBin(id)) {
       destroy(id);
@@ -695,15 +708,18 @@
     emitChange();
   };
 
-  const restore = (id) => {
+  // An item goes back to targetId, or else to the folder it was deleted
+  // from. If that folder is gone or in the bin, it goes to the Desktop.
+  const restore = (id, targetId = null) => {
     const node = requireNode(id);
     if (node.parent !== WELL_KNOWN.RECYCLE_BIN) {
-      throw new Error("Only items in the Recycle Bin can be restored");
+      throw new Error("Only items in the Recycle Bin can be restored.");
     }
-    const targetId =
-      node.originalParent &&
-      isFolder(nodes[node.originalParent]) &&
-      !isInRecycleBin(node.originalParent)
+    const usable = (folderId) =>
+      isFolder(nodes[folderId]) && !isInRecycleBin(folderId);
+    targetId = usable(targetId)
+      ? targetId
+      : usable(node.originalParent)
         ? node.originalParent
         : WELL_KNOWN.DESKTOP;
     const restoredName = node.originalName || node.name;
@@ -739,7 +755,7 @@
   const setContent = (id, content, { name, expectedContent } = {}) => {
     const node = requireNode(id);
     if (node.type !== "file") {
-      throw new Error(`VirtualFS: "${node.name}" is not a file`);
+      throw new Error(`${node.name} is not a file.`);
     }
     if (expectedContent !== undefined && node.content !== expectedContent) {
       throw new Error(
@@ -1018,6 +1034,7 @@
     },
     ...WELL_KNOWN,
     WELL_KNOWN,
+    USER_NAME,
     transaction,
     close: () => {
       channel?.close();
