@@ -686,6 +686,38 @@ test("Explorer Back and Forward skip history entries that were deleted", async (
   expect(h.address().value).toBe(fs.getPath(fs.MY_DOCUMENTS));
 });
 
+// In the XP VM, the Address bar takes a name in the open folder and ".."
+// for the folder above it, step by step: "nope\.." fails. "." fails, and
+// XP then takes it as a web address. A full path counts "." and ".." by
+// its text, so "C:\nope\..\WINDOWS" works.
+test("the Address bar takes names and .. from the open folder, like XP", async () => {
+  const h = await openDocuments();
+  const { s, fs } = h;
+  const go = async (text, how = "go") => {
+    h.address().value = text;
+    if (how === "go") await h.action("go");
+    else {
+      h.address().dispatchEvent(new s.window.Event("change"));
+      await settle();
+    }
+    return h.address().value;
+  };
+  const browse = fs.getPath(h.folder.id);
+  const nested = fs.getPath(h.nested.id);
+  for (const how of ["go", "change"]) {
+    expect(await go(browse, how)).toBe(browse);
+    expect(await go("Nested", how)).toBe(nested);
+    expect(await go("..", how)).toBe(browse);
+    expect(await go("Nested\\..\\Nested\\", how)).toBe(nested);
+    expect(await go("..\\.", how)).toBe(nested);
+    expect(await go(".", how)).toBe(nested);
+    expect(await go("nope\\..", how)).toBe(nested);
+    expect(await go("..\\note.txt", how)).toBe(nested);
+    expect(await go(`${browse}\\nope\\..\\.`, how)).toBe(browse);
+    expect(await go("  ", how)).toBe(browse);
+  }
+});
+
 test("Explorer items support Ctrl multi-select and drag only what is selected", async () => {
   const h = await openDocuments(),
     { s } = h;

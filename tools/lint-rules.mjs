@@ -169,29 +169,48 @@ const awaitAsyncExpect = {
           ),
         );
     // Each this.name in the code of an object, such as a call of one of
-    // its methods from another one.
+    // its methods from another one. It is null when the code uses this in
+    // another way, such as this[name] or const self = this: then a call of
+    // the method can have no wait.
     const thisReads = (root, name) => {
       const found = [];
+      let other = false;
       const visit = (node) => {
-        if (
-          node.type === "MemberExpression" &&
-          node.object.type === "ThisExpression" &&
-          !node.computed &&
-          node.property.name === name
-        )
-          found.push(node);
+        if (node.type === "ThisExpression") {
+          const member = node.parent;
+          if (
+            member.type !== "MemberExpression" ||
+            member.object !== node ||
+            member.computed
+          )
+            other = true;
+          else if (member.property.name === name) found.push(member);
+        }
         for (const key of sourceCode.visitorKeys[node.type]) {
           const child = node[key];
           for (const item of [child].flat()) if (item) visit(item);
         }
       };
       visit(root);
-      return found;
+      return other ? null : found;
+    };
+    // A member that gets a new value, such as object.name = other or
+    // delete object.name.
+    const changed = (member) => {
+      const { parent } = member;
+      return (
+        (parent.type === "AssignmentExpression" && parent.left === member) ||
+        (parent.type === "UpdateExpression" && parent.argument === member) ||
+        (parent.type === "UnaryExpression" && parent.operator === "delete")
+      );
     };
     // A method of an object in a variable is waited for when each call of
     // it, as variable.name(...) or this.name(...), is waited for. An object
     // that goes somewhere else, or that is read with [...], can have its
     // method called with no wait, so the method is not waited for then.
+    // The same is true for an object that other code can get: an exported
+    // object, or one in a global variable of a script. A method that the
+    // code sets again later can be another function.
     const methodWaited = (property, seen) => {
       const object = property.parent;
       const declarator = object.parent;
@@ -199,28 +218,36 @@ const awaitAsyncExpect = {
         property.computed ||
         property.key.type !== "Identifier" ||
         declarator.type !== "VariableDeclarator" ||
-        declarator.init !== object
+        declarator.init !== object ||
+        declarator.parent.parent.type.startsWith("Export")
       )
         return false;
       const name = property.key.name;
       const reads = [];
-      for (const variable of sourceCode.getDeclaredVariables(declarator))
+      for (const variable of sourceCode.getDeclaredVariables(declarator)) {
+        if (variable.scope.type === "global") return false;
         for (const reference of variable.references) {
           if (!reference.isRead()) continue;
           const member = reference.identifier.parent;
           if (
             member.type !== "MemberExpression" ||
             member.object !== reference.identifier ||
-            member.computed
+            member.computed ||
+            changed(member)
           )
             return false;
           if (member.property.name === name) reads.push(member);
         }
-      return [...reads, ...thisReads(object, name)].every(
-        (member) =>
-          member.parent.type === "CallExpression" &&
-          member.parent.callee === member &&
-          waited(member.parent, seen),
+      }
+      const fromThis = thisReads(object, name);
+      return (
+        fromThis !== null &&
+        [...reads, ...fromThis].every(
+          (member) =>
+            member.parent.type === "CallExpression" &&
+            member.parent.callee === member &&
+            waited(member.parent, seen),
+        )
       );
     };
     // The value of this node is a function. Its result is waited for when

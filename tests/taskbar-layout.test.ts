@@ -225,16 +225,25 @@ test("the New Toolbar dialog browses folders and adds the chosen one", async () 
   dialog.querySelector('[data-action="new-folder"]').click();
   await flushShell();
   expect(dialog.querySelector("input").value).toBe("New Folder");
-  dialog.querySelector("input").value = "C:\\missing";
-  dialog.querySelector('[data-action="ok"]').click();
-  await flushShell();
-  expect(
-    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
-  ).toContain("The folder could not be found.");
-  [...s.document.querySelectorAll(".xp-dialog")]
-    .at(-1)
-    .querySelector('[data-action="ok"]')
-    .click();
+  // Like XP, a missing folder and any "." or ".." in the path fail,
+  // also in a full path to a folder that is there.
+  for (const typed of [
+    "C:\\missing",
+    "..",
+    `${fs.getPath(parent.id)}\\..\\${parent.name}`,
+    `${fs.getPath(parent.id)}\\.`,
+  ]) {
+    dialog.querySelector("input").value = typed;
+    dialog.querySelector('[data-action="ok"]').click();
+    await flushShell();
+    const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+    expect(error.querySelector(".title-text").textContent).toBe("Toolbar");
+    expect(error.textContent).toContain(
+      `Cannot find '${typed}'. Make sure the path or Internet address is correct.`,
+    );
+    error.querySelector('[data-action="ok"]').click();
+    await flushShell();
+  }
   dialog.querySelector("input").value = fs.getPath(parent.id);
   dialog.querySelector('[data-action="ok"]').click();
   expect(settings(s).folders).toContain(parent.id);

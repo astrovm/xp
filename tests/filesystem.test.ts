@@ -74,6 +74,24 @@ describe("virtual filesystem", () => {
     expect(fs.resolvePath("F:\\")).toBe(fs.DRIVE_F);
   });
 
+  // A path with no drive has no folder to start from, so "." and ".."
+  // in it find nothing, like XP's Explorer and New Toolbar. A full path
+  // counts them by its text.
+  test("finds no folder for . and .. in a path with no drive", () => {
+    for (const path of [
+      ".",
+      "..",
+      "x\\..",
+      ".\\My Documents",
+      "My Computer\\..",
+    ])
+      expect([path, fs.resolvePath(path)]).toEqual([path, null]);
+    expect(fs.resolvePath("C:\\nope\\..\\Documents and Settings\\.")).toBe(
+      fs.resolvePath("C:\\Documents and Settings"),
+    );
+    expect(fs.resolvePath("C:\\..\\..")).toBe(fs.DRIVE_C);
+  });
+
   test("resolves the paths it gives to Recycle Bin items", () => {
     const file = fs.createFile(fs.MY_DOCUMENTS, "binned.txt");
     fs.remove(file.id);

@@ -141,7 +141,37 @@ const parseWindowLength = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const persistWindowPlacement = (win) => {
+// A program with many windows, such as the Command Prompt, keeps one
+// placement for all its windows. Its first window has the id of the
+// program, and the next ones "<program>#2" and up.
+const placementKeyOf = (win) => win.applicationId ?? win.gameId;
+const MANY_WINDOW_KEY = /#\d+$/;
+
+// XP moves each new window of a program 26 pixels down and to the right.
+// When a window does not fit, the cascade starts again at the first place,
+// like XP. It gives the place of the window after steps moves.
+const CASCADE_STEP = 26;
+const cascadePlace = (steps, { left, top, width, height }, area) => {
+  const fits = (start, size, available) =>
+    available > 0
+      ? Math.floor((available - size - start) / CASCADE_STEP) + 1
+      : Infinity;
+  const wrapped =
+    steps %
+    Math.max(
+      1,
+      Math.min(fits(left, width, area.width), fits(top, height, area.height)),
+    );
+  return {
+    left: left + CASCADE_STEP * wrapped,
+    top: top + CASCADE_STEP * wrapped,
+  };
+};
+
+const persistWindowPlacement = (win, { moved = false } = {}) => {
+  // A cascaded copy keeps the place of the program only when the user
+  // moves or sizes it, not when it maximizes or closes.
+  if (!moved && win.cascadeSteps > 0) return;
   // Maximizing records the restore geometry before the window grows.
   const source = win.maximized ? win.prevRect : win.el.style;
   const placement = {
@@ -151,28 +181,38 @@ const persistWindowPlacement = (win) => {
     height: parseWindowLength(source.height, win.el.offsetHeight),
   };
   if (!isWindowPlacement(placement)) return;
+  // The first window of the cascade starts where this one is now.
+  win.cascadeSteps = 0;
+  const kept = Object.entries(getWindowPlacements()).filter(
+    ([key]) => !MANY_WINDOW_KEY.test(key),
+  );
   writeJsonStorage(WINDOW_PLACEMENTS_KEY, {
-    ...getWindowPlacements(),
-    [win.gameId]: placement,
+    ...Object.fromEntries(kept),
+    [placementKeyOf(win)]: placement,
   });
 };
 
 const restoreWindowPlacement = (win) => {
-  const saved = getWindowPlacements()[win.gameId];
+  const saved = getWindowPlacements()[placementKeyOf(win)];
   if (!saved) return;
   const { width: desktopWidth, height: desktopHeight } = getVisibleWorkArea();
   const width =
     desktopWidth > 0 ? Math.min(saved.width, desktopWidth) : saved.width;
   const height =
     desktopHeight > 0 ? Math.min(saved.height, desktopHeight) : saved.height;
+  const { left, top } = cascadePlace(
+    win.cascadeSteps ?? 0,
+    { left: saved.left, top: saved.top, width, height },
+    { width: desktopWidth, height: desktopHeight },
+  );
   Object.assign(win.el.style, {
     width: `${width}px`,
     height: `${height}px`,
-    left: `${saved.left}px`,
-    top: `${saved.top}px`,
+    left: `${left}px`,
+    top: `${top}px`,
   });
   if (desktopWidth > 0 && desktopHeight > 0) {
-    const position = clampWindowPosition(win, saved.left, saved.top, {
+    const position = clampWindowPosition(win, left, top, {
       fullyVisible: true,
     });
     win.el.style.left = `${position.left}px`;
@@ -1020,6 +1060,42 @@ const focusWindow = (gameId) => {
   focusWindowContent(win);
 };
 
+// A promise that ends when the window closes. A window that is not open
+// any more ends it at once.
+const whenWindowCloses = (win) =>
+  new Promise((resolve) => {
+    if (openWindows.get(win.gameId) !== win) resolve();
+    else (win.closeListeners ??= []).push(resolve);
+  });
+
+// A program gives the keys to a control of its window, such as after a
+// command that it waits for. Like XP, only the active window takes them:
+// a window that is behind another one, or minimized, does not come to the
+// top, and an open modal dialog, such as a question of a program that the
+// command started, keeps them. The window gives the control the keys when
+// it becomes active again.
+const giveKeysInWindow = (win, target) => {
+  if (win.gameId !== focusedGameId || win.minimized || giveKeysToModal()) {
+    win.el.lastFocusedElement = target;
+    return;
+  }
+  target.focus({ preventScroll: true });
+};
+
+// True when the element is in a window that is behind the active window,
+// such as a window that a program from Run went in front of. Like XP, a
+// dialog that closes does not bring that window back to the top: the
+// window keeps the element for the time that it becomes active again.
+const keepsKeysForLater = (element) => {
+  const win = openWindows.get(
+    element.closest(".xp-window[data-game]")?.dataset.game,
+  );
+  if (!win || !focusedGameId || win.gameId === focusedGameId) return false;
+  win.el.lastFocusedElement = element;
+  return true;
+};
+window.XPShell = { ...window.XPShell, keepsKeysForLater };
+
 // Makes a window the active one, like XP's foreground window: on top, with
 // the active task button, the title and the sound. It does not move the keys.
 const activateWindow = (win) => {
@@ -1493,6 +1569,7 @@ const closeGameWindow = (gameId, { skipBeforeClose = false } = {}) => {
   win.mountedApplication?.unmount?.();
   win.el.remove();
   openWindows.delete(gameId);
+  win.closeListeners?.forEach((listener) => listener());
 
   if (focusedGameId === gameId) {
     focusedGameId = null;
@@ -1587,7 +1664,7 @@ const wireDrag = (win) => {
           height: win.el.style.height,
         };
       }
-      persistWindowPlacement(win);
+      persistWindowPlacement(win, { moved: true });
     };
 
     try {
@@ -1715,7 +1792,7 @@ const wireResize = (win) => {
         }
         updateSize();
         win.resizing = false;
-        persistWindowPlacement(win);
+        persistWindowPlacement(win, { moved: true });
         win.mountedApplication?.bounds?.(
           win.el.offsetLeft,
           win.el.offsetTop,
@@ -2028,7 +2105,7 @@ const startMoveSizeMode = (win, mode) => {
       return;
     }
     // Same as finishing a pointer drag or resize.
-    persistWindowPlacement(win);
+    persistWindowPlacement(win, { moved: true });
     win.mountedApplication?.bounds?.(
       el.offsetLeft,
       el.offsetTop,

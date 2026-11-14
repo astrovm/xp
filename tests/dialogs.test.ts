@@ -115,6 +115,40 @@ describe("XP dialogs", () => {
     expect(isAltGr({ key: "e" })).toBeFalse();
   });
 
+  // A Russian keyboard sends Ctrl+Alt+A as "ф" on KeyA. With no layout
+  // map and no learned key, the letter of another script is the plain
+  // letter of the key, so Ctrl+Alt+A is no AltGr key there, like on a US
+  // keyboard. AltGr on such a layout types signs and Latin letters.
+  test("tells Ctrl+Alt from AltGr on a layout that the shell did not learn", () => {
+    const { isAltGr, typedCharacterOf } = loadDialogs();
+    const ctrlAlt = (key, code) => ({
+      key,
+      code,
+      ctrlKey: true,
+      altKey: true,
+      metaKey: false,
+      getModifierState: () => false,
+    });
+    for (const [key, code] of [
+      ["ф", "KeyA"],
+      ["Ф", "KeyA"],
+      ["ς", "KeyW"],
+      ["a", "KeyA"],
+    ]) {
+      expect(isAltGr(ctrlAlt(key, code))).toBeFalse();
+      expect(typedCharacterOf(ctrlAlt(key, code))).toBe("");
+    }
+    for (const [key, code] of [
+      ["€", "KeyE"],
+      ["ę", "KeyE"],
+      ["@", "KeyQ"],
+      ["ф", "Digit1"],
+    ]) {
+      expect(isAltGr(ctrlAlt(key, code))).toBeTrue();
+      expect(typedCharacterOf(ctrlAlt(key, code))).toBe(key);
+    }
+  });
+
   test("gives each button set exactly one default button", () => {
     const dialogs = loadDialogs();
     Object.values(dialogs.BUTTON_SETS).forEach((buttons) => {

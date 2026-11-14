@@ -10,6 +10,8 @@ export const accessoryApplications = [
     "CommandPrompt.png",
     "terminal",
     {
+      // XP names a taskbar group by the description of the program file.
+      groupTitle: "Windows Command Processor",
       window: {
         width: 668,
         height: 338,

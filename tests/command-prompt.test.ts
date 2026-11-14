@@ -262,8 +262,10 @@ describe("Command Prompt session", () => {
     expect(context.ran.at(-1)).toEqual(["calc.exe", "", here]);
     expect(run('start "" mspaint')).toBe("");
     expect(context.ran.at(-1)).toEqual(["mspaint", "", here]);
+    // START /D gives the program its folder, like XP.
+    fs.createFolder(fs.DRIVE_C, "x y");
     expect(run('start /min /d "C:\\x y" mspaint a.bmp')).toBe("");
-    expect(context.ran.at(-1)).toEqual(["mspaint", "a.bmp", here]);
+    expect(context.ran.at(-1)).toEqual(["mspaint", "a.bmp", "C:\\x y"]);
     // cmd runs a new cmd in this window: the window starts it. START opens
     // a new Command Prompt window.
     expect(session.execute("cmd")).toEqual({
@@ -278,17 +280,17 @@ describe("Command Prompt session", () => {
     expect(run("start cmd /k dir")).toBe("");
     expect(run('start "Build" dir /w')).toBe("");
     expect(run("start")).toBe("");
-    expect(context.launched).toEqual([
+    const folder = session.cwd;
+    expect(context.launched).toEqual(
       [
+        ["/k dir", undefined],
+        ["/K dir /w", "Build"],
+        ["", undefined],
+      ].map(([text, title]) => [
         "__command-prompt",
-        { arguments: "/k dir", from: session, title: undefined },
-      ],
-      [
-        "__command-prompt",
-        { arguments: "/K dir /w", from: session, title: "Build" },
-      ],
-      ["__command-prompt", { arguments: "", from: session, title: undefined }],
-    ]);
+        { arguments: text, from: session, folder, fresh: false, title },
+      ]),
+    );
     expect(run("winword note.txt")).toStartWith("'winword' is not recognized");
     expect(run("start nothing")).toBe(
       "The system cannot find the file specified.",
@@ -301,13 +303,14 @@ describe("Command Prompt session", () => {
   });
 
   test("handles title, cls, ver, help, exit, and unknown commands", () => {
+    // The window shows the title of its cmd.
     expect(run("title Build Window")).toBe("");
-    expect(context.title).toBe("Build Window");
+    expect(session.title).toBe("Build Window");
     expect(run("title")).toBe("");
-    expect(context.title).toBe("C:\\WINDOWS\\system32\\cmd.exe");
+    expect(session.title).toBe("C:\\WINDOWS\\system32\\cmd.exe");
     run("title Other");
     expect(run('title ""')).toBe("");
-    expect(context.title).toBe("C:\\WINDOWS\\system32\\cmd.exe");
+    expect(session.title).toBe("C:\\WINDOWS\\system32\\cmd.exe");
     expect(session.execute("cls")).toEqual({ clear: true, output: "" });
     expect(run("ver")).toBe("\nMicrosoft Windows XP [Version 5.1.2600]");
     expect(run("help")).toContain("TYPE     Displays the contents");
@@ -1233,6 +1236,55 @@ describe("Command Prompt like cmd.exe", () => {
     fs.remove(logs);
     expect(run("y")).toBe("        1 file(s) copied.");
     expect(run("type out.txt")).toBe("");
+  });
+
+  // In the XP VM, COPY lists its files when it starts. A file that is
+  // gone after a question is left out with no text, and a file that is
+  // new is not copied.
+  test("COPY leaves out a file that goes while it asks, like XP", () => {
+    run("cd /d C:\\");
+    const src = folderAt("src");
+    const dst = folderAt("dst");
+    file(src, "a.txt", 1, "a\n");
+    const b = file(src, "b.txt", 1, "b\n");
+    file(src, "c.txt", 1, "c\n");
+    file(dst, "a.txt", 1, "old\n");
+    run("cd src");
+    expect(run("copy *.txt C:\\dst")).toBe("a.txt");
+    fs.move(b.id, dst);
+    file(src, "bb.txt", 1, "bb\n");
+    expect(run("y")).toBe("c.txt\n        2 file(s) copied.");
+    expect(fs.getNode(b.id).parent).toBe(dst);
+    expect(fs.findChild(dst, "bb.txt")).toBeNull();
+    expect(run("type C:\\dst\\a.txt")).toBe("a");
+  });
+
+  // In the XP VM, cmd makes the full path of a path first, like
+  // GetFullPathName: "." and ".." go by their text, so "nope\.." is the
+  // folder itself, also when nope does not exist. ".." stops at the root.
+  test("internal commands count . and .. by the text of the path, like XP", () => {
+    run("cd /d C:\\");
+    const w = folderAt("w");
+    file(w, "a.txt", 1, "text\n");
+    run("cd w");
+    expect(run("type nope\\..\\a.txt")).toBe("text");
+    expect(run("dir /b nope\\..\\a.txt")).toBe("a.txt");
+    expect(run("copy nope\\..\\a.txt nope2\\..\\b.txt")).toBe(
+      "        1 file(s) copied.",
+    );
+    expect(run("type .\\nope\\.\\..\\b.txt")).toBe("text");
+    expect(run("type C:\\..\\..\\w\\a.txt")).toBe("text");
+    expect(run("md nope3\\..\\made")).toBe("");
+    expect(fs.findChild(w, "made")).toBeTruthy();
+    expect(fs.findChild(w, "nope3")).toBeNull();
+    expect(run("ren nope\\..\\b.txt c.txt")).toBe("");
+    expect(fs.findChild(w, "c.txt")).toBeTruthy();
+    expect(run("del nope\\..\\c.txt")).toBe("");
+    expect(fs.findChild(w, "c.txt")).toBeNull();
+    run("cd nope\\..\\made");
+    expect(session.cwd).toBe(fs.findChild(w, "made").id);
+    run("cd nope\\..\\..\\..");
+    expect(session.cwd).toBe(fs.DRIVE_C);
   });
 
   test("wildcards follow the DOS rules", () => {

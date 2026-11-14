@@ -227,12 +227,20 @@
   };
 
   // The plain characters of a key place. A place that the shell has not
-  // learned gives its US letter or digit.
-  const plainCharactersOf = (code) => {
+  // learned gives its US letter or digit. The key that is pressed can
+  // tell more: on a letter place, a letter that is not Latin, such as
+  // "ф" on a Russian keyboard, is the plain letter of a layout for
+  // another script. AltGr on such a layout types Latin text and signs,
+  // such as "€". (A known limit: Ukrainian AltGr+Г types "ґ", which
+  // counts as plain until the user types Г alone.)
+  const plainCharactersOf = (code, key) => {
     const known = plainCharacters.get(code);
     if (known) return known;
     const place = /^(?:Key([A-Z])|Digit(\d))$/.exec(code ?? "");
-    return new Set(place ? [(place[1] ?? place[2]).toLowerCase()] : []);
+    const plain = new Set(place ? [(place[1] ?? place[2]).toLowerCase()] : []);
+    if (place?.[1] && /^\p{L}$/u.test(key) && !/\p{Script=Latin}/u.test(key))
+      plain.add(key.toLowerCase());
+    return plain;
   };
 
   // AltGr types a character, such as "ę" on the E key of a Polish
@@ -250,7 +258,7 @@
     if (event.ctrlKey && event.altKey)
       return (
         Array.from(event.key).length === 1 &&
-        !plainCharactersOf(event.code).has(event.key.toLowerCase())
+        !plainCharactersOf(event.code, event.key).has(event.key.toLowerCase())
       );
     return !event.altKey && event.getModifierState?.("AltGraph") === true;
   };
@@ -743,6 +751,10 @@
     // Then a modal dialog, a dialog under this one, the active window or
     // the desktop gets them, like XP. They never stay on the page.
     const giveKeysBack = () => {
+      // A window that went behind another one while the dialog was open,
+      // such as behind a program that Run started, does not come back to
+      // the top. The window in front has the keys.
+      if (globalThis.XPShell?.keepsKeysForLater(previouslyFocused)) return;
       if (
         previouslyFocused !== document.body &&
         previouslyFocused.isConnected &&

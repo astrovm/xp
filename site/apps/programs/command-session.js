@@ -33,6 +33,19 @@ const splitProgram = (line) => {
 // True for a name that starts cmd.exe.
 const isShellName = (name) => /^(?:cmd|command)(?:\.(?:exe|com))?$/i.test(name);
 
+// The switches of START that change nothing here: XP's priorities, and
+// the memory space of a 16-bit program.
+const START_SWITCHES = new Set([
+  "separate",
+  "shared",
+  "low",
+  "normal",
+  "high",
+  "realtime",
+  "abovenormal",
+  "belownormal",
+]);
+
 // The command that cmd runs with /C or /K, like XP's cmd.exe. The command
 // can touch the switch, as in "cmd /cdir". Like XP, a command that starts
 // with a quote loses that quote and the last quote, and the text after the
@@ -199,11 +212,14 @@ function* ask(text, choices) {
 export class CommandSession {
   // from is the session that starts this one, such as the cmd that runs
   // "cmd" or "start". Like XP, the new session starts in its folder, with
-  // a copy of its variables.
-  constructor(context, { from = null } = {}) {
+  // a copy of its variables. folder is the folder of START /D, and fresh
+  // is START /I: the session gets the variables that cmd starts with.
+  constructor(context, { from = null, folder = null, fresh = false } = {}) {
     this.context = context;
     this.fs = context.fs;
-    this.cwd = from?.cwd ?? this.fs.USER_PROFILE;
+    this.cwd = folder ?? from?.cwd ?? this.fs.USER_PROFILE;
+    // The title of the window while this session waits for a command.
+    this.title = DEFAULT_TITLE;
     // The profile folder and the user name come from the file system, so
     // the prompt and the variables always show the real user.
     const profile = this.fs.getPath(this.fs.USER_PROFILE);
@@ -216,7 +232,7 @@ export class CommandSession {
       .join("\\");
     const temp = `${shortProfile}\\LOCALS~1\\Temp`;
     this.environment = new Map(
-      from?.environment ?? [
+      (!fresh && from?.environment) || [
         ["COMPUTERNAME", COMPUTER_NAME],
         ["COMSPEC", DEFAULT_TITLE],
         ["HOMEDRIVE", "C:"],
@@ -286,51 +302,60 @@ export class CommandSession {
     return this.question?.text ?? `${this.displayPath()}>`;
   }
 
-  resolve(path, options = {}) {
-    let value = path.trim();
-    if (!value || value === ".") return this.cwd;
-    value = value.replaceAll("/", "\\");
-    const driveMatch = value.match(/^([cdf]):(?:\\|$)/i);
-    // A drive that does not exist has no path.
-    if (!driveMatch && /^[a-z]:/i.test(value)) return null;
-    let current = driveMatch
-      ? {
-          c: this.fs.DRIVE_C,
-          d: this.fs.DRIVE_D,
-          f: this.fs.DRIVE_F,
-        }[driveMatch[1].toLowerCase()]
-      : value.startsWith("\\")
-        ? this.driveRoot(this.cwd)
-        : this.cwd;
-    if (driveMatch) value = value.slice(driveMatch[0].length);
-    else if (value.startsWith("\\")) value = value.slice(1);
-    const segments = value.split("\\").filter(Boolean);
-    for (const segment of segments) {
-      if (segment === ".") continue;
-      if (segment === "..") {
-        // Like cmd.exe, ".." stops at the drive root.
-        const parent = this.fs.getParent(current);
-        if (parent && parent.id !== this.fs.MY_COMPUTER) current = parent.id;
-        continue;
-      }
-      const child = this.fs.findChild(current, segment);
-      if (!child) {
-        if (options.parent && segment === segments.at(-1)) {
-          return { parentId: current, name: segment };
-        }
-        return null;
-      }
-      current = child.id;
+  // The full path of a path as typed, like XP's GetFullPathName: a path
+  // starts at the current folder, "\" starts it at the root of the drive,
+  // and "." and ".." go away by their text before any name is looked up.
+  // So "nope\..\a.txt" is "a.txt" here, also when "nope" does not exist.
+  // ".." stops at the root of the drive. It is null for a drive that does
+  // not exist, and for a drive with no "\" after it, such as "C:a.txt".
+  fullPath(path) {
+    const value = path.trim().replaceAll("/", "\\");
+    const [root, ...folders] = this.displayPath().split("\\");
+    let start = root;
+    let names;
+    if (/^[a-z]:/i.test(value)) {
+      if (!/^[cdf]:(?:\\|$)/i.test(value)) return null;
+      start = value.slice(0, 2).toUpperCase();
+      names = value.slice(2).split("\\");
+    } else
+      names = value.startsWith("\\")
+        ? value.split("\\")
+        : [...folders, ...value.split("\\")];
+    const kept = [];
+    for (const name of names) {
+      if (name === "..") kept.pop();
+      else if (name && name !== ".") kept.push(name);
     }
-    return options.parent ? { node: this.fs.getNode(current) } : current;
+    return `${start}\\${kept.join("\\")}`;
   }
 
+  // The item at a path as typed, by its full path. With options.parent, it
+  // is { node } for an item that exists, or { parentId, name } when only
+  // the last name of the path is missing.
+  resolve(path, options = {}) {
+    const full = this.fullPath(path);
+    if (!full) return null;
+    // The current folder is the folder of the session, also when another
+    // item in the Recycle Bin has the same path. A current folder that is
+    // gone is the root of drive C:.
+    const id =
+      full === this.fullPath("") && this.fs.getNode(this.cwd)
+        ? this.cwd
+        : this.fs.resolvePath(full);
+    if (!options.parent) return id;
+    if (id) return { node: this.fs.getNode(id) };
+    const cut = full.lastIndexOf("\\");
+    const parentId = this.fs.resolvePath(full.slice(0, cut + 1));
+    return parentId ? { parentId, name: full.slice(cut + 1) } : null;
+  }
+
+  // The drive of a folder that exists.
   driveRoot(id) {
     let node = this.fs.getNode(id);
-    while (node?.parent && node.parent !== this.fs.MY_COMPUTER) {
+    while (node.parent && node.parent !== this.fs.MY_COMPUTER) {
       node = this.fs.getParent(node.id);
     }
-    return node?.id || this.fs.DRIVE_C;
+    return node.id;
   }
 
   expandEnvironment(value) {
@@ -524,17 +549,17 @@ export class CommandSession {
       for (const [index, first] of source.items.entries()) {
         let item = first;
         let from = item.parent;
+        // Like XP, a file of a wildcard or a folder that left its folder
+        // while an earlier question was open gives no text: COPY and MOVE
+        // go on with the next file.
+        if (
+          source.many &&
+          session.findByPath(itemPaths[index]).error === NOT_FOUND
+        )
+          continue;
         if (source.many) out.push(foundAt[index]);
         const name = target.nameOf(item);
         let folderId = target.folderId;
-        if (
-          !move &&
-          from === folderId &&
-          item.name.toLowerCase() === name.toLowerCase()
-        ) {
-          out.push("The file cannot be copied onto itself.");
-          continue;
-        }
         try {
           session.fs.validateName(name);
         } catch {
@@ -546,7 +571,9 @@ export class CommandSession {
         // and after each question, by path, like XP. MOVE takes no file
         // out of the Recycle Bin. COPY reads a file from a current folder
         // that is in the Recycle Bin, but a folder that goes there after
-        // the command starts has a new path, so it is gone.
+        // the command starts has a new path, so it is gone. Each check
+        // looks at the file and the folder that it finds: COPY does not
+        // copy a file onto itself.
         const refusal = () => {
           const found = session.findByPath(itemPaths[index]);
           if (found.error) return found.error;
@@ -554,10 +581,16 @@ export class CommandSession {
           item = found.node;
           from = item.parent;
           folderId = session.fs.resolvePath(targetPath);
-          return session.fs.getNode(folderId)?.type !== "folder" ||
+          if (
+            session.fs.getNode(folderId)?.type !== "folder" ||
             !session.takesFiles(folderId) ||
             (move && !session.takesFiles(from))
-            ? PATH_NOT_FOUND
+          )
+            return PATH_NOT_FOUND;
+          return !move &&
+            from === folderId &&
+            item.name.toLowerCase() === name.toLowerCase()
+            ? "The file cannot be copied onto itself."
             : null;
         };
         if (refusal()) {
@@ -1175,25 +1208,26 @@ export class CommandSession {
   }
 
   // MD names the path as typed when it exists, and makes the folders on
-  // the way that do not exist yet, like cmd.exe.
+  // the way that do not exist yet, like cmd.exe. Like XP, it makes the
+  // folders of the full path: "nope\..\made" makes only "made".
   command_md(args) {
     const typed = args.join(" ");
     if (!typed) return { output: SYNTAX_ERROR };
     if (this.resolve(typed))
       return { output: `A subdirectory or file ${typed} already exists.` };
-    const parts = typed.replaceAll("/", "\\").split("\\");
-    for (let index = 1; index <= parts.length; index += 1) {
-      if (!parts[index - 1]) continue;
-      const target = this.resolve(parts.slice(0, index).join("\\"), {
-        parent: true,
-      });
-      if (target?.node) continue;
-      if (
-        this.fs.getNode(target?.parentId)?.type !== "folder" ||
-        !this.takesFiles(target.parentId)
-      )
+    const full = this.fullPath(typed);
+    if (!full) return { output: PATH_NOT_FOUND };
+    const [root, ...names] = full.split("\\");
+    let parentId = this.fs.resolvePath(`${root}\\`);
+    for (const name of names) {
+      const child = this.fs.findChild(parentId, name);
+      if (child?.type === "folder") {
+        parentId = child.id;
+        continue;
+      }
+      if (child || !this.takesFiles(parentId))
         return { output: PATH_NOT_FOUND };
-      this.context.fileOps.createFolder(target.parentId, target.name);
+      parentId = this.context.fileOps.createFolder(parentId, name).id;
     }
     return { output: "" };
   }
@@ -1305,39 +1339,115 @@ export class CommandSession {
     return { output: "" };
   }
 
+  // TITLE names the window of this cmd. The window shows the title, and
+  // the command line after it while a command runs, like XP.
   command_title(args) {
-    this.context.setTitle(args.join(" ") || DEFAULT_TITLE);
+    this.title = args.join(" ") || DEFAULT_TITLE;
     return { output: "" };
   }
 
   // START opens a new window, like XP. A first argument in quotes is the
   // title of a new Command Prompt window. With no command, START opens a
-  // new Command Prompt, and a command of cmd runs in a new one that stays
-  // open. Each new Command Prompt starts in this folder.
+  // new Command Prompt, and a cmd command, or cmd itself, runs in a new
+  // one that stays open. Each new Command Prompt starts in this folder.
+  // The switches work like XP:
+  // - /D folder: the new cmd, or the program, starts in that folder.
+  // - /B: no new window opens. A cmd command, or cmd, runs in a new cmd in
+  //   this window, and EXIT goes back to this one. A program opens its
+  //   own window as always.
+  // - /MIN and /MAX: the new window opens minimized or maximized.
+  // - /WAIT: this cmd waits until the new window closes.
+  // - /I: the new cmd gets the variables that cmd starts with, not a copy
+  //   of the ones of this cmd.
+  // - /SEPARATE, /SHARED and the priority switches change nothing here.
   command_start(args, line) {
     let body = line.slice(line.search(/\s|$/)).trim();
     const titled = /^"([^"]*)"?\s*/.exec(body);
     const title = titled?.[1] || undefined;
     if (titled) body = body.slice(titled[0].length);
-    // The switches of START, such as /MIN or /D with its folder, change
-    // only how the window shows here.
-    body = body.replace(/^(?:\/d\s*(?:"[^"]*"|\S+)\s*|\/[a-z]+\s*)*/i, "");
+    const start = {
+      folder: this.cwd,
+      show: null,
+      wait: false,
+      background: false,
+      fresh: false,
+    };
+    for (;;) {
+      const folder = /^\/d\s*("[^"]*"?|[^\s"]*)\s*/i.exec(body);
+      const named = /^\/([^\s/]+)\s*/.exec(body);
+      if (!named) break;
+      body = body.slice((folder ?? named)[0].length);
+      if (folder) {
+        const id = this.resolve(folder[1].replaceAll('"', ""));
+        if (this.fs.getNode(id)?.type !== "folder")
+          return { output: "The current directory is invalid." };
+        start.folder = id;
+        continue;
+      }
+      const name = named[1].toLowerCase();
+      if (name === "min" || name === "max") start.show = name;
+      else if (name === "wait") start.wait = true;
+      else if (name === "b") start.background = true;
+      else if (name === "i") start.fresh = true;
+      else if (!START_SWITCHES.has(name))
+        return { output: `Invalid switch - "/${named[1]}".` };
+    }
+    const { program, rest } = body ? splitProgram(body) : {};
+    const name = program?.toLowerCase();
+    // With /B, a cmd command or cmd runs in a new cmd in this window.
+    if (
+      start.background &&
+      (!body || isShellName(name) || this[`command_${name}`])
+    )
+      return {
+        output: "",
+        shell: {
+          ...(isShellName(name)
+            ? cmdArguments(rest)
+            : { command: body || undefined, close: false }),
+          folder: start.folder,
+          fresh: start.fresh,
+        },
+      };
     const newPrompt = (text) =>
-      this.context.launchApplication("__command-prompt", {
-        arguments: text,
-        from: this,
-        title,
-      });
-    if (!body) return newPrompt("") ? { output: "" } : { output: NOT_FOUND };
-    const { program, rest } = splitProgram(body);
-    const name = program.toLowerCase();
-    if (this[`command_${name}`])
-      return newPrompt(`/K ${body}`) ? { output: "" } : { output: NOT_FOUND };
+      this.opened(
+        this.context.launchApplication("__command-prompt", {
+          arguments: text,
+          from: this,
+          folder: start.folder,
+          fresh: start.fresh,
+          title,
+        }),
+        start,
+      );
+    if (!body) return newPrompt("");
+    if (this[`command_${name}`]) return newPrompt(`/K ${body}`);
+    if (isShellName(name)) return newPrompt(rest);
     const pathId = this.resolve(tokenize(body).join(" "));
     if (pathId && this.fs.open(pathId)) return { output: "" };
-    return this.launch(name, rest, { newWindow: true, title })
-      ? { output: "" }
-      : { output: NOT_FOUND };
+    return this.opened(
+      this.context.runProgram(name, rest, this.displayPath(start.folder)),
+      start,
+    );
+  }
+
+  // The result of START for the window that it opens, or that it may
+  // still open when its program loads: it opens minimized or maximized,
+  // and with /WAIT, cmd waits until it closes. A window that does not
+  // open, such as a program that only shows a message, has nothing to
+  // wait for.
+  opened(launched, { show, wait }) {
+    if (!launched) return { output: NOT_FOUND };
+    const window = Promise.resolve(launched).then((win) => {
+      if (win?.gameId && show) this.context.showWindow(win, show);
+      return win?.gameId ? win : null;
+    });
+    return wait
+      ? {
+          output: "",
+          wait: window.then((win) => win && this.context.whenClosed(win)),
+        }
+      : { output: "" };
   }
 
   command_help() {
@@ -1367,15 +1477,8 @@ export class CommandSession {
   // A program runs like from Run, with paths from the current folder, like
   // XP: "notepad a.txt" opens or offers to create a.txt here. Like cmd.exe,
   // the program gets the text after its name as it is typed, and reads its
-  // own arguments. With newWindow, as from START, cmd opens a new Command
-  // Prompt window that starts in this folder.
-  launch(command, rest, { newWindow = false, title } = {}) {
-    if (newWindow && isShellName(command))
-      return !!this.context.launchApplication("__command-prompt", {
-        arguments: rest,
-        from: this,
-        title,
-      });
+  // own arguments.
+  launch(command, rest) {
     return this.context.runProgram(command, rest, this.displayPath());
   }
 }

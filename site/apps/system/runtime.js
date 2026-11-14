@@ -34,6 +34,32 @@ export const createSystemRuntime = (context) => {
     wireProjectSettings,
   } = context;
 
+  // The folder that the Address bar names. Like XP, a full path counts
+  // "." and ".." by its text. Other text starts at the open folder: ".."
+  // is the folder above it, and each name must be a folder in the one
+  // before it. XP finds no folder for ".", which it then takes as a web
+  // address.
+  const addressFolderOf = (text, from) => {
+    const full = fs.resolvePath(text);
+    if (full) return full;
+    const parts = text
+      .trim()
+      .split(/[\\/]+/)
+      .filter(Boolean);
+    if (!parts.length) return null;
+    let id = from;
+    for (const part of parts) {
+      id =
+        part === ".."
+          ? fs.getParent(id)?.id
+          : part === "."
+            ? null
+            : fs.findChild(id, part)?.id;
+      if (!id) return null;
+    }
+    return id;
+  };
+
   const EXPLORER_VIEW_LABELS = {
     filmstrip: "Filmstrip",
     thumbnails: "Thumbnails",
@@ -893,7 +919,12 @@ export const createSystemRuntime = (context) => {
             const input = chrome.querySelector(".explorer-address input");
             // Explorer opens only folders, never one in the Recycle Bin.
             // Otherwise the address goes back to the open folder.
-            if (!navigateExplorer(win, fs.resolvePath(input.value)))
+            if (
+              !navigateExplorer(
+                win,
+                addressFolderOf(input.value, win.currentFolderId),
+              )
+            )
               input.value = fs.getPath(win.currentFolderId);
           }
         } catch (error) {
@@ -927,7 +958,10 @@ export const createSystemRuntime = (context) => {
           explorerSubmenu.hidden = true;
       });
       chrome.querySelector("input").addEventListener("change", (event) => {
-        const destination = fs.resolvePath(event.target.value);
+        const destination = addressFolderOf(
+          event.target.value,
+          win.currentFolderId,
+        );
         if (destination && fs.getNode(destination)?.type === "folder")
           navigateExplorer(win, destination);
         else event.target.value = fs.getPath(win.currentFolderId);

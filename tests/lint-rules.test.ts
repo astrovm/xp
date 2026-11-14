@@ -133,6 +133,13 @@ test("await-async-expect follows the check through promise chains and object met
         "expect(x).resolves.toBe(1).finally(f);",
         "await expect(x).resolves.toBe(1).finally;",
         "const o7 = { async check() { return expect(p).resolves.toBe(1); } }; const { check } = o7; await check();",
+        // Lost: this in another way than this.name, a method that the code
+        // adds later, and an object that other code can get.
+        "const o12 = { async check() { return expect(p).resolves.toBe(1); }, run() { const self = this; self.check(); } }; await o12.check(); await o12.run();",
+        "const o13 = { async check() { return expect(p).resolves.toBe(1); }, run() { this[name](); } }; await o13.check();",
+        "const o14 = { async check() { return expect(p).resolves.toBe(1); } }; await o14.check(); o14.run = function () { this.check(); };",
+        "const o15 = { async check() { return expect(p).resolves.toBe(1); } }; await o15.check(); delete o15.check;",
+        "export const o16 = { async check() { return expect(p).resolves.toBe(1); } }; await o16.check();",
         // Waited for.
         "await p.then(() => { return expect(x).resolves.toBe(1); });",
         "await p.then(f, () => expect(x).rejects.toThrow());",
@@ -145,7 +152,31 @@ test("await-async-expect follows the check through promise chains and object met
       ].join("\n"),
       "await-async-expect",
     ),
-  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  ).toEqual([
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+  ]);
+});
+
+test("await-async-expect does not follow a method of a global object of a script", () => {
+  // Another script can call the method with no wait.
+  const problems = new Linter({ configType: "flat" })
+    .verify(
+      [
+        "const o1 = { async check() { return expect(p).resolves.toBe(1); } }; function run1() { return o1.check(); }",
+        "function scope() { const o2 = { async check() { return expect(p).resolves.toBe(1); } }; return o2.check(); }",
+      ].join("\n"),
+      [
+        {
+          files: ["**/*.js"],
+          languageOptions: { sourceType: "script" },
+          plugins: { local: localRules },
+          rules: { "local/await-async-expect": "error" },
+        },
+      ],
+      "sample.test.js",
+    )
+    .map((problem) => problem.line);
+  expect(problems).toEqual([1]);
 });
 
 test("the lint config runs the test rules on every test file", async () => {

@@ -423,6 +423,10 @@
       currentId = WELL_KNOWN.RECYCLE_BIN;
       segments.shift();
     } else {
+      // A path with no drive has no folder to start from, so "." and ".."
+      // have no meaning in it. XP finds no folder for them.
+      if (segments.some((segment) => segment === "." || segment === ".."))
+        return null;
       currentId = WELL_KNOWN.MY_COMPUTER;
     }
 

@@ -204,11 +204,16 @@ test("programs launch other applications, save files and set the wallpaper", asy
   await runCommand(s, "notepad");
 
   expect(context.launchApplication("missing")).toBeFalse();
-  expect(context.launchApplication("__my-documents")).toBeTrue();
+  // It gives the window, or a promise of the window while it loads.
+  const launched = await context.launchApplication("__my-documents");
   await settle();
+  expect(launched.gameId).toBe("__my-documents");
   expect(
-    !!s.document.querySelector('.xp-window[data-game="__my-documents"]'),
+    launched.el ===
+      s.document.querySelector('.xp-window[data-game="__my-documents"]'),
   ).toBeTrue();
+  // A window that is open already is the one that it gives.
+  expect(context.launchApplication("__my-documents") === launched).toBeTrue();
 
   const fs = s.window.VirtualFS;
   const file = context.writeFile(fs.MY_DOCUMENTS, "saved.txt", "old");

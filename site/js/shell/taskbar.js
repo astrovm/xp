@@ -26,7 +26,7 @@ const setWindowAttention = (gameId, needsAttention = true) => {
   renderTaskButtons();
   return true;
 };
-window.XPShell = Object.assign(window.XPShell || {}, { setWindowAttention });
+window.XPShell = { ...window.XPShell, setWindowAttention };
 
 const positionTaskbarMenu = (menu, clientX, clientY) => {
   menu.hidden = false;
@@ -91,6 +91,20 @@ const activateTaskButton = (gameId) => {
   }
 };
 
+// The taskbar group of a window: Explorer for a folder window, else the
+// program of the window.
+const EXPLORER_GROUP = "__explorer";
+const taskGroupOf = (gameId, win) =>
+  win.type === "system" && win.currentFolderId
+    ? EXPLORER_GROUP
+    : (win.applicationId ?? gameId);
+const taskGroupTitle = (key) => {
+  if (key === EXPLORER_GROUP) return "Windows Explorer";
+  // Only a program with many windows, such as the Command Prompt, has
+  // more than one window to group. Each one has a group title.
+  return window.XPApplicationRegistry.get(key).groupTitle;
+};
+
 // Task buttons for single windows are reused across renders so a focus change
 // only updates their state instead of rebuilding every button and listener.
 const taskButtonCache = new Map();
@@ -101,24 +115,32 @@ const renderTaskButtons = () => {
   let windows = [...openWindows.entries()].filter(
     ([, win]) => !(win.minimized && win.hideWhenMinimized),
   );
-  const explorerWindows = windows.filter(
-    ([, win]) => win.type === "system" && win.currentFolderId,
-  );
-  const groupExplorer =
-    getTaskbarSettings().group &&
-    explorerWindows.length >= 3 &&
-    (document.getElementById("taskbar").classList.contains("vertical")
+  // Like XP, a crowded taskbar puts the windows of one program on one
+  // button. It groups the program with the most windows first, and goes
+  // on while the buttons do not fit. Folder windows are all Explorer.
+  const crowded = () =>
+    document.getElementById("taskbar").classList.contains("vertical")
       ? windows.length * 28 > container.clientHeight
       : windows.length * 110 >
-        container.clientWidth * getTaskbarSettings().rows);
-  if (groupExplorer) {
-    const first = windows.indexOf(explorerWindows[0]);
-    windows = windows.filter((entry) => !explorerWindows.includes(entry));
+        container.clientWidth * getTaskbarSettings().rows;
+  while (getTaskbarSettings().group && crowded()) {
+    const programs = Map.groupBy(
+      windows.filter(([, win]) => !win.groupedWindows),
+      ([gameId, win]) => taskGroupOf(gameId, win),
+    );
+    const [key, members] = [...programs].reduce(
+      (most, entry) => (entry[1].length > most[1].length ? entry : most),
+      ["", []],
+    );
+    if (members.length < 2) break;
+    const first = windows.indexOf(members[0]);
+    windows = windows.filter((entry) => !members.includes(entry));
     windows.splice(first, 0, [
-      "__explorer-group",
+      `__group-${key}`,
       {
-        title: `${explorerWindows.length} Windows Explorer`,
-        groupedWindows: explorerWindows,
+        title: `${members.length} ${taskGroupTitle(key)}`,
+        icon: key,
+        groupedWindows: members,
       },
     ]);
   }
@@ -189,11 +211,15 @@ const renderTaskButtons = () => {
       const button = document.createElement("button");
       button.className = "task-button task-button-grouped";
       button.dataset.group = gameId;
-      const groupIcon = document.createElement("img");
-      groupIcon.src = "assets/xp/icons/NewFolder.png";
-      groupIcon.alt = "";
-      groupIcon.width = 16;
-      groupIcon.height = 16;
+      const groupIcon =
+        win.icon === EXPLORER_GROUP
+          ? Object.assign(document.createElement("img"), {
+              src: "assets/xp/icons/NewFolder.png",
+              alt: "",
+              width: 16,
+              height: 16,
+            })
+          : createGameIconElement(win.icon, "task-icon");
       const groupLabel = document.createElement("span");
       groupLabel.className = "task-label";
       groupLabel.textContent = win.title;
@@ -205,8 +231,7 @@ const renderTaskButtons = () => {
         menu.replaceChildren();
         for (const [id, member] of win.groupedWindows) {
           const item = document.createElement("button");
-          // Grouped windows are Explorer windows, which are always titled.
-          item.textContent = member.title;
+          item.textContent = windowTitleOf(member);
           item.setAttribute("role", "menuitem");
           item.addEventListener("click", () => {
             closeTaskbarMenus();
@@ -249,7 +274,6 @@ const renderTaskButtons = () => {
           [
             "Close Group",
             async () => {
-              // Explorer windows have no close confirmation to refuse.
               for (const [id] of win.groupedWindows) await closeGameWindow(id);
             },
           ],
@@ -330,9 +354,6 @@ const renderTaskButtons = () => {
     overflow.addEventListener("click", () => {
       const menu = document.getElementById("taskbar-overflow-menu");
       menu.innerHTML = "";
-      const explorerWindows = hidden.filter(
-        ([, win]) => win.type === "system" && win.currentFolderId,
-      );
       const appendWindowItem = ([gameId, win]) => {
         const item = document.createElement("button");
         item.type = "button";
@@ -356,22 +377,21 @@ const renderTaskButtons = () => {
         });
         menu.appendChild(item);
       };
-      // Group only genuinely similar windows. Other applications stay
-      // separate menu items rather than being presented as one app.
-      if (explorerWindows.length > 1) {
-        const heading = document.createElement("span");
-        heading.className = "taskbar-group-heading";
-        heading.setAttribute("role", "presentation");
-        heading.textContent = `Windows Explorer (${explorerWindows.length})`;
-        menu.appendChild(heading);
-        explorerWindows.forEach(appendWindowItem);
+      // Windows of one program go under one heading, like a taskbar
+      // group. A program with one window stays a plain item.
+      const programs = Map.groupBy(hidden, ([gameId, win]) =>
+        taskGroupOf(gameId, win),
+      );
+      for (const [key, members] of programs) {
+        if (members.length > 1) {
+          const heading = document.createElement("span");
+          heading.className = "taskbar-group-heading";
+          heading.setAttribute("role", "presentation");
+          heading.textContent = `${taskGroupTitle(key)} (${members.length})`;
+          menu.appendChild(heading);
+        }
+        members.forEach(appendWindowItem);
       }
-      hidden
-        .filter(
-          (entry) =>
-            !explorerWindows.includes(entry) || explorerWindows.length <= 1,
-        )
-        .forEach(appendWindowItem);
       const rect = overflow.getBoundingClientRect();
       positionTaskbarMenu(menu, rect.left, rect.top);
     });

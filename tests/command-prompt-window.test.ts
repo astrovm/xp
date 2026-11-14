@@ -787,12 +787,13 @@ test("each Command Prompt is its own window, like XP", async () => {
   await second.press("ArrowUp");
   expect(second.input.value).toBe("");
   await second.enter("cd foo");
-  // The task bar, the title and the icon are the Command Prompt's.
+  // The task bar, the title and the icon are the Command Prompt's. Like
+  // XP, a window with an open question shows its command line.
   const buttons = [...s.document.querySelectorAll(".task-button")].filter(
     (button) => button.dataset.game?.startsWith("__command-prompt"),
   );
   expect(buttons.map((button) => button.title)).toEqual([
-    "C:\\WINDOWS\\system32\\cmd.exe",
+    "C:\\WINDOWS\\system32\\cmd.exe - del foo",
     "C:\\WINDOWS\\system32\\cmd.exe",
   ]);
   expect(second.win.querySelector(".title-icon img").getAttribute("src")).toBe(
@@ -805,7 +806,7 @@ test("each Command Prompt is its own window, like XP", async () => {
   await second.enter("title Build");
   expect(second.win.querySelector(".title-text").textContent).toBe("Build");
   expect(h.win.querySelector(".title-text").textContent).toBe(
-    "C:\\WINDOWS\\system32\\cmd.exe",
+    "C:\\WINDOWS\\system32\\cmd.exe - del foo",
   );
   expect(s.document.title).toBe("Build");
   // The first window still has its question, and its answer.
@@ -1017,4 +1018,518 @@ test("programs take . and .. from the Command Prompt and from Run, like XP", asy
   await closeAll();
   await runBox(s, "explorer My Documents\\..\\My Documents\\sub");
   expect(address()).toBe(fs.getPath(sub.id));
+});
+
+const activeWindows = (s) =>
+  [...s.document.querySelectorAll(".xp-window.active")].map(
+    (win) => win.dataset.game,
+  );
+const keysWindow = (s) =>
+  s.document.activeElement?.closest(".xp-window")?.dataset.game;
+
+// In the XP VM, a program that cmd starts, with or without START, opens on
+// top and takes the keys. The Command Prompt gets them back when it is
+// the active window again.
+test("a program that the Command Prompt starts opens on top, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.USER_PROFILE, "a.txt", { content: "hi" });
+  for (const line of ["notepad a.txt", "start notepad"]) {
+    await h.enter(line);
+    expect([line, activeWindows(s)]).toEqual([line, ["__notepad"]]);
+    expect([line, keysWindow(s)]).toEqual([line, "__notepad"]);
+    s.document
+      .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+      .click();
+    await settle();
+    expect(activeWindows(s)).toEqual(["__command-prompt"]);
+    expect(s.document.activeElement).toBe(h.input);
+  }
+  // The Enter is cmd's: Notepad, which opens at once now that it is
+  // loaded, gets no line break, so it has no change to save.
+  h.input.value = "start notepad";
+  const enter = new s.window.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  });
+  h.input.dispatchEvent(enter);
+  expect(enter.defaultPrevented).toBeTrue();
+  await settle();
+  expect(activeWindows(s)).toEqual(["__notepad"]);
+  s.document
+    .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+    .click();
+  await settle();
+  expect(s.document.querySelector(".xp-dialog")).toBeNull();
+  // A click on the window gives the keys to the prompt a moment later.
+  // A program that opens in that moment stays on top.
+  h.win
+    .querySelector(".title-text")
+    .dispatchEvent(new s.window.PointerEvent("pointerdown", { bubbles: true }));
+  fs.open(fs.resolvePath(`${fs.getPath(fs.USER_PROFILE)}\\a.txt`));
+  await settle();
+  expect(activeWindows(s)).toEqual(["__notepad"]);
+  expect(keysWindow(s)).toBe("__notepad");
+  s.document
+    .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+    .click();
+  await settle();
+  await h.enter("start cmd");
+  expect(activeWindows(s)).toEqual(["__command-prompt#2"]);
+  expect(keysWindow(s)).toBe("__command-prompt#2");
+});
+
+// Like XP, a cmd from Task Manager's New Task opens on top and takes the
+// keys, also when cmd is loaded and opens before the dialog closes. Task
+// Manager gives its control the keys when it is the active window again.
+test("New Task's cmd opens on top of Task Manager, like XP", async () => {
+  const s = await login(await loadShell());
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Escape",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await settle();
+  const manager = s.document.querySelector(
+    '.xp-window[data-game="__task-manager"]',
+  );
+  const newTask = manager.querySelector(".tm-new-task");
+  for (const index of [0, 1]) {
+    newTask.focus();
+    newTask.click();
+    await settle();
+    const dialog = s.document.querySelector(".run-dialog");
+    dialog.querySelector(".shell-dialog-input").value = "cmd";
+    dialog.querySelector('[data-action="run"]').click();
+    await settle();
+    const prompt = promptWindows(s)[index];
+    expect(activeWindows(s)).toEqual([prompt.dataset.game]);
+    expect(s.document.activeElement).toBe(
+      prompt.querySelector(".xp-terminal-prompt input"),
+    );
+    manager
+      .querySelector(".title-text")
+      .dispatchEvent(
+        new s.window.PointerEvent("pointerdown", { bubbles: true }),
+      );
+    await settle();
+    expect(activeWindows(s)).toEqual(["__task-manager"]);
+    expect(s.document.activeElement).toBe(newTask);
+  }
+});
+
+// In the XP VM: START /D starts in a folder, and a folder that is not
+// there gives "The current directory is invalid.". /B runs in the same
+// window, /I takes the first environment, /MIN and /MAX show the new
+// window so, and /WAIT waits for the window to close. An unknown switch
+// gives "Invalid switch".
+test("START takes its switches, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const work = fs.createFolder(fs.USER_PROFILE, "my work");
+  const workPath = fs.getPath(work.id);
+  const profile = fs.getPath(fs.USER_PROFILE);
+  const prompt = () =>
+    h.win.querySelector(".xp-terminal-prompt span").textContent;
+  await h.enter("cls");
+  await h.enter("start /d nope cmd");
+  await h.enter("start /foo notepad");
+  expect(h.output.textContent).toBe(
+    `\n${profile}>start /d nope cmd\nThe current directory is invalid.\n\n${profile}>start /foo notepad\nInvalid switch - "/foo".\n\n`,
+  );
+  expect(promptWindows(s)).toHaveLength(1);
+  // /D: the new window starts in the folder, with the variables of this
+  // cmd. With /I, it has the first variables.
+  await h.enter("set NAME=one");
+  await h.enter(`start /d "${workPath}" cmd`);
+  const second = promptIn(s, promptWindows(s)[1]);
+  expect(second.prompt()).toBe(`${workPath}>`);
+  await second.enter("echo %NAME%");
+  expect(second.text()).toContain("\none\n");
+  await h.enter(`start /i /d"${workPath}" cmd`);
+  const third = promptIn(s, promptWindows(s)[2]);
+  expect(third.prompt()).toBe(`${workPath}>`);
+  await third.enter("echo %NAME%");
+  expect(third.text()).toContain("\n%NAME%\n");
+  // /B: a new cmd runs in this window, and EXIT goes back.
+  await h.enter("cls");
+  await h.enter("start /b echo hi");
+  expect(promptWindows(s)).toHaveLength(3);
+  expect(h.output.textContent).toBe(`\n${profile}>start /b echo hi\nhi\n\n`);
+  await h.enter("exit");
+  expect(h.win.isConnected).toBeTrue();
+  await h.enter(`start /b /d "${workPath}" cmd`);
+  expect(promptWindows(s)).toHaveLength(3);
+  expect(h.output.textContent).toContain("Microsoft Windows XP");
+  expect(prompt()).toBe(`${workPath}>`);
+  await h.enter("exit");
+  expect(prompt()).toBe(`${profile}>`);
+  // /MIN and /MAX.
+  await h.enter("start /min cmd");
+  expect(promptWindows(s)[3].style.display).toBe("none");
+  await h.enter("start /max cmd");
+  expect(promptWindows(s)[4].classList.contains("maximized")).toBeTrue();
+  // /WAIT: the prompt comes back when the window closes.
+  await h.enter("start /wait notepad");
+  expect(activeWindows(s)).toEqual(["__notepad"]);
+  expect(h.input.disabled).toBeTrue();
+  s.document
+    .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+    .click();
+  await settle();
+  expect(h.input.disabled).toBeFalse();
+  expect(prompt()).toBe(`${profile}>`);
+  // The switches of priority and memory change nothing here. START /B
+  // with no command runs a new cmd in this window.
+  await h.enter("cls");
+  await h.enter("start /low /separate /b");
+  expect(h.output.textContent).toContain(
+    `${profile}>start /low /separate /b\nMicrosoft Windows XP`,
+  );
+  await h.enter("exit");
+  expect(promptWindows(s)).toHaveLength(5);
+  // /WAIT for a cmd that closes at once.
+  await h.enter("start /wait cmd /c echo hi");
+  expect(promptWindows(s)).toHaveLength(5);
+  expect(h.input.disabled).toBeFalse();
+  // /MAX keeps a maximized window maximized.
+  await h.enter("start /max notepad");
+  await h.enter("start /max notepad");
+  expect(
+    s.document
+      .querySelector('.xp-window[data-game="__notepad"]')
+      .classList.contains("maximized"),
+  ).toBeTrue();
+});
+
+// In the XP VM, the title is "<title> - <command line>" while a command
+// runs or asks, with the spaces as typed. A cmd in the window takes that
+// title as its own, and EXIT gives back the title before it.
+test("the window title shows the command line while it runs, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const foo = fs.createFolder(fs.USER_PROFILE, "foo");
+  fs.createFile(foo.id, "a.txt");
+  const title = () => h.win.querySelector(".title-text").textContent;
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800 },
+  );
+  await h.enter("title Build");
+  expect(title()).toBe("Build");
+  await h.enter("del   foo");
+  expect(title()).toBe("Build - del   foo");
+  // The task bar and Alt+Tab show the same title.
+  await runBox(s, "notepad");
+  expect(activeWindows(s)).toEqual(["__notepad"]);
+  expect(
+    s.document.querySelector('.task-button[data-game="__command-prompt"]')
+      .title,
+  ).toBe("Build - del   foo");
+  s.document.activeElement.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", {
+      key: "Tab",
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(s.document.getElementById("window-switcher").textContent).toBe(
+    "Build - del   foo",
+  );
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keyup", { key: "Alt", bubbles: true }),
+  );
+  await settle();
+  expect(activeWindows(s)).toEqual(["__command-prompt"]);
+  // The answer is no command line.
+  await h.enter("n");
+  expect(title()).toBe("Build");
+  await h.enter("cmd");
+  expect(title()).toBe("Build - cmd");
+  await h.enter("del foo");
+  expect(title()).toBe("Build - cmd - del foo");
+  await h.enter("n");
+  expect(title()).toBe("Build - cmd");
+  await h.enter("title Inner");
+  expect(title()).toBe("Inner");
+  await h.enter("exit");
+  expect(title()).toBe("Build");
+});
+
+const openTaskManager = async (s) => {
+  s.document
+    .getElementById("taskbar")
+    .dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true, clientY: 700 }),
+    );
+  s.document.querySelector('[data-taskbar-action="task-manager"]').click();
+  await settle();
+  return s.document.querySelector('.xp-window[data-game="__task-manager"]');
+};
+
+// In the XP VM, each cmd is a cmd.exe process, also a cmd in a cmd, and
+// each Command Prompt window is an application with the cmd icon.
+test("Task Manager shows each cmd of each Command Prompt, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  await runBox(s, "cmd");
+  const second = promptIn(s, promptWindows(s)[1]);
+  await second.enter("title Second");
+  await h.enter("cmd");
+  const tm = await openTaskManager(s);
+  const command = async (name) => {
+    tm.querySelector(`[data-tm-command="${name}"]`).click();
+    await settle();
+  };
+  const refresh = async () => {
+    tm.querySelector('[data-tm-menu="view"]').click();
+    await command("refresh");
+  };
+  const tasks = () =>
+    [...tm.querySelectorAll(".tm-tasks .tm-row")].filter((row) =>
+      /cmd|Second/.test(row.textContent),
+    );
+  const cmdProcesses = () =>
+    [...tm.querySelectorAll(".tm-processes .tm-row")].filter(
+      (row) => row.firstElementChild.textContent === "cmd.exe",
+    );
+  const icon = h.win.querySelector(".title-icon img").getAttribute("src");
+  tm.querySelector('[data-tm-tab="applications"]').click();
+  expect(tasks().map((row) => row.firstElementChild.textContent)).toEqual([
+    "C:\\WINDOWS\\system32\\cmd.exe - cmd",
+    "Second",
+  ]);
+  expect(
+    tasks().map((row) => row.querySelector("img").getAttribute("src")),
+  ).toEqual([icon, icon]);
+  tm.querySelector('[data-tm-tab="processes"]').click();
+  await refresh();
+  expect(cmdProcesses()).toHaveLength(3);
+  // End Process on the cmd in the cmd gives the window to the first cmd.
+  // The list has the newest process first: the second window, then the
+  // cmd in the first window, then the first cmd. An idle cmd that ends
+  // leaves a blank line.
+  const before = h.output.textContent;
+  cmdProcesses()[1].click();
+  await command("end-process");
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="yes"]')
+    .click();
+  await settle();
+  await refresh();
+  expect(cmdProcesses()).toHaveLength(2);
+  expect(h.output.textContent).toBe(`${before}\n`);
+  expect(h.win.isConnected).toBeTrue();
+  expect(h.win.querySelector(".title-text").textContent).toBe(
+    "C:\\WINDOWS\\system32\\cmd.exe",
+  );
+  // End Task closes only the window that is selected.
+  tm.querySelector('[data-tm-tab="applications"]').click();
+  tasks()[1].click();
+  await command("end-task");
+  expect(second.win.isConnected).toBeFalse();
+  expect(h.win.isConnected).toBeTrue();
+  tm.querySelector('[data-tm-tab="processes"]').click();
+  await refresh();
+  expect(cmdProcesses()).toHaveLength(1);
+  // A cmd that waits for a window ends at once, and the cmd under it
+  // shows its prompt. The window that it waited for stays open.
+  const notepad = () =>
+    s.document.querySelector('.xp-window[data-game="__notepad"]');
+  const prompt = () =>
+    h.win.querySelector(".xp-terminal-prompt span").textContent;
+  const profilePrompt = prompt();
+  await h.enter("cmd");
+  await h.enter("cls");
+  await h.enter("start /wait notepad");
+  expect(h.input.disabled).toBeTrue();
+  await refresh();
+  cmdProcesses()[0].click();
+  await command("end-process");
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="yes"]')
+    .click();
+  await settle();
+  expect(h.input.disabled).toBeFalse();
+  expect(prompt()).toBe(profilePrompt);
+  expect(h.win.querySelector(".title-text").textContent).toBe(
+    "C:\\WINDOWS\\system32\\cmd.exe",
+  );
+  const shown = h.output.textContent;
+  expect(shown).toBe(`\n${profilePrompt}start /wait notepad\n\n`);
+  expect(h.input.value).toBe("");
+  expect(notepad()).not.toBeNull();
+  notepad().querySelector(".close-btn").click();
+  await settle();
+  expect(h.output.textContent).toBe(shown);
+  expect(h.input.disabled).toBeFalse();
+  // A window that closes while it waits stops its command line. The line
+  // does not close a new window that has the same place.
+  h.win.querySelector(".close-btn").click();
+  await settle();
+  await runBox(s, "cmd /c start /wait notepad");
+  const waiting = promptWindows(s)[0];
+  const game = waiting.dataset.game;
+  waiting.querySelector(".close-btn").click();
+  await settle();
+  await runBox(s, "cmd");
+  const next = promptWindows(s)[0];
+  expect(next.dataset.game).toBe(game);
+  notepad().querySelector(".close-btn").click();
+  await settle();
+  expect(notepad()).toBeNull();
+  expect(next.isConnected).toBeTrue();
+});
+
+// Log Off closes each Command Prompt, also one with a cmd in it and one
+// with an open question. Each cmd frees its folder.
+test("Log Off closes each Command Prompt and frees its folders", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const a = fs.createFolder(fs.USER_PROFILE, "a");
+  const b = fs.createFolder(a.id, "b");
+  const c = fs.createFolder(fs.USER_PROFILE, "c");
+  fs.createFile(c.id, "x.txt");
+  await h.enter("cd a");
+  await h.enter("cmd");
+  await h.enter("cd b");
+  await runBox(s, "cmd");
+  const second = promptIn(s, promptWindows(s)[1]);
+  await second.enter("cd c");
+  await second.enter("del .");
+  expect(second.prompt()).toContain("Are you sure (Y/N)?");
+  for (const folder of [a, b, c])
+    expect(() => fs.checkChange("delete", folder.id)).toThrow();
+  s.document.getElementById("start-button").click();
+  s.document.getElementById("log-off-button").click();
+  s.document.getElementById("logoff-confirm").click();
+  await settle();
+  expect(s.document.getElementById("welcome-screen").hidden).toBeFalse();
+  expect(promptWindows(s)).toHaveLength(0);
+  for (const folder of [a, b, c])
+    expect(() => fs.checkChange("delete", folder.id)).not.toThrow();
+  expect(fs.getChildren(c.id)).toHaveLength(1);
+});
+
+// In the XP VM, a crowded task bar puts the Command Prompt windows on one
+// button: "3 Windows Command Processor", with the cmd icon, and the menu
+// of a group.
+test("a crowded taskbar groups the Command Prompt windows, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  await runBox(s, "cmd");
+  await runBox(s, "cmd");
+  Object.defineProperties(s.document.getElementById("desktop"), {
+    clientWidth: { configurable: true, value: 1024 },
+    clientHeight: { configurable: true, value: 738 },
+  });
+  const container = s.document.getElementById("task-buttons");
+  Object.defineProperty(container, "clientWidth", { value: 240 });
+  s.window.dispatchEvent(new s.window.Event("resize"));
+  await settle();
+  const group = () => container.querySelector(".task-button-grouped");
+  expect(group().textContent).toBe("3 Windows Command Processor");
+  expect(group().querySelector("img").getAttribute("src")).toBe(
+    h.win.querySelector(".title-icon img").getAttribute("src"),
+  );
+  group().click();
+  const menu = s.document.getElementById("taskbar-overflow-menu");
+  expect(
+    [...menu.querySelectorAll("button")].map((item) => item.textContent),
+  ).toEqual(Array(3).fill("C:\\WINDOWS\\system32\\cmd.exe"));
+  const choose = async (label) => {
+    group().dispatchEvent(
+      new s.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+    [...menu.querySelectorAll("button")]
+      .find((item) => item.textContent === label)
+      .click();
+    await settle();
+  };
+  await choose("Tile Vertically");
+  expect(new Set(promptWindows(s).map((win) => win.style.left)).size).toBe(3);
+  await choose("Minimize Group");
+  expect(
+    promptWindows(s).every((win) => win.style.display === "none"),
+  ).toBeTrue();
+  await choose("Close Group");
+  expect(promptWindows(s)).toHaveLength(0);
+});
+
+// In the XP VM, each new Command Prompt window is 26 pixels down and to
+// the right of the one before it, from the place of the first one, and
+// the cascade starts again at the top when a window does not fit. All the
+// windows of the program keep one saved place.
+test("Command Prompt windows cascade from the saved place and wrap, like XP", async () => {
+  const s = await login(
+    await loadShell({
+      initialStorage: {
+        windowPlacements: JSON.stringify({
+          "__command-prompt": { left: 100, top: 50, width: 500, height: 300 },
+          "__command-prompt#2": { left: 600, top: 400, width: 200, height: 99 },
+        }),
+      },
+    }),
+  );
+  Object.defineProperties(s.document.getElementById("desktop"), {
+    clientWidth: { configurable: true, value: 1024 },
+    clientHeight: { configurable: true, value: 738 },
+  });
+  const places = () =>
+    promptWindows(s).map((win) => [
+      parseFloat(win.style.left),
+      parseFloat(win.style.top),
+      parseFloat(win.style.width),
+    ]);
+  for (let index = 0; index < 20; index++) await runBox(s, "cmd");
+  const opened = places();
+  expect(opened.slice(0, 3)).toEqual([
+    [100, 50, 500],
+    [126, 76, 500],
+    [152, 102, 500],
+  ]);
+  const wrap = opened.findIndex(
+    ([left, top], index) => index > 0 && left === 100 && top === 50,
+  );
+  expect(wrap).toBeGreaterThan(3);
+  opened.forEach(([left, top], index) =>
+    expect([left, top]).toEqual([
+      100 + 26 * (index % wrap),
+      50 + 26 * (index % wrap),
+    ]),
+  );
+  const saved = () =>
+    JSON.parse(s.window.localStorage.getItem("windowPlacements"));
+  // A cascaded copy that maximizes or closes keeps no place. The first one
+  // keeps the place of the program, and the old place of a window number
+  // goes.
+  promptWindows(s)[1].querySelector(".maximize-btn").click();
+  await settle();
+  expect(promptWindows(s)[1].classList.contains("maximized")).toBeTrue();
+  expect(saved()["__command-prompt"].left).toBe(100);
+  promptWindows(s)[1].querySelector(".close-btn").click();
+  await settle();
+  expect(saved()["__command-prompt"].left).toBe(100);
+  promptWindows(s)[0].querySelector(".close-btn").click();
+  await settle();
+  expect(Object.keys(saved()).filter((key) => key.includes("#"))).toEqual([]);
+  expect(saved()["__command-prompt"]).toEqual({
+    left: 100,
+    top: 50,
+    width: 500,
+    height: 300,
+  });
 });

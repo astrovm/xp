@@ -26,16 +26,31 @@ const applicationContext = (win) => ({
   dialogs: XPDialogs,
   fileOps,
   fs,
+  // Opens an application. It gives its window, or a promise of the
+  // window while the application loads. It is false for no application.
   launchApplication(applicationId, options = {}) {
     const application = window.XPApplicationRegistry.get(applicationId);
     if (!application) return false;
-    if (application.kind === "system") openSystemWindow(applicationId);
-    else openXPProgram(applicationId, options);
-    return true;
+    return application.kind === "system"
+      ? openSystemWindow(applicationId)
+      : openXPProgram(applicationId, options);
   },
   // Runs a program by its name, such as "notepad", like Run does, from the
-  // folder with the path base.
+  // folder with the path base. It gives a promise of the window that the
+  // program opens, or of null, or false for a name that is no program.
   runProgram: (name, args, base) => runNamedProgram(name, args, base),
+  // Like START /MIN and /MAX, a window that a program opens shows
+  // minimized or maximized.
+  showWindow(other, show) {
+    if (show === "min") minimizeWindow(other.gameId);
+    else if (!other.maximized) toggleMaximize(other.gameId);
+  },
+  // A promise that ends when the window closes, like START /WAIT.
+  whenClosed: (other) => whenWindowCloses(other),
+  // Gives the keys to a control of this window, like XP: only when this
+  // window is the active window. Else the window keeps the control for
+  // the time that it becomes active again, and stays behind.
+  giveKeys: (target) => giveKeysInWindow(win, target),
   getDesktopSize,
   getSystemVolume,
   setSystemVolume,
@@ -126,9 +141,6 @@ const openXPProgram = (programId, options = {}) => {
     instance += 1;
     windowId = `${programId}#${instance + 1}`;
   }
-  // Like XP, each new window of the program cascades down and to the
-  // right of the one before it.
-  const cascade = instance * 26;
   const { width: desktopWidth, height: desktopHeight } = getDesktopSize();
   const el = createWindowElement(windowId, programId);
   el.classList.add("xp-native-program-window");
@@ -158,8 +170,21 @@ const openXPProgram = (programId, options = {}) => {
   // position moves back on a screen too small to show the whole window.
   const fitStart = (start, size, available) =>
     available > 16 ? Math.min(start, Math.max(0, available - size)) : start;
-  el.style.left = `${fitStart(cascade + (program.window.left ?? Math.max(8, Math.floor((desktopWidth - windowWidth) / 2))), windowWidth, desktopWidth)}px`;
-  el.style.top = `${fitStart(cascade + (program.window.top ?? Math.max(8, Math.floor((desktopHeight - windowHeight) / 2))), windowHeight, desktopHeight)}px`;
+  // Like XP, each new window of the program cascades down and to the
+  // right of the one before it, and wraps when it does not fit.
+  const left =
+    program.window.left ??
+    Math.max(8, Math.floor((desktopWidth - windowWidth) / 2));
+  const top =
+    program.window.top ??
+    Math.max(8, Math.floor((desktopHeight - windowHeight) / 2));
+  const place = cascadePlace(
+    instance,
+    { left, top, width: windowWidth, height: windowHeight },
+    { width: desktopWidth, height: desktopHeight },
+  );
+  el.style.left = `${fitStart(place.left, windowWidth, desktopWidth)}px`;
+  el.style.top = `${fitStart(place.top, windowHeight, desktopHeight)}px`;
   const win = {
     gameId: windowId,
     applicationId: programId,
@@ -175,12 +200,15 @@ const openXPProgram = (programId, options = {}) => {
     favoriteBtn: null,
     volumeBtn: null,
     application: program,
+    cascadeSteps: instance,
   };
   const mounted = program.mount(applicationContext(win), {
     application: program,
     file: options.file || null,
     arguments: options.arguments,
     from: options.from,
+    folder: options.folder,
+    fresh: options.fresh,
     title: options.title,
     window: win,
   });
@@ -296,21 +324,22 @@ const openSystemWindow = (shortcutId, options = {}) => {
     focusWindow(shortcutId);
     if (options.folderId) navigateExplorer(existing, options.folderId);
     showExplorerOptions(existing, options);
-    return;
+    return existing;
   }
 
   const registered = window.XPApplicationRegistry.get(shortcutId);
-  if (!registered || registered.kind !== "system") return;
+  if (!registered || registered.kind !== "system") return null;
   if (registered.load && !registered.loaded) {
     const launchSession = sessionGeneration;
     return registered
       .load()
-      .then(() => {
-        if (loggedIn && launchSession === sessionGeneration)
-          openSystemWindow(shortcutId, options);
-      })
+      .then(() =>
+        loggedIn && launchSession === sessionGeneration
+          ? openSystemWindow(shortcutId, options)
+          : null,
+      )
       .catch((error) => {
-        if (!loggedIn || launchSession !== sessionGeneration) return;
+        if (!loggedIn || launchSession !== sessionGeneration) return null;
         void XPDialogs.alert(
           error.message ||
             "The window could not be loaded. Try opening it again.",
@@ -391,6 +420,7 @@ const openSystemWindow = (shortcutId, options = {}) => {
   application.activate?.(context, { application, window: win }, mounted);
   focusWindow(shortcutId);
   showExplorerOptions(win, options);
+  return win;
 };
 
 const openDesktopItem = (itemId) => {

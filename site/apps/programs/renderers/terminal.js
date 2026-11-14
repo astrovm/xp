@@ -5,8 +5,10 @@ import { CommandSession, cmdArguments } from "../command-session.js";
 // the text after "cmd": "/k dir" runs dir first, and "/c dir" also closes
 // the window when dir ends. Then there is no banner, and the command line
 // does not show. options.from is the session of the cmd that opens the
-// window with START: the new one starts in its folder. options.title is
-// the title that START gives the window.
+// window with START: the new one starts in its folder, or in
+// options.folder for START /D. options.fresh is START /I: the new cmd
+// takes the first environment, not the one of options.from.
+// options.title is the title that START gives the window.
 export const renderTerminal = (context, program, programId, options) => {
   const content = createProgramRoot(program);
   const start = cmdArguments(options.arguments ?? "");
@@ -15,14 +17,27 @@ export const renderTerminal = (context, program, programId, options) => {
   // back to the one before it. close is true for a cmd that ends when its
   // command ends, like "cmd /c dir", or that EXIT ends.
   const shells = [];
-  const startShell = (from, close) => {
-    const session = new CommandSession(context, { from });
+  // The title that the window shows now. Like XP, a cmd that a command
+  // line starts takes that title, with the command line, as its own.
+  let shownTitle = "";
+  const showTitle = (title) => {
+    if (title === shownTitle) return;
+    shownTitle = title;
+    context.setTitle(title);
+  };
+  const startShell = (from, close, { folder, fresh, title }) => {
+    const session = new CommandSession(context, { from, folder, fresh });
+    session.title = title || shownTitle || session.title;
     shells.push({ session, close });
     return session;
   };
   const current = () => shells.at(-1).session;
-  startShell(options.from ?? null, start.close);
-  context.setTitle(options.title || "C:\\WINDOWS\\system32\\cmd.exe");
+  startShell(options.from ?? null, start.close, options);
+  showTitle(current().title);
+  // Like XP, only the active window takes the keys. A window behind
+  // another one keeps its prompt for the time it becomes active again,
+  // so a program that a command opens stays on top.
+  const giveKeys = () => context.giveKeys(input);
   content.innerHTML = `<div class="xp-terminal-screen" role="application" aria-label="Command Prompt"><pre class="xp-terminal-output" aria-live="polite"></pre><label class="xp-terminal-prompt"><span></span><input data-default-focus aria-label="Command" autocomplete="off" autocapitalize="off" spellcheck="false"></label></div>`;
   const output = content.querySelector(".xp-terminal-output");
   const screen = content.querySelector(".xp-terminal-screen");
@@ -140,7 +155,7 @@ export const renderTerminal = (context, program, programId, options) => {
       prompt.textContent = "";
       screen.scrollTop = screen.scrollHeight;
       input.disabled = false;
-      input.focus();
+      giveKeys();
       const stop = await waitForKey();
       input.disabled = true;
       output.append("\n");
@@ -156,24 +171,43 @@ export const renderTerminal = (context, program, programId, options) => {
     }
   };
 
+  // The command line that runs. The line stops when its window closes or
+  // when Task Manager ends its cmd while it waits, such as for START /WAIT.
+  let running = null;
   // Runs a command line, like a press of Enter. A command from the command
   // line of cmd does not show, like XP, and does not go in the history.
-  // It is false when the window closes.
+  // It is false when the window closes or when Task Manager ends its cmd.
   const run = async (command, { echo = true } = {}) => {
-    if (echo && command.trim()) history.push(command);
-    historyIndex = history.length;
+    const line = command.trim();
     const enteredPrompt = current().prompt;
+    // The line as the screen shows it when the command ends.
+    const own = { echo: echo ? `${enteredPrompt}${command}\n` : "" };
+    running = own;
+    if (echo && line) history.push(command);
+    historyIndex = history.length;
     input.disabled = true;
+    // Like XP, while a command runs, the window shows the title of its cmd
+    // and the command line, such as "C:\\WINDOWS\\system32\\cmd.exe - dir
+    // /p". An answer to a question is no command line.
+    if (line && !current().question) showTitle(`${current().title} - ${line}`);
     let result = await execute(current(), command);
     // A cmd that the line runs starts on top, and runs its own command.
     // With no command, it shows its banner.
     while (result.shell) {
-      const session = startShell(current(), result.shell.close);
+      const session = startShell(current(), result.shell.close, result.shell);
+      const own = result.shell.command?.trim();
+      if (own) showTitle(`${session.title} - ${own}`);
       result =
         result.shell.command === undefined
           ? { output: session.banner.trimEnd() }
           : await execute(session, result.shell.command);
     }
+    // START /WAIT waits until the window that it opens closes.
+    if (result.wait) await result.wait;
+    if (running !== own) return false;
+    // From here, the line writes its own echo. A pause of its output that
+    // Task Manager ends stops it.
+    running = null;
     // A key press that is left over at the end goes away, like cmd.exe.
     pendingPress = false;
     if (result.exit) shells.at(-1).close = true;
@@ -195,15 +229,18 @@ export const renderTerminal = (context, program, programId, options) => {
     // it is, so a long screen is not copied again for each command.
     if (result.clear) output.textContent = blank;
     else {
-      if (echo) output.append(`${enteredPrompt}${command}\n`);
+      output.append(own.echo);
       input.value = "";
       if (result.paged) await writePaged(result.output);
       else if (result.output) output.append(`${result.output}\n`);
       output.append(blank);
     }
     if (!leaveShells()) return false;
+    // The title goes back when the command ends, but not while its
+    // question is open.
+    if (!current().question) showTitle(current().title);
     input.disabled = false;
-    input.focus();
+    giveKeys();
     input.value = "";
     updatePrompt();
     screen.scrollTop = screen.scrollHeight;
@@ -303,20 +340,50 @@ export const renderTerminal = (context, program, programId, options) => {
       return;
     }
     if (event.key !== "Enter") return;
+    // The Enter is cmd's, like XP: a program that the line opens, and
+    // that takes the keys, gets no line break from it.
+    event.preventDefault();
     if (await run(input.value)) feed();
   });
   screen.addEventListener("pointerdown", () => input.focus());
   context.windowElement.addEventListener("pointerdown", (event) => {
     if (event.target.closest(".title-buttons, .resize-handle")) return;
-    setTimeout(() => input.focus(), 0);
+    // Later, the window can be behind a program that a command opened.
+    setTimeout(giveKeys, 0);
   });
-  setTimeout(() => input.focus(), 0);
+  setTimeout(giveKeys, 0);
   // The command from cmd's command line. With /c, the window closes when
   // it ends, also after the answer to a question that it asks.
   if (start.command !== undefined) run(start.command, { echo: false });
-  // The closed window frees the folders that its sessions are in.
+  // The closed window frees the folders that its sessions are in. Like
+  // XP, each cmd of the window is its own cmd.exe process.
   return {
     element: content,
-    unmount: () => shells.forEach(({ session }) => session.close()),
+    processCount: () => shells.length,
+    // Task Manager ends a cmd that runs in a cmd. Like XP, the cmd under
+    // it takes the window again. The cmds on top of it end too.
+    // A command line that runs is always in the cmd on top, so it ends
+    // too, also while it waits for a window or a key. Like XP, the cmd
+    // under it shows its prompt at once.
+    endProcess: (index) => {
+      shells.splice(index).forEach(({ session }) => session.close());
+      if (running) {
+        output.append(running.echo);
+        input.value = "";
+      }
+      running = null;
+      waitingKey = null;
+      pendingPress = false;
+      output.append("\n");
+      showTitle(current().title);
+      input.disabled = false;
+      giveKeys();
+      updatePrompt();
+      screen.scrollTop = screen.scrollHeight;
+    },
+    unmount: () => {
+      running = null;
+      shells.forEach(({ session }) => session.close());
+    },
   };
 };

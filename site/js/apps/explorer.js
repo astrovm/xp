@@ -289,8 +289,11 @@ const runNotepad = (path, base) => {
 const runNamedProgram = (name, args, base) => {
   const programId = RUN_PROGRAMS[name.toLowerCase()];
   if (!programId) return false;
-  void runProgram(programId, args, base);
-  return true;
+  // The window that the program opens, if it opens one. A message, such
+  // as Notepad's question for a new file, is no window.
+  return Promise.resolve(runProgram(programId, args, base)).then((result) =>
+    result?.gameId ? result : null,
+  );
 };
 
 // XP's Notepad offers to create a file that Run names but that does not

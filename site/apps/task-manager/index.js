@@ -323,6 +323,7 @@ const mountTaskManager = (context, { window: win }) => {
   const createProcess = (
     [image, user, memory, handles, threads],
     windowId,
+    part = 0,
   ) => ({
     pid: (nextPid += 4),
     image,
@@ -332,6 +333,7 @@ const mountTaskManager = (context, { window: win }) => {
     handles,
     threads,
     windowId,
+    part,
     cpu: 0,
     cpuTime: 0,
   });
@@ -355,6 +357,10 @@ const mountTaskManager = (context, { window: win }) => {
       );
     return Math.round(bytes / 1024);
   };
+  // A window can have more than one process: each cmd of a Command
+  // Prompt window is its own cmd.exe, like XP.
+  const processCountOf = (task) =>
+    task.mountedApplication?.processCount?.() ?? 1;
   const syncProcesses = () => {
     const windows = new Map(
       [...context.openWindows.values()]
@@ -362,19 +368,30 @@ const mountTaskManager = (context, { window: win }) => {
         .map((task) => [task.gameId, task]),
     );
     for (let index = processes.length - 1; index >= 0; index--) {
-      const { windowId } = processes[index];
-      if (windowId && !windows.has(windowId)) processes.splice(index, 1);
+      const { windowId, part } = processes[index];
+      const task = windows.get(windowId);
+      if (windowId && !(task && part < processCountOf(task)))
+        processes.splice(index, 1);
     }
     windows.forEach((task, id) => {
       const [image, memory] = processImage(task);
-      if (!processes.some((process) => process.windowId === id))
-        processes.push(createProcess([image, USER, memory, 120, 4], id));
+      for (let part = 0; part < processCountOf(task); part++)
+        if (
+          !processes.some(
+            (process) => process.windowId === id && process.part === part,
+          )
+        )
+          processes.push(
+            createProcess([image, USER, memory, 120, 4], id, part),
+          );
     });
     // Programs grow with what they show; folder windows live in Explorer.
+    // The first process of a window has what the window shows.
     processes.forEach((process) => {
       if (process.windowId)
         process.memory =
-          process.base + footprint(windows.get(process.windowId));
+          process.base +
+          (process.part ? 0 : footprint(windows.get(process.windowId)));
       else if (process.image === "explorer.exe")
         process.memory =
           process.base +
@@ -416,7 +433,8 @@ const mountTaskManager = (context, { window: win }) => {
     );
     (
       processes.find(
-        (process) => active && process.windowId === active.gameId,
+        (process) =>
+          active && process.windowId === active.gameId && !process.part,
       ) || processes.find((process) => process.image === "explorer.exe")
     ).cpu = cpuTotal;
     processes[0].cpu = 100 - cpuTotal;
@@ -931,7 +949,10 @@ const mountTaskManager = (context, { window: win }) => {
       context.closeGameWindow(win.gameId);
       return;
     }
-    if (process.windowId) {
+    const task = context.openWindows.get(process.windowId);
+    if (process.part && task?.mountedApplication?.endProcess) {
+      task.mountedApplication.endProcess(process.part);
+    } else if (process.windowId) {
       await context.closeGameWindow(process.windowId, {
         skipBeforeClose: true,
       });
