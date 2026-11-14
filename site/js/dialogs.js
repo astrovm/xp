@@ -2173,8 +2173,9 @@
 
       // The folder that the typed folders name, from the open folder, like
       // XP: "Sub", "..", "C:". Null when one of them is not a folder.
-      // A path starts in the open folder. A drive such as "C:", or a "\"
-      // at the start, starts it at the top of the drive. Like Windows, ".."
+      // A path starts in the open folder. A drive such as "C:" starts it at
+      // the top of that drive, and a "\" at the start at the top of the
+      // drive of the open folder, like Windows. Like Windows, ".."
       // stops at the top of a drive, and goes from My Computer to the
       // Desktop.
       const folderOfPath = (segments) => {
@@ -2183,7 +2184,11 @@
           const top = index === 0 && (!segment || /^[a-z]:$/i.test(segment));
           if (!top && (!segment || segment === ".")) continue;
           const node = top
-            ? fs().getNode(fs().resolvePath(`${segment || "C:"}\\`))
+            ? fs().getNode(
+                fs().resolvePath(
+                  `${segment || fs().driveOf(currentFolderId)}\\`,
+                ),
+              )
             : segment === ".."
               ? fs().getNode(id).parent === fs().MY_COMPUTER
                 ? fs().getNode(id)

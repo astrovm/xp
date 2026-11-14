@@ -614,6 +614,21 @@ test("the Command Prompt types the path of an item dropped on it, like XP", asyn
   await settle();
   expect(h.input.value).toBe("");
 
+  // In the XP VM, a drop on a Command Prompt that is behind another
+  // window types the path, and the window stays behind.
+  await runBox(s, "notepad");
+  const focused = s.document.activeElement;
+  dragOn(s, screen, "drop", items([plain.id]));
+  await settle();
+  expect(h.input.value).toBe("C:\\a.txt");
+  expect(activeWindows(s)).toEqual(["__notepad"]);
+  expect(s.document.activeElement).toBe(focused);
+  expect(s.document.activeElement).not.toBe(h.input);
+  await closeWindow(s, "__notepad");
+  expect(activeWindows(s)).toEqual(["__command-prompt"]);
+  expect(s.document.activeElement).toBe(h.input);
+  h.input.value = "";
+
   // An Explorer drag gives the item that the pointer dragged, also when
   // other items are selected before it.
   s.window.history.replaceState(null, "", "#my-computer");
@@ -1391,6 +1406,18 @@ test("Task Manager shows each cmd of each Command Prompt, like XP", async () => 
   await settle();
   expect(notepad()).toBeNull();
   expect(next.isConnected).toBeTrue();
+  // End Process on the first cmd of a window closes the window.
+  await refresh();
+  expect(cmdProcesses()).toHaveLength(1);
+  cmdProcesses()[0].click();
+  await command("end-process");
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector('[data-action="yes"]')
+    .click();
+  await settle();
+  expect(next.isConnected).toBeFalse();
+  expect(promptWindows(s)).toHaveLength(0);
 });
 
 // Log Off closes each Command Prompt, also one with a cmd in it and one
@@ -1504,7 +1531,9 @@ test("Command Prompt windows cascade from the saved place and wrap, like XP", as
   const wrap = opened.findIndex(
     ([left, top], index) => index > 0 && left === 100 && top === 50,
   );
-  expect(wrap).toBeGreaterThan(3);
+  // The 15th window ends at 50 + 26 * 14 + 300 = 714 pixels, in the 738
+  // pixels of the desktop. The 16th one would end at 740, so it wraps.
+  expect(wrap).toBe(15);
   opened.forEach(([left, top], index) =>
     expect([left, top]).toEqual([
       100 + 26 * (index % wrap),
@@ -1532,4 +1561,322 @@ test("Command Prompt windows cascade from the saved place and wrap, like XP", as
     width: 500,
     height: 300,
   });
+});
+
+const windowOf = (s, game) =>
+  s.document.querySelector(`.xp-window[data-game="${game}"]`);
+const answerDialog = async (s, action) => {
+  [...s.document.querySelectorAll(".xp-dialog")]
+    .at(-1)
+    .querySelector(`[data-action="${action}"]`)
+    .click();
+  await settle();
+};
+const closeWindow = async (s, game) => {
+  windowOf(s, game).querySelector(".close-btn").click();
+  await settle();
+};
+
+// In the XP VM, notepad.exe asks its question for a new file in its own
+// process: START /WAIT waits until that Notepad closes, and /MAX shows it
+// maximized after the answer.
+test("START /WAIT and /MAX act on the Notepad that opens after its question, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const maximized = () =>
+    windowOf(s, "__notepad").classList.contains("maximized");
+  await h.enter("start /wait notepad nope.txt");
+  expect(s.document.querySelector(".xp-dialog").textContent).toContain(
+    "Cannot find the nope.txt file.",
+  );
+  expect(h.input.disabled).toBeTrue();
+  await answerDialog(s, "yes");
+  expect(fs.findChild(fs.USER_PROFILE, "nope.txt")).toBeTruthy();
+  expect(windowOf(s, "__notepad")).not.toBeNull();
+  expect(h.input.disabled).toBeTrue();
+  await closeWindow(s, "__notepad");
+  expect(h.input.disabled).toBeFalse();
+  await h.enter("start /max notepad other.txt");
+  await answerDialog(s, "yes");
+  expect(maximized()).toBeTrue();
+  await closeWindow(s, "__notepad");
+  await h.enter("start /max notepad third.txt");
+  await answerDialog(s, "no");
+  expect(maximized()).toBeTrue();
+  await closeWindow(s, "__notepad");
+  // Cancel opens no Notepad, so /WAIT has nothing to wait for.
+  await h.enter("start /wait notepad fourth.txt");
+  await answerDialog(s, "cancel");
+  expect(windowOf(s, "__notepad")).toBeNull();
+  expect(h.input.disabled).toBeFalse();
+});
+
+// In the XP VM, START opens a document with ShellExecuteEx: /WAIT waits
+// for the Notepad that opens it, and /MIN shows that Notepad minimized. A
+// folder, and explorer.exe, go to the Explorer that runs, so START does
+// not wait for them.
+test("START /WAIT and /MIN act on the program of a document, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.USER_PROFILE, "a.txt", { content: "hi" });
+  await h.enter("start /wait a.txt");
+  expect(windowOf(s, "__notepad").querySelector("textarea").value).toBe("hi");
+  expect(h.input.disabled).toBeTrue();
+  await closeWindow(s, "__notepad");
+  expect(h.input.disabled).toBeFalse();
+  await h.enter("start /min a.txt");
+  expect(windowOf(s, "__notepad").style.display).toBe("none");
+  await closeWindow(s, "__notepad");
+  await h.enter("start /wait C:\\");
+  expect(windowOf(s, "__my-documents")).not.toBeNull();
+  expect(h.input.disabled).toBeFalse();
+  await closeWindow(s, "__my-documents");
+  await h.enter("start /wait explorer");
+  expect(windowOf(s, "__my-documents")).not.toBeNull();
+  expect(h.input.disabled).toBeFalse();
+});
+
+// In the XP VM, taskmgr.exe and explorer.exe give the work to the copy
+// that runs, and START returns at once. The open window keeps its state.
+// calc.exe starts a second copy in XP. Here Calculator has one window,
+// so START brings it to the top like Run does, and does not wait for it
+// or change it: it is not the window of the new process.
+test("START does not wait for or change a window that was open before, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const state = (game) => {
+    const win = windowOf(s, game);
+    return [win.style.display === "none", win.classList.contains("maximized")];
+  };
+  // With no Task Manager open, taskmgr is a new process to wait for.
+  await h.enter("start /wait taskmgr");
+  expect(windowOf(s, "__task-manager")).not.toBeNull();
+  expect(h.input.disabled).toBeTrue();
+  await closeWindow(s, "__task-manager");
+  expect(h.input.disabled).toBeFalse();
+  for (const [program, game] of [
+    ["taskmgr", "__task-manager"],
+    ["calc", "__calculator"],
+    ["explorer", "__my-documents"],
+  ]) {
+    await h.enter(`start ${program}`);
+    expect(state(game)).toEqual([false, false]);
+    await h.enter(`start /wait ${program}`);
+    expect(h.input.disabled).toBeFalse();
+    await h.enter(`start /min ${program}`);
+    await h.enter(`start /max ${program}`);
+    expect(state(game)).toEqual([false, false]);
+    expect(h.input.disabled).toBeFalse();
+  }
+});
+
+// In the XP VM, START /MAX maximizes winmine.exe and mshearts.exe, which
+// have no Maximize box, but calc.exe opens at its own size. The title bar
+// and the system menu do not maximize Calculator, and its Size and
+// Maximize commands are off. Task Manager's Maximize maximizes it, and
+// then it can restore.
+test("a window with no Maximize box maximizes only like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const maximized = (game) => windowOf(s, game).classList.contains("maximized");
+  await h.enter("start /max winmine");
+  expect(maximized("__minesweeper")).toBeTrue();
+  await h.enter("start /max calc");
+  const calc = windowOf(s, "__calculator");
+  expect(maximized("__calculator")).toBeFalse();
+  const button = calc.querySelector(".maximize-btn");
+  expect(button.disabled).toBeTrue();
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+  calc
+    .querySelector(".title-bar")
+    .dispatchEvent(new s.window.MouseEvent("dblclick", { bubbles: true }));
+  await settle();
+  expect(maximized("__calculator")).toBeFalse();
+  calc.querySelector(".title-bar").dispatchEvent(
+    new s.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  const menu = s.document.getElementById("window-system-menu");
+  const enabled = () =>
+    [...menu.querySelectorAll("[data-command]")]
+      .filter((item) => !item.disabled)
+      .map((item) => item.dataset.command);
+  expect(enabled()).toEqual(["move", "minimize", "close"]);
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  await settle();
+  // A window that can maximize has all of them.
+  const prompt = h.win;
+  prompt.querySelector(".title-bar").dispatchEvent(
+    new s.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(enabled()).toEqual(["move", "size", "minimize", "maximize", "close"]);
+  s.document.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  await settle();
+  // Task Manager's Maximize.
+  const tm = await openTaskManager(s);
+  tm.querySelector('[data-tm-tab="applications"]').click();
+  [...tm.querySelectorAll(".tm-tasks .tm-row")]
+    .find((row) => row.textContent.includes("Calculator"))
+    .click();
+  tm.querySelector('[data-tm-menu="windows"]').click();
+  tm.querySelector('[data-tm-command="maximize"]').click();
+  await settle();
+  expect(maximized("__calculator")).toBeTrue();
+  expect(button.disabled).toBeFalse();
+  expect(button.hasAttribute("aria-disabled")).toBeFalse();
+  button.click();
+  await settle();
+  expect(maximized("__calculator")).toBeFalse();
+  expect(button.disabled).toBeTrue();
+});
+
+// In the XP VM, START /I gives the new cmd the variables that this cmd
+// had when it started, not the ones that SET gave it later.
+test("START /I gives the first variables of this cmd, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  await h.enter("set FOO=1");
+  await h.enter("start cmd");
+  const second = promptIn(s, promptWindows(s)[1]);
+  await second.enter("set BAR=2");
+  await second.enter("start /i cmd");
+  const third = promptIn(s, promptWindows(s)[2]);
+  await third.enter("echo %FOO% %BAR%");
+  expect(third.text()).toContain("\n1 %BAR%\n");
+  // START /B /I starts the cmd in this window, with the same variables.
+  await second.enter("start /b /i cmd");
+  await second.enter("echo %FOO% %BAR%");
+  expect(second.text()).toContain("\n1 %BAR%\n");
+});
+
+// Task Manager's list of a Command Prompt, paused so that it keeps the
+// processes that it showed.
+const pausedTaskManager = async (s) => {
+  const tm = await openTaskManager(s);
+  const command = async (name) => {
+    tm.querySelector(`[data-tm-command="${name}"]`).click();
+    await settle();
+  };
+  const viewCommand = async (name) => {
+    tm.querySelector('[data-tm-menu="view"]').click();
+    await command(name);
+  };
+  tm.querySelector('[data-tm-tab="processes"]').click();
+  await viewCommand("speed-paused");
+  const cmdRows = () =>
+    [...tm.querySelectorAll(".tm-processes .tm-row")].filter(
+      (row) => row.firstElementChild.textContent === "cmd.exe",
+    );
+  return {
+    cmdRows,
+    refresh: () => viewCommand("refresh"),
+    // End Process on a row, with Yes to the warning.
+    end: async (row) => {
+      row.click();
+      await command("end-process");
+      await answerDialog(s, "yes");
+    },
+  };
+};
+
+// In the XP VM, End Process on a process that ended after a paused list
+// showed it gives XP's error, and the list stays as it is. The cmd that
+// has the same place now does not end.
+test("End Process on a cmd that ended before does nothing, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const tm = await pausedTaskManager(s);
+  await h.enter("cmd");
+  await tm.refresh();
+  // The newest process first: the cmd in the cmd, then the first cmd.
+  const [inner] = tm.cmdRows();
+  await h.enter("exit");
+  await h.enter("cls");
+  await h.enter("start /wait notepad");
+  expect(h.input.disabled).toBeTrue();
+  await tm.end(inner);
+  const error = [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  expect(error.textContent).toContain("Unable to Terminate Process");
+  expect(error.textContent).toContain("The operation could not be completed.");
+  expect(error.textContent).toContain(
+    "The operation is not valid for this process.",
+  );
+  await answerDialog(s, "ok");
+  expect(inner.isConnected).toBeTrue();
+  expect(h.input.disabled).toBeTrue();
+  expect(h.output.textContent).toBe("\n");
+  await closeWindow(s, "__notepad");
+  expect(h.input.disabled).toBeFalse();
+  // A new cmd in the window is a new process: the old row does not end it.
+  await h.enter("cmd");
+  await tm.end(inner);
+  await answerDialog(s, "ok");
+  await h.enter("title Inner");
+  expect(h.win.querySelector(".title-text").textContent).toBe("Inner");
+  // A closed window is gone too, also when a new one has its place.
+  await tm.refresh();
+  const [newest] = tm.cmdRows();
+  await closeWindow(s, "__command-prompt");
+  await runBox(s, "cmd");
+  await tm.end(newest);
+  expect(
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1).textContent,
+  ).toContain("The operation is not valid for this process.");
+  await answerDialog(s, "ok");
+  expect(promptWindows(s)).toHaveLength(1);
+});
+
+// In the XP VM, End Process on a cmd at the pause of DIR /P stops the
+// listing, and the cmd under it shows its prompt. Pasted lines that are
+// left run at once in the cmd under it.
+test("End Process stops a pause and gives the pasted lines to the cmd under it", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  manyFiles(h, 30);
+  const tm = await pausedTaskManager(s);
+  const prompt = () =>
+    h.win.querySelector(".xp-terminal-prompt span").textContent;
+  const profilePrompt = prompt();
+  await h.enter("cd Many");
+  await h.enter("cmd");
+  await tm.refresh();
+  await h.enter("cls");
+  await h.enter("dir /p");
+  expect(h.output.textContent.endsWith(PAUSE)).toBeTrue();
+  await tm.end(tm.cmdRows()[0]);
+  expect(h.output.textContent.endsWith(`${PAUSE}\n`)).toBeTrue();
+  expect(h.input.disabled).toBeFalse();
+  expect(prompt()).toBe(`${profilePrompt.slice(0, -1)}\\Many>`);
+  // A key after it is a key at the prompt, not at the pause.
+  await h.press("x");
+  expect(h.output.textContent.endsWith(`${PAUSE}\n`)).toBeTrue();
+  await h.enter("echo next");
+  expect(h.output.textContent.endsWith("echo next\nnext\n\n")).toBeTrue();
+  // The pasted lines after START /WAIT run in the first cmd at once.
+  await h.enter("cmd");
+  await tm.refresh();
+  await h.enter("cls");
+  paste(h, "start /wait notepad\necho one\necho two\n");
+  await settle();
+  expect(h.input.disabled).toBeTrue();
+  await tm.end(tm.cmdRows()[0]);
+  await settle();
+  const many = prompt();
+  expect(h.output.textContent).toBe(
+    `\n${many}start /wait notepad\n\n${many}echo one\none\n\n${many}echo two\ntwo\n\n`,
+  );
+  expect(h.input.disabled).toBeFalse();
+  await closeWindow(s, "__notepad");
+  expect(h.output.textContent.endsWith("two\n\n")).toBeTrue();
 });

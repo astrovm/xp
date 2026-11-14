@@ -15,8 +15,11 @@ export const renderTerminal = (context, program, programId, options) => {
   // The cmd sessions of the window, the last one on top. Like XP, "cmd"
   // typed at the prompt runs a new cmd in the same window, and EXIT goes
   // back to the one before it. close is true for a cmd that ends when its
-  // command ends, like "cmd /c dir", or that EXIT ends.
+  // command ends, like "cmd /c dir", or that EXIT ends. id names the cmd
+  // for all of its life, like the process ID of a cmd.exe, so Task Manager
+  // ends that cmd and no other one. The first cmd has the id 0.
   const shells = [];
+  let nextShellId = 0;
   // The title that the window shows now. Like XP, a cmd that a command
   // line starts takes that title, with the command line, as its own.
   let shownTitle = "";
@@ -28,7 +31,7 @@ export const renderTerminal = (context, program, programId, options) => {
   const startShell = (from, close, { folder, fresh, title }) => {
     const session = new CommandSession(context, { from, folder, fresh });
     session.title = title || shownTitle || session.title;
-    shells.push({ session, close });
+    shells.push({ id: nextShellId++, session, close });
     return session;
   };
   const current = () => shells.at(-1).session;
@@ -100,6 +103,12 @@ export const renderTerminal = (context, program, programId, options) => {
   const readOneCharacter = () => {
     typeAhead = typeAhead.slice(/^(?:\r\n|[\s\S])/u.exec(typeAhead)[0].length);
   };
+  // Task Manager ends the cmd of a pause: the pause stops.
+  const stopWaitingKey = () => {
+    const go = waitingKey;
+    waitingKey = null;
+    go?.(true);
+  };
   const waitForKey = () => {
     if (pendingPress) {
       pendingPress = false;
@@ -127,7 +136,9 @@ export const renderTerminal = (context, program, programId, options) => {
   // than the window has, and the last row asks for a key. A line goes on
   // the screen while the lines before it take fewer rows than a screen
   // has.
-  const writePaged = async (text) => {
+  // line is the command line of the output. When Task Manager ends its
+  // cmd at a pause, the output stops and leaves the screen as it is.
+  const writePaged = async (text, line) => {
     const page = visibleRows() - 1;
     const lines = text.split("\n");
     let next = 0;
@@ -157,6 +168,7 @@ export const renderTerminal = (context, program, programId, options) => {
       input.disabled = false;
       giveKeys();
       const stop = await waitForKey();
+      if (running !== line) return;
       input.disabled = true;
       output.append("\n");
       if (stop) return;
@@ -171,17 +183,26 @@ export const renderTerminal = (context, program, programId, options) => {
     }
   };
 
-  // The command line that runs. The line stops when its window closes or
-  // when Task Manager ends its cmd while it waits, such as for START /WAIT.
+  // The command line that runs, until it ends. The line stops when its
+  // window closes, or when Task Manager ends its cmd while it waits, such
+  // as for START /WAIT or at a pause of its output.
   let running = null;
   // Runs a command line, like a press of Enter. A command from the command
   // line of cmd does not show, like XP, and does not go in the history.
-  // It is false when the window closes or when Task Manager ends its cmd.
+  // It is false when the window closes. When Task Manager ends the cmd of
+  // the line, it is true at once: the cmd under it takes the next line,
+  // such as a pasted one, like XP.
   const run = async (command, { echo = true } = {}) => {
     const line = command.trim();
     const enteredPrompt = current().prompt;
-    // The line as the screen shows it when the command ends.
-    const own = { echo: echo ? `${enteredPrompt}${command}\n` : "" };
+    // The line as the screen shows it when the command ends. shell is the
+    // cmd that runs it. stop ends the wait of the line.
+    const own = {
+      echo: echo ? `${enteredPrompt}${command}\n` : "",
+      shell: shells.at(-1),
+      ended: false,
+    };
+    const stopped = new Promise((resolve) => (own.stop = resolve));
     running = own;
     if (echo && line) history.push(command);
     historyIndex = history.length;
@@ -195,19 +216,19 @@ export const renderTerminal = (context, program, programId, options) => {
     // With no command, it shows its banner.
     while (result.shell) {
       const session = startShell(current(), result.shell.close, result.shell);
-      const own = result.shell.command?.trim();
-      if (own) showTitle(`${session.title} - ${own}`);
+      own.shell = shells.at(-1);
+      const shellCommand = result.shell.command?.trim();
+      if (shellCommand) showTitle(`${session.title} - ${shellCommand}`);
       result =
         result.shell.command === undefined
           ? { output: session.banner.trimEnd() }
           : await execute(session, result.shell.command);
     }
     // START /WAIT waits until the window that it opens closes.
-    if (result.wait) await result.wait;
-    if (running !== own) return false;
-    // From here, the line writes its own echo. A pause of its output that
-    // Task Manager ends stops it.
-    running = null;
+    if (result.wait) await Promise.race([result.wait, stopped]);
+    if (running !== own) return own.ended;
+    // From here, the line writes its own echo.
+    own.echoed = true;
     // A key press that is left over at the end goes away, like cmd.exe.
     pendingPress = false;
     if (result.exit) shells.at(-1).close = true;
@@ -220,7 +241,10 @@ export const renderTerminal = (context, program, programId, options) => {
       context.close();
       return false;
     };
-    if (result.exit && shells.length === 1) return leaveShells();
+    if (result.exit && shells.length === 1) {
+      running = null;
+      return leaveShells();
+    }
     // Like cmd.exe, a blank line comes after each command, but not after
     // an empty line, and not before the next question of the command.
     // CLS clears the screen, and the blank line stays at the top.
@@ -231,10 +255,12 @@ export const renderTerminal = (context, program, programId, options) => {
     else {
       output.append(own.echo);
       input.value = "";
-      if (result.paged) await writePaged(result.output);
-      else if (result.output) output.append(`${result.output}\n`);
+      if (result.paged) await writePaged(result.output, own);
+      if (running !== own) return own.ended;
+      if (!result.paged && result.output) output.append(`${result.output}\n`);
       output.append(blank);
     }
+    running = null;
     if (!leaveShells()) return false;
     // The title goes back when the command ends, but not while its
     // question is open.
@@ -287,13 +313,14 @@ export const renderTerminal = (context, program, programId, options) => {
   // Like XP, a dropped item types its path at the caret, in quotes when it
   // has a space. Of many items, only the dragged one goes in, and a drop
   // adds no space. An item in the Recycle Bin and a file from the computer
-  // have no path here, so the window does not take them.
+  // have no path here, so the window does not take them. In the XP VM, a
+  // drop does not bring a window that is behind another one to the top.
   const { ITEM_DRAG_TYPE } = globalThis.XPDialogs;
   const typeItemPath = (ids) => {
     const id = ids[0];
     if (!context.fs.getNode(id) || context.fs.isInRecycleBin(id)) return;
     const path = context.fs.getPath(id);
-    input.focus();
+    giveKeys();
     typeIn(path.includes(" ") ? `"${path}"` : path);
   };
   content.dataset.dropAction = "items";
@@ -359,20 +386,35 @@ export const renderTerminal = (context, program, programId, options) => {
   // XP, each cmd of the window is its own cmd.exe process.
   return {
     element: content,
-    processCount: () => shells.length,
-    // Task Manager ends a cmd that runs in a cmd. Like XP, the cmd under
-    // it takes the window again. The cmds on top of it end too.
+    // The ids of the cmds of the window, the first cmd first.
+    processIds: () => shells.map(({ id }) => id),
+    // Task Manager ends the cmd with the id. It is false for a cmd that
+    // ended before, like XP's End Process for a process that is gone.
+    // The first cmd closes the window. Like XP, the cmd under a cmd that
+    // ends takes the window again, and the cmds on top of it end too.
     // A command line that runs is always in the cmd on top, so it ends
     // too, also while it waits for a window or a key. Like XP, the cmd
-    // under it shows its prompt at once.
-    endProcess: (index) => {
-      shells.splice(index).forEach(({ session }) => session.close());
-      if (running) {
-        output.append(running.echo);
-        input.value = "";
+    // under it shows its prompt at once, and runs the pasted lines that
+    // are left.
+    endProcess: (id) => {
+      const index = shells.findIndex((shell) => shell.id === id);
+      if (index < 0) return false;
+      if (index === 0) {
+        context.close();
+        return true;
       }
+      shells.splice(index).forEach(({ session }) => session.close());
+      const line = running;
       running = null;
-      waitingKey = null;
+      if (line) {
+        line.ended = true;
+        if (!line.echoed) {
+          output.append(line.echo);
+          input.value = "";
+        }
+        line.stop();
+      }
+      stopWaitingKey();
       pendingPress = false;
       output.append("\n");
       showTitle(current().title);
@@ -380,9 +422,13 @@ export const renderTerminal = (context, program, programId, options) => {
       giveKeys();
       updatePrompt();
       screen.scrollTop = screen.scrollHeight;
+      // The pasted lines that are left run in the cmd under it now.
+      feed();
+      return true;
     },
     unmount: () => {
       running = null;
+      stopWaitingKey();
       shells.forEach(({ session }) => session.close());
     },
   };

@@ -626,3 +626,64 @@ test("Notepad opens a file with the caret at the start, like XP", async () => {
     "Ln 1, Col 1",
   );
 });
+
+// In the XP VM, Notepad shows each file that it opens with the caret at
+// the start: New, Open, a drop, and a file that opens in an open Notepad.
+test("Notepad puts the caret at the start of each file that it opens, like XP", async () => {
+  const h = await setup();
+  const caret = () => [h.editor.selectionStart, h.editor.selectionEnd];
+  const long = h.fs.createFile(h.fs.MY_DOCUMENTS, "long.txt", {
+    content: "one\ntwo\nthree",
+  });
+  const atEnd = () =>
+    h.editor.setSelectionRange(h.editor.value.length, h.editor.value.length);
+  atEnd();
+  await h.command("new");
+  expect(caret()).toEqual([0, 0]);
+  await h.command("open");
+  await h.choose("long.txt");
+  expect(h.editor.value).toBe("one\ntwo\nthree");
+  expect(caret()).toEqual([0, 0]);
+  atEnd();
+  dragOn(h.s, h.editor, "drop", {
+    "application/x-astro-vfs-ids": JSON.stringify([h.file.id]),
+  });
+  await flushShell();
+  expect(h.editor.value).toBe("first\nsecond");
+  expect(caret()).toEqual([0, 0]);
+  atEnd();
+  h.fs.open(long.id);
+  await flushShell();
+  expect(h.s.document.querySelectorAll(".notepad-window")).toHaveLength(1);
+  expect(h.editor.value).toBe("one\ntwo\nthree");
+  expect(caret()).toEqual([0, 0]);
+});
+
+// In the XP VM, a file dropped on a Notepad window that is behind another
+// window opens in Notepad, and Notepad stays behind. The window in front
+// keeps the keys. Notepad's text gets them when Notepad is active again.
+test("a drop on a Notepad window behind another one leaves it behind, like XP", async () => {
+  const h = await setup();
+  const other = h.fs.createFile(h.fs.MY_DOCUMENTS, "other.txt", {
+    content: "other",
+  });
+  const active = () =>
+    [...h.s.document.querySelectorAll(".xp-window.active")].map(
+      (win) => win.dataset.game,
+    );
+  h.fs.open(h.fs.MY_DOCUMENTS);
+  await flushShell();
+  expect(active()).toEqual(["__my-documents"]);
+  const front = h.s.document.activeElement;
+  dragOn(h.s, h.editor, "drop", {
+    "application/x-astro-vfs-ids": JSON.stringify([other.id]),
+  });
+  await flushShell();
+  expect(h.editor.value).toBe("other");
+  expect(active()).toEqual(["__my-documents"]);
+  expect(h.s.document.activeElement).toBe(front);
+  h.win.dispatchEvent(new h.s.window.PointerEvent("pointerdown"));
+  await flushShell();
+  expect(active()).toEqual(["__notepad"]);
+  expect(h.s.document.activeElement).toBe(h.editor);
+});

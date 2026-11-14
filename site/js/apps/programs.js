@@ -36,14 +36,26 @@ const applicationContext = (win) => ({
       : openXPProgram(applicationId, options);
   },
   // Runs a program by its name, such as "notepad", like Run does, from the
-  // folder with the path base. It gives a promise of the window that the
-  // program opens, or of null, or false for a name that is no program.
-  runProgram: (name, args, base) => runNamedProgram(name, args, base),
+  // folder with the path base. It gives a promise of the new window that
+  // the program opens, or of null, or false for a name that is no program.
+  runProgram: (name, args, base) =>
+    newWindowOf(() => runNamedProgram(name, args, base)),
+  // Opens an item with its program, like START and XP's ShellExecuteEx. It
+  // gives a promise of the new window that the program opens, or of null,
+  // or false when nothing opens the item. A folder opens in Explorer,
+  // which is open already, so it gives no new window.
+  openItem: (id) =>
+    newWindowOf(() => {
+      const opened = fs.launch(id);
+      return opened && (opened.folder ? Promise.resolve(null) : opened.result);
+    }),
   // Like START /MIN and /MAX, a window that a program opens shows
-  // minimized or maximized.
+  // minimized or maximized. Like XP's Calculator, a program that opens
+  // restored does not take /MAX.
   showWindow(other, show) {
     if (show === "min") minimizeWindow(other.gameId);
-    else if (!other.maximized) toggleMaximize(other.gameId);
+    else if (!other.maximized && !other.application?.window.opensRestored)
+      toggleMaximize(other.gameId);
   },
   // A promise that ends when the window closes, like START /WAIT.
   whenClosed: (other) => whenWindowCloses(other),
@@ -97,6 +109,22 @@ const applicationContext = (win) => ({
   },
   showMessage: (title, text) => XPDialogs.alert(text, title, "info"),
 });
+
+// The new window of a launch, like the new process of XP's START. A window
+// that was open before, such as Calculator, which has one window here, or
+// Task Manager, is no new window: XP's taskmgr.exe gives the work to the
+// copy that runs. START does not wait for that window or change it. The
+// launch gives its window, a promise of it, or false for nothing to run.
+const newWindowOf = (launch) => {
+  const before = new Set(openWindows.values());
+  const launched = launch();
+  return (
+    launched !== false &&
+    Promise.resolve(launched).then((win) =>
+      win?.gameId && !before.has(win) ? win : null,
+    )
+  );
+};
 
 const openXPProgram = (programId, options = {}) => {
   let program = window.XPApplicationRegistry.get(programId);
@@ -217,11 +245,7 @@ const openXPProgram = (programId, options = {}) => {
   el.querySelector(".window-content").replaceWith(mounted.element);
   document.getElementById("desktop").appendChild(el);
   openWindows.set(windowId, win);
-  if (program.window.maximizable === false) {
-    const maximize = el.querySelector(".maximize-btn");
-    maximize.disabled = true;
-    maximize.setAttribute("aria-disabled", "true");
-  }
+  updateMaximizeButton(win);
   if (fixedSize) {
     el.querySelectorAll(".resize-handle").forEach((handle) => handle.remove());
     fitFixedWindow(win, mounted.element);

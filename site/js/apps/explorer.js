@@ -290,14 +290,17 @@ const runNamedProgram = (name, args, base) => {
   const programId = RUN_PROGRAMS[name.toLowerCase()];
   if (!programId) return false;
   // The window that the program opens, if it opens one. A message, such
-  // as Notepad's question for a new file, is no window.
+  // as Hearts' error, is no window. Like XP, explorer.exe gives its folder
+  // to the Explorer that runs and ends at once, so it has no window.
   return Promise.resolve(runProgram(programId, args, base)).then((result) =>
-    result?.gameId ? result : null,
+    result?.gameId && programId !== "explorer" ? result : null,
   );
 };
 
 // XP's Notepad offers to create a file that Run names but that does not
-// exist. No opens an empty Notepad, and Cancel opens nothing.
+// exist. No opens an empty Notepad, and Cancel opens nothing. It gives the
+// Notepad window, or null: like XP, Notepad asks in its own process, so
+// START /WAIT and /MAX act on the window that opens after the question.
 const createNotepadFile = async (path, base) => {
   const answer = await XPDialogs.message({
     title: "Notepad",
@@ -305,11 +308,8 @@ const createNotepadFile = async (path, base) => {
     icon: "warning",
     buttons: XPDialogs.BUTTON_SETS.yesNoCancel,
   });
-  if (answer === "cancel") return;
-  if (answer === "no") {
-    openXPProgram("__notepad");
-    return;
-  }
+  if (answer === "cancel") return null;
+  if (answer === "no") return openXPProgram("__notepad");
   const fullPath = runFullPath(path, base);
   const separator = fullPath.lastIndexOf("\\");
   const parent = findRunNode(fullPath.slice(0, separator));
@@ -321,9 +321,10 @@ const createNotepadFile = async (path, base) => {
       parent.id,
       fullPath.slice(separator + 1),
     );
-    openXPProgram("__notepad", { file });
+    return openXPProgram("__notepad", { file });
   } catch (error) {
     await XPDialogs.alert(error.message, "Notepad", "error");
+    return null;
   }
 };
 

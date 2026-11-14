@@ -394,3 +394,40 @@ test("a window gives the keys back to the iframe that had them", async () => {
   activate(docs);
   expect(s.document.activeElement === frame).toBeTrue();
 });
+
+// Like XP, a dialog that closes while another window is active does not
+// bring its window back to the top. The window keeps the control that had
+// the keys, and gives it the keys when it becomes active again.
+test("a dialog that closes behind the active window leaves its window behind", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "x" });
+  fs.open(file.id);
+  await settle();
+  const notepad = s.document.querySelector(".notepad-window");
+  const editor = notepad.querySelector("textarea");
+  expect(s.document.activeElement).toBe(editor);
+  const question = s.window.XPDialogs.alert("Text", "Notepad", "info");
+  await settle();
+  // A program from elsewhere, such as Run, opens on top while it is open.
+  clickStartAction(s, "documents");
+  await settle();
+  const docs = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  const keys = s.document.activeElement;
+  expect(docs.contains(keys)).toBeTrue();
+  s.document
+    .querySelector('.xp-dialog [data-action="ok"]')
+    .dispatchEvent(new s.window.MouseEvent("click", { bubbles: true }));
+  await question;
+  await settle();
+  expect(docs.classList.contains("active")).toBeTrue();
+  expect(notepad.classList.contains("active")).toBeFalse();
+  expect(s.document.activeElement).toBe(keys);
+  expect(notepad.lastFocusedElement).toBe(editor);
+  notepad.dispatchEvent(new s.window.PointerEvent("pointerdown"));
+  await settle();
+  expect(notepad.classList.contains("active")).toBeTrue();
+  expect(s.document.activeElement).toBe(editor);
+});

@@ -320,9 +320,12 @@ const mountTaskManager = (context, { window: win }) => {
 
   // Processes: one per program window, the rest from the reference install.
   let nextPid = 4;
+  // A process of a window keeps that window, and part is the id that the
+  // window gives the process, so a window that opens again with the same
+  // id, or a new cmd, is a new process.
   const createProcess = (
     [image, user, memory, handles, threads],
-    windowId,
+    task = null,
     part = 0,
   ) => ({
     pid: (nextPid += 4),
@@ -332,12 +335,13 @@ const mountTaskManager = (context, { window: win }) => {
     memory,
     handles,
     threads,
-    windowId,
+    windowId: task?.gameId ?? null,
+    task,
     part,
     cpu: 0,
     cpuTime: 0,
   });
-  const processes = BASE_PROCESSES.map((entry) => createProcess(entry, null));
+  const processes = BASE_PROCESSES.map((entry) => createProcess(entry));
   const processImage = (task) =>
     PROGRAM_IMAGES[task.applicationId ?? task.gameId] || GAME_IMAGES[task.type];
   const tasks = () =>
@@ -358,40 +362,38 @@ const mountTaskManager = (context, { window: win }) => {
     return Math.round(bytes / 1024);
   };
   // A window can have more than one process: each cmd of a Command
-  // Prompt window is its own cmd.exe, like XP.
-  const processCountOf = (task) =>
-    task.mountedApplication?.processCount?.() ?? 1;
+  // Prompt window is its own cmd.exe, like XP. The window gives the id of
+  // each one, the first one first.
+  const processIdsOf = (task) => task.mountedApplication?.processIds?.() ?? [0];
+  // True while the process runs: its window is open, and has the process.
+  const isRunning = (process) =>
+    context.openWindows.get(process.windowId) === process.task &&
+    processIdsOf(process.task).includes(process.part);
   const syncProcesses = () => {
-    const windows = new Map(
-      [...context.openWindows.values()]
-        .filter(processImage)
-        .map((task) => [task.gameId, task]),
-    );
+    const windows = [...context.openWindows.values()].filter(processImage);
     for (let index = processes.length - 1; index >= 0; index--) {
-      const { windowId, part } = processes[index];
-      const task = windows.get(windowId);
-      if (windowId && !(task && part < processCountOf(task)))
-        processes.splice(index, 1);
+      const process = processes[index];
+      if (process.task && !isRunning(process)) processes.splice(index, 1);
     }
-    windows.forEach((task, id) => {
+    windows.forEach((task) => {
       const [image, memory] = processImage(task);
-      for (let part = 0; part < processCountOf(task); part++)
+      processIdsOf(task).forEach((part) => {
         if (
           !processes.some(
-            (process) => process.windowId === id && process.part === part,
+            (process) => process.task === task && process.part === part,
           )
         )
           processes.push(
-            createProcess([image, USER, memory, 120, 4], id, part),
+            createProcess([image, USER, memory, 120, 4], task, part),
           );
+      });
     });
     // Programs grow with what they show; folder windows live in Explorer.
     // The first process of a window has what the window shows.
     processes.forEach((process) => {
-      if (process.windowId)
+      if (process.task)
         process.memory =
-          process.base +
-          (process.part ? 0 : footprint(windows.get(process.windowId)));
+          process.base + (process.part ? 0 : footprint(process.task));
       else if (process.image === "explorer.exe")
         process.memory =
           process.base +
@@ -949,13 +951,30 @@ const mountTaskManager = (context, { window: win }) => {
       context.closeGameWindow(win.gameId);
       return;
     }
-    const task = context.openWindows.get(process.windowId);
-    if (process.part && task?.mountedApplication?.endProcess) {
-      task.mountedApplication.endProcess(process.part);
-    } else if (process.windowId) {
-      await context.closeGameWindow(process.windowId, {
-        skipBeforeClose: true,
-      });
+    const { task } = process;
+    const application = task?.mountedApplication;
+    // In the XP VM, a process that ended after the list showed it, such
+    // as in a paused list, cannot end again. The list stays as it is. A
+    // window with more than one process ends the one with the id, and
+    // tells if it still had it.
+    if (
+      task &&
+      (context.openWindows.get(process.windowId) !== task ||
+        (application?.endProcess && !application.endProcess(process.part)))
+    ) {
+      await context.XPDialogs.alert(
+        "The operation could not be completed.\n\nThe operation is not valid for this process.",
+        "Unable to Terminate Process",
+        "error",
+      );
+      return;
+    }
+    if (task) {
+      // A window with no processes of its own ends with its window.
+      if (!application?.endProcess)
+        await context.closeGameWindow(task.gameId, {
+          skipBeforeClose: true,
+        });
     } else if (process.image === "explorer.exe") {
       // Explorer's folder windows close with it. The shell keeps running, as
       // if Winlogon had restarted it.

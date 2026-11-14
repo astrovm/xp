@@ -10,6 +10,8 @@ export const applicationMetadata = {
     width: 260,
     height: 260,
     maximizable: false,
+    // In the XP VM, calc.exe opens at its own size with START /MAX.
+    opensRestored: true,
     resizable: false,
     className: "xp-calculator-window",
   },

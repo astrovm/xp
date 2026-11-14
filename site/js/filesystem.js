@@ -874,21 +874,25 @@
     folderHandler = handler;
   };
 
-  const open = (id) => {
+  // Opens an item with its handler. It gives false when no handler opens
+  // it, else { folder, result }: result is what the handler gives, such as
+  // the window that opens.
+  const launch = (id) => {
     const node = requireNode(id);
-    if (node.type === "folder") {
-      if (!folderHandler) return false;
-      folderHandler(node);
-      return true;
-    }
-    const handler =
-      (node.app && fileTypeHandlers.get(`app:${node.app}`)) ||
-      fileTypeHandlers.get((node.ext || "").toLowerCase()) ||
-      fileTypeHandlers.get("*");
-    if (!handler) return false;
-    handler(node);
-    return true;
+    const folder = node.type === "folder";
+    const handler = folder
+      ? folderHandler
+      : (node.app && fileTypeHandlers.get(`app:${node.app}`)) ||
+        fileTypeHandlers.get((node.ext || "").toLowerCase()) ||
+        fileTypeHandlers.get("*");
+    return handler ? { folder, result: handler(node) } : false;
   };
+
+  const open = (id) => launch(id) !== false;
+
+  // The drive of an item, such as "C:". An item that is on no drive, such
+  // as My Computer, has the drive of Windows, like XP.
+  const driveOf = (id) => /^[a-z]:/i.exec(getPath(id) ?? "")?.[0] ?? "C:";
 
   // ---- Testing hook ----
 
@@ -1148,6 +1152,8 @@
     getPictureUrl,
     setContent: mutate(setContent),
     registerFileType,
+    launch,
+    driveOf,
     registerFolderHandler,
     open,
     resetForTests,

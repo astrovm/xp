@@ -718,6 +718,45 @@ test("the Address bar takes names and .. from the open folder, like XP", async (
   }
 });
 
+// In the XP VM, "\WINDOWS" in the Address bar of C:\Documents and
+// Settings opens C:\WINDOWS: a "\" at the start is the top of the drive of
+// the open folder. "/WINDOWS" and "\\WINDOWS" are no folder: XP takes them
+// as a web or network address.
+test("the Address bar starts a path with \\ at the top of the drive, like XP", async () => {
+  const h = await openDocuments();
+  const { s, fs } = h;
+  const go = async (text, how) => {
+    h.address().value = text;
+    if (how === "go") await h.action("go");
+    else {
+      h.address().dispatchEvent(new s.window.Event("change"));
+      await settle();
+    }
+    return h.address().value;
+  };
+  const top = fs.createFolder(fs.DRIVE_C, "Top");
+  const onD = fs.createFolder(fs.DRIVE_D, "Data");
+  fs.createFolder(onD.id, "Top");
+  const profile = fs.getPath(fs.USER_PROFILE);
+  const settings = fs.getPath(fs.getNode(fs.USER_PROFILE).parent);
+  // A folder with the same name in the open folder is not the one.
+  fs.createFolder(fs.getNode(fs.USER_PROFILE).parent, "Top");
+  for (const how of ["go", "change"]) {
+    expect(await go(settings, how)).toBe(settings);
+    expect(await go("\\Top", how)).toBe(fs.getPath(top.id));
+    expect(await go(settings, how)).toBe(settings);
+    expect(await go(profile.slice(2), how)).toBe(profile);
+    expect(await go("\\", how)).toBe("C:\\");
+    expect(await go(fs.getPath(onD.id), how)).toBe("D:\\Data");
+    expect(await go("\\Data\\Top", how)).toBe("D:\\Data\\Top");
+    expect(await go("/Data", how)).toBe("D:\\Data\\Top");
+    expect(await go("\\\\Data", how)).toBe("D:\\Data\\Top");
+    // My Computer is on no drive. It has the drive of Windows.
+    expect(await go("My Computer", how)).toBe("My Computer");
+    expect(await go("\\Top", how)).toBe(fs.getPath(top.id));
+  }
+});
+
 test("Explorer items support Ctrl multi-select and drag only what is selected", async () => {
   const h = await openDocuments(),
     { s } = h;

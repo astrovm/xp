@@ -729,12 +729,27 @@ const createWindowElement = (gameId, applicationId = gameId) => {
   return win;
 };
 
+// Like XP, a window with no Maximize box, such as Calculator, or with a
+// dialog frame, does not maximize by the mouse or the system menu. A
+// program can still maximize it, like START /MAX or Task Manager's
+// Maximize in the XP VM, and then the window can restore.
+const canMaximize = (win) =>
+  win.application?.window.maximizable !== false &&
+  !win.application?.window.dialogControls;
+// A window with a fixed frame, such as Calculator, has no Size command.
+const canResize = (win) =>
+  win.application?.window.resizable !== false &&
+  !win.application?.window.dialogControls;
+
 const updateMaximizeButton = (win) => {
   const button = win.maximizeBtn;
 
   button.classList.toggle("restore-btn", win.maximized);
   button.title = win.maximized ? "Restore" : "Maximize";
   button.setAttribute("aria-label", button.title);
+  button.disabled = !win.maximized && !canMaximize(win);
+  if (button.disabled) button.setAttribute("aria-disabled", "true");
+  else button.removeAttribute("aria-disabled");
 };
 
 const bundledGameRoot = (gameId, type) =>
@@ -1683,6 +1698,7 @@ const wireDrag = (win) => {
 
   bar.addEventListener("dblclick", (e) => {
     if (e.target.closest(".title-buttons, .title-icon")) return;
+    if (!win.maximized && !canMaximize(win)) return;
     toggleMaximize(win.gameId, { animate: true });
   });
 
@@ -2026,9 +2042,9 @@ const openWindowSystemMenu = (win, clientX, clientY) => {
   const enabled = {
     restore: win.maximized || win.minimized,
     move: !win.maximized && !win.minimized,
-    size: !win.maximized && !win.minimized,
+    size: !win.maximized && !win.minimized && canResize(win),
     minimize: !win.minimized,
-    maximize: !win.maximized && !win.minimized,
+    maximize: !win.maximized && !win.minimized && canMaximize(win),
     close: true,
   };
   menu.querySelectorAll("[data-command]").forEach((button) => {

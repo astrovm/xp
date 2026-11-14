@@ -53,6 +53,8 @@ beforeEach(() => {
       this.launched.push([id, options]);
       return true;
     },
+    // The shell opens an item with its program, like START.
+    openItem: (id) => fs.open(id),
     // The shell runs a program that XP has, like Run does.
     ran: [],
     runProgram(name, args, base) {

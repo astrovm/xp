@@ -504,6 +504,11 @@ describe("virtual filesystem edge cases", () => {
     expect(fs.getParent(fs.MY_COMPUTER)).toBeNull();
     expect(fs.getChildren("missing")).toEqual([]);
     expect(fs.getPath("missing")).toBeNull();
+    // An item that is on no drive, or that is gone, has the drive of
+    // Windows, like XP.
+    expect(fs.driveOf("missing")).toBe("C:");
+    expect(fs.driveOf(fs.MY_COMPUTER)).toBe("C:");
+    expect(fs.driveOf(fs.DRIVE_D)).toBe("D:");
     expect(fs.getSize("missing")).toBe(0);
     expect(fs.resolvePath(null)).toBeNull();
     expect(fs.resolvePath("   ")).toBeNull();

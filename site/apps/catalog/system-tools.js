@@ -15,6 +15,8 @@ export const systemToolApplications = [
       top: -1,
       resizable: false,
       maximizable: false,
+      // In the XP VM, sndvol32.exe opens at its own size with START /MAX.
+      opensRestored: true,
       className: "xp-volume-window",
     },
   }),

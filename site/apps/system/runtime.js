@@ -35,11 +35,16 @@ export const createSystemRuntime = (context) => {
   } = context;
 
   // The folder that the Address bar names. Like XP, a full path counts
-  // "." and ".." by its text. Other text starts at the open folder: ".."
-  // is the folder above it, and each name must be a folder in the one
-  // before it. XP finds no folder for ".", which it then takes as a web
-  // address.
+  // "." and ".." by its text. A "\" at the start is the top of the drive
+  // of the open folder, as in the XP VM. Other text starts at the open
+  // folder: ".." is the folder above it, and each name must be a folder in
+  // the one before it. XP finds no folder for ".", for a "/" at the start
+  // or for "\\", which it then takes as a web or network address.
   const addressFolderOf = (text, from) => {
+    const value = text.trim();
+    if (/^(?:\/|\\\\)/.test(value)) return null;
+    if (value.startsWith("\\"))
+      return fs.resolvePath(`${fs.driveOf(from)}${value}`);
     const full = fs.resolvePath(text);
     if (full) return full;
     const parts = text

@@ -55,7 +55,9 @@ const mountNotepad = (context, instance) => {
     win.dirty = false;
     updateTitle();
     updateStatus();
-    editor.focus();
+    // Like XP, a file that opens, such as by a drop on a window that is
+    // behind another one, does not bring the window to the top.
+    context.giveKeys(editor);
   };
 
   const saveAs = async () => {

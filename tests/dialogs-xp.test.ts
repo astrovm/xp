@@ -1094,6 +1094,15 @@ test("Save As and Open take patterns, paths and the file system's name rules, li
     name: "top.txt",
     existingId: null,
   });
+  // Like Windows, it is the drive of the open folder.
+  const data = fs.createFolder(fs.DRIVE_D, "Data");
+  result = d.saveFile({ startFolder: data.id, defaultExtension: ".txt" });
+  submit(current(s), "Save", "\\top");
+  expect(await result).toEqual({
+    parentId: fs.resolvePath("D:\\"),
+    name: "top.txt",
+    existingId: null,
+  });
   result = d.openFile({ startFolder: fs.MY_DOCUMENTS });
   submit(current(s), "Open", "./sub/inside.txt");
   expect((await result).id).toBe(inside.id);

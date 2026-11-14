@@ -213,7 +213,8 @@ export class CommandSession {
   // from is the session that starts this one, such as the cmd that runs
   // "cmd" or "start". Like XP, the new session starts in its folder, with
   // a copy of its variables. folder is the folder of START /D, and fresh
-  // is START /I: the session gets the variables that cmd starts with.
+  // is START /I: the session gets the variables that the cmd of from had
+  // when it started, like XP's cmd.exe, which keeps its first environment.
   constructor(context, { from = null, folder = null, fresh = false } = {}) {
     this.context = context;
     this.fs = context.fs;
@@ -232,7 +233,7 @@ export class CommandSession {
       .join("\\");
     const temp = `${shortProfile}\\LOCALS~1\\Temp`;
     this.environment = new Map(
-      (!fresh && from?.environment) || [
+      (fresh ? from?.startEnvironment : from?.environment) || [
         ["COMPUTERNAME", COMPUTER_NAME],
         ["COMSPEC", DEFAULT_TITLE],
         ["HOMEDRIVE", "C:"],
@@ -251,6 +252,8 @@ export class CommandSession {
         ["WINDIR", "C:\\WINDOWS"],
       ],
     );
+    // The variables that this cmd starts with. SET does not change them.
+    this.startEnvironment = new Map(this.environment);
   }
 
   // The folder the session is in. Like XP, nothing deletes, moves or
@@ -1423,19 +1426,23 @@ export class CommandSession {
     if (!body) return newPrompt("");
     if (this[`command_${name}`]) return newPrompt(`/K ${body}`);
     if (isShellName(name)) return newPrompt(rest);
+    // Like XP, a file opens in its program: /WAIT waits for that program,
+    // and /MIN and /MAX show its window so.
     const pathId = this.resolve(tokenize(body).join(" "));
-    if (pathId && this.fs.open(pathId)) return { output: "" };
+    const item = pathId && this.context.openItem(pathId);
     return this.opened(
-      this.context.runProgram(name, rest, this.displayPath(start.folder)),
+      item ||
+        this.context.runProgram(name, rest, this.displayPath(start.folder)),
       start,
     );
   }
 
-  // The result of START for the window that it opens, or that it may
-  // still open when its program loads: it opens minimized or maximized,
-  // and with /WAIT, cmd waits until it closes. A window that does not
-  // open, such as a program that only shows a message, has nothing to
-  // wait for.
+  // The result of START for the new window that it opens, or that it may
+  // still open when its program loads or after a question: it opens
+  // minimized or maximized, and with /WAIT, cmd waits until it closes.
+  // launched is false when nothing runs. With no new window, such as for
+  // a program that only shows a message, or a window that was open
+  // before, START has nothing to wait for and changes nothing.
   opened(launched, { show, wait }) {
     if (!launched) return { output: NOT_FOUND };
     const window = Promise.resolve(launched).then((win) => {
