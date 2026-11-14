@@ -337,7 +337,7 @@ const mountTaskManager = (context, { window: win }) => {
   });
   const processes = BASE_PROCESSES.map((entry) => createProcess(entry, null));
   const processImage = (task) =>
-    PROGRAM_IMAGES[task.gameId] || GAME_IMAGES[task.type];
+    PROGRAM_IMAGES[task.applicationId ?? task.gameId] || GAME_IMAGES[task.type];
   const tasks = () =>
     [...context.openWindows.values()].filter(
       (task) => task.gameId !== win.gameId,
@@ -472,7 +472,8 @@ const mountTaskManager = (context, { window: win }) => {
       list.querySelector(`[data-tm-sort="${headerKeys}"]`).focus();
   };
   const iconHtml = (task) =>
-    context.createGameIconElement(task.gameId, "tm-icon").outerHTML;
+    context.createGameIconElement(task.applicationId ?? task.gameId, "tm-icon")
+      .outerHTML;
   const renderTasks = () => {
     const list = $(".tm-tasks");
     const current = tasks();

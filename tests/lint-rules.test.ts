@@ -108,6 +108,46 @@ test("await-async-expect follows the check through variables, arrays and callbac
   ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 });
 
+test("await-async-expect follows the check through promise chains and object methods", () => {
+  expect(
+    lint(
+      [
+        // Lost: a chain that no one waits for, a callback of another
+        // method, and forEach.
+        "p.then(() => { return expect(x).resolves.toBe(1); });",
+        "await p.other(() => expect(x).resolves.toBe(1));",
+        "promises.forEach((p) => p.then(() => expect(x).resolves.toBe(1)));",
+        // Lost: a method with a call that no one waits for, one that goes
+        // somewhere else, one that another method calls with no wait, and
+        // an object that is read with [...] or that goes somewhere else.
+        "const o1 = { async check() { return expect(p).resolves.toBe(1); } }; o1.check();",
+        "const o2 = { check: () => expect(p).resolves.toBe(1) }; await o2.check(); const c2 = o2.check;",
+        "const o3 = { async check() { return expect(p).resolves.toBe(1); }, run() { this.check(); } }; await o3.check(); await o3.run();",
+        "const o4 = { async check() { return expect(p).resolves.toBe(1); } }; await o4.check(); o4[name]();",
+        "const o5 = { async check() { return expect(p).resolves.toBe(1); } }; await o5.check(); use(o5);",
+        "const o6 = { async [check]() { return expect(p).resolves.toBe(1); } }; await o6.check();",
+        "use({ async check() { return expect(p).resolves.toBe(1); } });",
+        "await expect(x).resolves.toBe(1).catch(f);",
+        "await expect(x).resolves.toBe(1).then(f, g);",
+        "await expect(x).resolves.toBe(1)[then](f);",
+        "expect(x).resolves.toBe(1).finally(f);",
+        "await expect(x).resolves.toBe(1).finally;",
+        "const o7 = { async check() { return expect(p).resolves.toBe(1); } }; const { check } = o7; await check();",
+        // Waited for.
+        "await p.then(() => { return expect(x).resolves.toBe(1); });",
+        "await p.then(f, () => expect(x).rejects.toThrow());",
+        "await expect(x).resolves.toBe(1).then(f).finally(g);",
+        "await p.catch(() => expect(x).resolves.toBe(1)).finally(() => expect(y).resolves.toBe(2));",
+        "const o8 = { async check() { return expect(p).resolves.toBe(1); } }; await o8.check();",
+        "const o9 = { check: async () => expect(p).resolves.toBe(1), other: 1 }; await o9.check(); o9.other;",
+        "const o10 = { async check() { return expect(p).resolves.toBe(1); }, async run() { await this.check(); } }; await o10.run(); await o10.check();",
+        "const o11 = { async check() { return expect(p).resolves.toBe(1); } };",
+      ].join("\n"),
+      "await-async-expect",
+    ),
+  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+});
+
 test("the lint config runs the test rules on every test file", async () => {
   const eslint = new ESLint();
   const files = [...new Bun.Glob("{tests,scripts}/**/*.test.ts").scanSync(".")];

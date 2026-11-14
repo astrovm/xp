@@ -43,12 +43,17 @@ const expectNeedsMatcher = {
 // test does not wait for it unless it is awaited or returned, so a failed
 // check can come after the test ends, or never. This rule finds each such
 // check that is not awaited or returned. It follows the promise through a
-// variable, an array in Promise.all, a .map callback, a test callback and
-// a function that returns it, to each call of that function. A promise
-// that a callback gives to forEach or another call is lost.
+// variable, an array in Promise.all, a .map callback, a callback of .then,
+// .catch or .finally, a test callback, a function that returns it, to each
+// call of that function, and a method of an object in a variable, to each
+// call of that method. A promise that a callback gives to forEach or
+// another call is lost.
 // Only Promise.all fails when one check fails. Promise.allSettled,
 // Promise.any and Promise.race can hide a failed check.
 const PROMISE_GROUPS = new Set(["all"]);
+// The promise that .then, .catch and .finally give waits for the promise
+// that their callback gives.
+const PROMISE_CHAINS = new Set(["then", "catch", "finally"]);
 const TEST_FUNCTIONS = new Set(["test", "it"]);
 const isMethodCall = (node, names) =>
   node?.type === "CallExpression" &&
@@ -95,9 +100,25 @@ const awaitAsyncExpect = {
           return arrayWaited(parent, seen);
         case "VariableDeclarator":
           return readLater(parent, node, (read) => waited(read, seen));
+        case "MemberExpression":
+          return chainWaited(parent, seen);
         default:
           return false;
       }
+    };
+    // A promise is waited for when a waited .finally(...) or .then(f)
+    // comes after it: a failed check fails that promise too. .catch and
+    // .then(f, g) take the failure, so the check is lost then.
+    const chainWaited = (member, seen) => {
+      const call = member.parent;
+      return (
+        call.type === "CallExpression" &&
+        call.callee === member &&
+        !member.computed &&
+        (member.property.name === "finally" ||
+          (member.property.name === "then" && call.arguments.length < 2)) &&
+        waited(call, seen)
+      );
     };
     // True when a later read of the variable that this node sets passes the
     // test.
@@ -147,19 +168,79 @@ const awaitAsyncExpect = {
               !reference.isRead() || functionWaited(reference.identifier, seen),
           ),
         );
+    // Each this.name in the code of an object, such as a call of one of
+    // its methods from another one.
+    const thisReads = (root, name) => {
+      const found = [];
+      const visit = (node) => {
+        if (
+          node.type === "MemberExpression" &&
+          node.object.type === "ThisExpression" &&
+          !node.computed &&
+          node.property.name === name
+        )
+          found.push(node);
+        for (const key of sourceCode.visitorKeys[node.type]) {
+          const child = node[key];
+          for (const item of [child].flat()) if (item) visit(item);
+        }
+      };
+      visit(root);
+      return found;
+    };
+    // A method of an object in a variable is waited for when each call of
+    // it, as variable.name(...) or this.name(...), is waited for. An object
+    // that goes somewhere else, or that is read with [...], can have its
+    // method called with no wait, so the method is not waited for then.
+    const methodWaited = (property, seen) => {
+      const object = property.parent;
+      const declarator = object.parent;
+      if (
+        property.computed ||
+        property.key.type !== "Identifier" ||
+        declarator.type !== "VariableDeclarator" ||
+        declarator.init !== object
+      )
+        return false;
+      const name = property.key.name;
+      const reads = [];
+      for (const variable of sourceCode.getDeclaredVariables(declarator))
+        for (const reference of variable.references) {
+          if (!reference.isRead()) continue;
+          const member = reference.identifier.parent;
+          if (
+            member.type !== "MemberExpression" ||
+            member.object !== reference.identifier ||
+            member.computed
+          )
+            return false;
+          if (member.property.name === name) reads.push(member);
+        }
+      return [...reads, ...thisReads(object, name)].every(
+        (member) =>
+          member.parent.type === "CallExpression" &&
+          member.parent.callee === member &&
+          waited(member.parent, seen),
+      );
+    };
     // The value of this node is a function. Its result is waited for when
-    // a waited call calls it, when it is the callback of a test or of a
-    // .map whose array is waited for, or when it goes in a variable whose
-    // calls are waited for.
+    // a waited call calls it, when it is the callback of a test, of a .map
+    // whose array is waited for, or of a waited .then, .catch or .finally,
+    // when it goes in a variable whose calls are waited for, or when it is
+    // a method whose calls are waited for.
     const functionWaited = (fn, seen) => {
       if (seen.has(fn)) return false;
       seen.add(fn);
       const { parent } = fn;
       if (parent.type === "VariableDeclarator")
         return parent.init === fn && callsWaited(parent, seen);
+      if (parent.type === "Property")
+        return parent.value === fn && methodWaited(parent, seen);
       if (parent.type !== "CallExpression") return false;
       if (parent.callee === fn) return waited(parent, seen);
       if (isTestCall(parent)) return true;
+      if (isMethodCall(parent, PROMISE_CHAINS))
+        return parent.arguments.includes(fn) && waited(parent, seen);
       return (
         isMethodCall(parent, new Set(["map"])) &&
         parent.arguments[0] === fn &&

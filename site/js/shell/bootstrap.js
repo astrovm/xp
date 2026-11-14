@@ -68,7 +68,7 @@ const cycleShellWindow = (direction, showSwitcher) => {
       switcher.id = "window-switcher";
       document.body.appendChild(switcher);
     }
-    switcher.textContent = formatGameTitle(win.gameId);
+    switcher.textContent = windowTitleOf(win);
     switcher.hidden = false;
   }
 };
@@ -81,20 +81,33 @@ const isEditableTarget = (target) =>
   /^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName || "") ||
   target?.isContentEditable;
 const typeaheadState = new WeakMap();
-const normalizeTypeaheadText = (value) =>
-  value
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase();
+// The text that typeahead compares, with no case. With foldAccents, "ó"
+// and "o" are the same.
+const normalizeTypeaheadText = (value, foldAccents) => {
+  const text = value.trim();
+  return (
+    foldAccents ? text.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : text
+  ).toLocaleLowerCase();
+};
 // A typed character goes to the next item whose name starts with it. Like
 // XP, an AltGr character, such as "ą" on a Polish keyboard, is a typed
-// character too.
-const cycleTypeaheadItem = (event, scope, items, getLabel) => {
-  const key = normalizeTypeaheadText(XPDialogs.typedCharacterOf(event));
+// character too. A menu compares the exact character with no case, like
+// the menus of XP: "ą" goes to an item that starts with "ą", never to one
+// that starts with "a".
+const cycleTypeaheadItem = (
+  event,
+  scope,
+  items,
+  getLabel,
+  { foldAccents = true } = {},
+) => {
+  const key = normalizeTypeaheadText(
+    XPDialogs.typedCharacterOf(event),
+    foldAccents,
+  );
   if (!key) return null;
   const matches = items.filter((item) =>
-    normalizeTypeaheadText(getLabel(item)).startsWith(key),
+    normalizeTypeaheadText(getLabel(item), foldAccents).startsWith(key),
   );
   if (!matches.length) return null;
 
@@ -144,9 +157,7 @@ document.addEventListener(
     ) {
       scope = startMenu;
     }
-    // A menu matches only its access keys, and an AltGr character, such
-    // as "ą", is none, like XP.
-    if (!scope || XPDialogs.isAltGr(event)) return;
+    if (!scope) return;
 
     const items = [...scope.querySelectorAll("button:not(:disabled)")].filter(
       (item) => {
@@ -155,7 +166,9 @@ document.addEventListener(
         return item.closest('[role="menu"], [role="menubar"]') === scope;
       },
     );
-    const target = cycleTypeaheadItem(event, scope, items, typeaheadItemLabel);
+    const target = cycleTypeaheadItem(event, scope, items, typeaheadItemLabel, {
+      foldAccents: false,
+    });
     if (!target) return;
     target.focus();
     event.stopImmediatePropagation();

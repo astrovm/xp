@@ -426,8 +426,16 @@
       currentId = WELL_KNOWN.MY_COMPUTER;
     }
 
+    // Like Windows, "." is the folder itself and ".." is the folder above
+    // it, by the text of the path, before any name is looked up. ".." stops
+    // at the top, such as the root of a drive.
+    const names = [];
     for (const segment of segments) {
-      const match = findChild(currentId, segment);
+      if (segment === "..") names.pop();
+      else if (segment !== ".") names.push(segment);
+    }
+    for (const name of names) {
+      const match = findChild(currentId, name);
       if (!match) return null;
       currentId = match.id;
     }

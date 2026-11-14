@@ -194,16 +194,66 @@
       ? ""
       : layoutKeyOf(event);
 
+  // The characters that each key place types with no modifier and with
+  // Shift, such as "y" and "Y" for KeyY on a US keyboard, but "z" and "Z"
+  // on a German one. The shell learns them from the keys that the user
+  // presses, and from the layout map of the browser when it has one.
+  const plainCharacters = new Map();
+  const addPlainCharacter = (code, character) => {
+    if (!plainCharacters.has(code)) plainCharacters.set(code, new Set());
+    plainCharacters.get(code).add(character.toLowerCase());
+  };
+
+  // Learns the character of a key that is pressed with no modifier or
+  // with Shift only.
+  const learnKey = (event) => {
+    if (
+      !event.code ||
+      event.isComposing ||
+      Array.from(event.key).length !== 1 ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      event.getModifierState?.("AltGraph") === true
+    )
+      return;
+    addPlainCharacter(event.code, event.key);
+  };
+
+  // Learns each character of a layout map, such as the one of
+  // navigator.keyboard.getLayoutMap().
+  const learnLayout = (layout) => {
+    for (const [code, character] of layout) addPlainCharacter(code, character);
+  };
+
+  // The plain characters of a key place. A place that the shell has not
+  // learned gives its US letter or digit.
+  const plainCharactersOf = (code) => {
+    const known = plainCharacters.get(code);
+    if (known) return known;
+    const place = /^(?:Key([A-Z])|Digit(\d))$/.exec(code ?? "");
+    return new Set(place ? [(place[1] ?? place[2]).toLowerCase()] : []);
+  };
+
   // AltGr types a character, such as "ę" on the E key of a Polish
-  // keyboard. Windows sends it as Ctrl and Alt. A Linux browser can send
-  // only the AltGraph state, with no Ctrl and no Alt. With Alt and no
-  // Ctrl, the key is Alt: some engines give the AltGraph state for each
-  // Alt key. A Mac has no AltGr: its Option key works like Alt.
-  const isAltGr = (event) =>
-    !isApplePlatform() &&
-    (event.ctrlKey || !event.altKey) &&
-    ((event.altKey && event.ctrlKey) ||
-      event.getModifierState?.("AltGraph") === true);
+  // keyboard. Windows sends it as Ctrl and Alt. Ctrl and Alt together
+  // also send Ctrl and Alt, so the character tells them apart: like
+  // Windows, Ctrl+Alt types only when the key gives a character that its
+  // place does not type with no modifier. So US Ctrl+Alt+A is no AltGr
+  // key, but German AltGr+Q ("@") is. A browser can also send the
+  // AltGraph state with Ctrl and no Alt, or with no Ctrl and no Alt: that
+  // is always AltGr. With Alt and no Ctrl, the key is Alt: some engines
+  // give the AltGraph state for each Alt key. A Mac has no AltGr: its
+  // Option key works like Alt.
+  const isAltGr = (event) => {
+    if (isApplePlatform()) return false;
+    if (event.ctrlKey && event.altKey)
+      return (
+        Array.from(event.key).length === 1 &&
+        !plainCharactersOf(event.code).has(event.key.toLowerCase())
+      );
+    return !event.altKey && event.getModifierState?.("AltGraph") === true;
+  };
 
   // True for Alt and a key, which opens a menu or clicks a button, like XP.
   // Ctrl, the Windows key and AltGr make it no access key.
@@ -261,6 +311,8 @@
       parseAccessKey,
       accessKeyOf,
       isAltGr,
+      learnKey,
+      learnLayout,
       isAccessKeyPress,
       typedCharacterOf,
       shortcutKeyOf,
@@ -272,6 +324,15 @@
       formatKilobytes,
     };
   }
+
+  // The shell learns the plain character of each key place, so it can
+  // tell AltGr from Ctrl+Alt. The layout map of the browser gives each
+  // place before the user presses it, where the browser has one.
+  document.addEventListener("keydown", learnKey, true);
+  navigator.keyboard
+    ?.getLayoutMap?.()
+    .then(learnLayout)
+    .catch(() => {});
 
   // ---- Dialog stack and shared keyboard handling ----
 
@@ -2445,6 +2506,8 @@
     parseAccessKey,
     accessKeyOf,
     isAltGr,
+    learnKey,
+    learnLayout,
     isAccessKeyPress,
     typedCharacterOf,
     shortcutKeyOf,

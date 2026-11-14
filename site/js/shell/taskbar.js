@@ -271,7 +271,7 @@ const renderTaskButtons = () => {
       nodes.push(button);
       return;
     }
-    const taskTitle = win.title || formatGameTitle(gameId);
+    const taskTitle = windowTitleOf(win);
     let cached = taskButtonCache.get(gameId);
     if (cached?.win !== win) {
       const btn = document.createElement("button");
@@ -302,7 +302,10 @@ const renderTaskButtons = () => {
     );
     btn.setAttribute("aria-pressed", String(active));
     if (!cached.icon) {
-      cached.icon = createGameIconElement(gameId, "task-icon");
+      cached.icon = createGameIconElement(
+        win.applicationId ?? gameId,
+        "task-icon",
+      );
       btn.prepend(cached.icon);
     }
     if (label.textContent !== taskTitle) label.textContent = taskTitle;
@@ -337,10 +340,10 @@ const renderTaskButtons = () => {
           "taskbar-overflow-item" +
           (win.needsAttention ? " needs-attention" : "");
         item.setAttribute("role", "menuitem");
-        item.textContent = win.title || formatGameTitle(gameId);
+        item.textContent = windowTitleOf(win);
         item.setAttribute(
           "aria-label",
-          `${formatGameTitle(gameId)}${win.minimized ? ", minimized" : ""}${win.needsAttention ? ", needs attention" : ""}`,
+          `${windowTitleOf(win)}${win.minimized ? ", minimized" : ""}${win.needsAttention ? ", needs attention" : ""}`,
         );
         item.addEventListener("click", () => {
           closeTaskbarMenus();

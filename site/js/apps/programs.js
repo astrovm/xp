@@ -46,9 +46,10 @@ const applicationContext = (win) => ({
     win.el.style.width = `${width}px`;
     win.el.style.height = `${height}px`;
   },
+  // The title of this window only. The program keeps its own name, so
+  // the Start menu and the other windows of the program do not change.
   setTitle(title) {
     win.title = title;
-    systemShortcuts[win.gameId].title = title;
     win.el.querySelector(".title-text").textContent = title;
     renderTaskButtons();
     updateDocumentTitle();
@@ -107,18 +108,29 @@ const openXPProgram = (programId, options = {}) => {
     }
     program = program.loaded;
   }
-  const existing = openWindows.get(programId);
+  // A program with many windows, such as the Command Prompt, opens a new
+  // window each time, like XP's new process. Its first window has the id
+  // of the program, and the next ones "__command-prompt#2" and up.
+  const manyWindows = program.window.manyWindows === true;
+  const existing = !manyWindows && openWindows.get(programId);
   if (existing) {
     restoreWindow(programId);
     focusWindow(programId);
-    if (options.command !== undefined)
-      return existing.mountedApplication.runCommand(options.command);
     return options.file
       ? existing.mountedApplication?.openFile?.(options.file)
       : existing;
   }
+  let windowId = programId;
+  let instance = 0;
+  while (openWindows.has(windowId)) {
+    instance += 1;
+    windowId = `${programId}#${instance + 1}`;
+  }
+  // Like XP, each new window of the program cascades down and to the
+  // right of the one before it.
+  const cascade = instance * 26;
   const { width: desktopWidth, height: desktopHeight } = getDesktopSize();
-  const el = createWindowElement(programId);
+  const el = createWindowElement(windowId, programId);
   el.classList.add("xp-native-program-window");
   if (program.window.className) el.classList.add(program.window.className);
   el.querySelectorAll(".game-menu-bar, .game-menu").forEach((node) =>
@@ -146,10 +158,11 @@ const openXPProgram = (programId, options = {}) => {
   // position moves back on a screen too small to show the whole window.
   const fitStart = (start, size, available) =>
     available > 16 ? Math.min(start, Math.max(0, available - size)) : start;
-  el.style.left = `${fitStart(program.window.left ?? Math.max(8, Math.floor((desktopWidth - windowWidth) / 2)), windowWidth, desktopWidth)}px`;
-  el.style.top = `${fitStart(program.window.top ?? Math.max(8, Math.floor((desktopHeight - windowHeight) / 2)), windowHeight, desktopHeight)}px`;
+  el.style.left = `${fitStart(cascade + (program.window.left ?? Math.max(8, Math.floor((desktopWidth - windowWidth) / 2))), windowWidth, desktopWidth)}px`;
+  el.style.top = `${fitStart(cascade + (program.window.top ?? Math.max(8, Math.floor((desktopHeight - windowHeight) / 2))), windowHeight, desktopHeight)}px`;
   const win = {
-    gameId: programId,
+    gameId: windowId,
+    applicationId: programId,
     el,
     type: "system",
     player: null,
@@ -166,15 +179,16 @@ const openXPProgram = (programId, options = {}) => {
   const mounted = program.mount(applicationContext(win), {
     application: program,
     file: options.file || null,
-    command: options.command,
-    closeAfter: options.closeAfter === true,
+    arguments: options.arguments,
+    from: options.from,
+    title: options.title,
     window: win,
   });
   win.mountedApplication = mounted;
   win.beforeClose = mounted.beforeClose;
   el.querySelector(".window-content").replaceWith(mounted.element);
   document.getElementById("desktop").appendChild(el);
-  openWindows.set(programId, win);
+  openWindows.set(windowId, win);
   if (program.window.maximizable === false) {
     const maximize = el.querySelector(".maximize-btn");
     maximize.disabled = true;
@@ -190,9 +204,9 @@ const openXPProgram = (programId, options = {}) => {
   } else {
     wireSystemWindowControls(win);
   }
-  focusWindow(programId);
+  focusWindow(windowId);
   // Some XP programs, like Spider Solitaire, open maximized.
-  if (program.window.startMaximized) toggleMaximize(programId);
+  if (program.window.startMaximized) toggleMaximize(windowId);
   return win;
 };
 

@@ -214,6 +214,106 @@ test("resolution previews restore maximized and closed windows on cancel", async
   expect(documentsWin.classList.contains("maximized")).toBeTrue();
 });
 
+// A resolution preview puts back the place, the size and the minimized and
+// maximized state of each window. The stacking order stays as the user
+// leaves it, so a window that comes to the top during the preview stays
+// there, and the next window that comes to the top goes above all.
+test("a resolution revert keeps the stacking order of windows and dialogs", async () => {
+  const s = await login(await loadShell());
+  const layer = (element) => Number(element.style.zIndex);
+  const press = (element) =>
+    element.dispatchEvent(
+      new s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  clickStartAction(s, "run");
+  await settle();
+  const runBox = s.document.querySelector(".run-dialog");
+  runBox.querySelector(".shell-dialog-input").value = "notepad";
+  runBox.querySelector('[data-action="run"]').click();
+  await settle();
+  const notepad = s.document.querySelector('.xp-window[data-game="__notepad"]');
+  clickStartAction(s, "run");
+  await settle();
+  const runDialog = s.document.querySelector(".run-dialog");
+  const run = runDialog.parentElement;
+  clickStartAction(s, "controlPanel");
+  s.document
+    .querySelector('[data-control-panel-category="appearance"]')
+    .click();
+  s.document.querySelector('[data-control-panel-action="display"]').click();
+  await settle();
+  const displayWin = s.document.querySelector(
+    '.xp-window[data-game="__display-properties"]',
+  );
+  const resolution = displayWin.querySelector("#display-resolution");
+  const change = (value) => {
+    resolution.value = value;
+    resolution.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  };
+  change("800x600");
+  // Notepad and then Run come to the top while the preview shows.
+  press(notepad);
+  press(runDialog);
+  await settle();
+  // Happy DOM elements cannot be compared deeply, so the order has names.
+  const names = new Map([
+    [notepad, "notepad"],
+    [run, "run"],
+    [displayWin, "display"],
+  ]);
+  const order = () =>
+    [...names.keys()]
+      .sort((a, b) => layer(a) - layer(b))
+      .map((element) => names.get(element));
+  expect(order()).toEqual(["display", "notepad", "run"]);
+  change("auto");
+  await settle();
+  expect(order()).toEqual(["display", "notepad", "run"]);
+  expect(notepad.classList.contains("active")).toBeTrue();
+  // The next window that comes to the top goes above all.
+  press(displayWin);
+  await settle();
+  expect(order().at(-1)).toBe("display");
+  press(notepad);
+  await settle();
+  expect(order().at(-1)).toBe("notepad");
+});
+
+// A window that was minimized when the preview started goes back to the
+// taskbar, and the top window gets the focus.
+test("a resolution revert minimizes a window again and moves the focus", async () => {
+  const s = await login(await loadShell());
+  clickStartAction(s, "documents");
+  await settle();
+  const documentsWin = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  documentsWin.querySelector(".minimize-btn").click();
+  clickStartAction(s, "controlPanel");
+  s.document
+    .querySelector('[data-control-panel-category="appearance"]')
+    .click();
+  s.document.querySelector('[data-control-panel-action="display"]').click();
+  await settle();
+  const displayWin = s.document.querySelector(
+    '.xp-window[data-game="__display-properties"]',
+  );
+  const resolution = displayWin.querySelector("#display-resolution");
+  const change = (value) => {
+    resolution.value = value;
+    resolution.dispatchEvent(new s.window.Event("change", { bubbles: true }));
+  };
+  change("800x600");
+  clickStartAction(s, "documents");
+  await settle();
+  expect(documentsWin.classList.contains("active")).toBeTrue();
+  change("auto");
+  await settle();
+  expect(documentsWin.style.display).toBe("none");
+  expect(documentsWin.classList.contains("active")).toBeFalse();
+  expect(displayWin.classList.contains("active")).toBeTrue();
+});
+
 test("a secondary dialog of a closed Display Properties window closes quietly", async () => {
   const s = await login(await loadShell());
   clickStartAction(s, "controlPanel");

@@ -704,13 +704,317 @@ test("the Command Prompt runs programs with paths from its folder, like XP", asy
   expect(lastDialog().textContent).toContain("Cannot find the \\bar.txt file.");
   lastDialog().querySelector('[data-action="cancel"]').click();
   await settle();
-  // cmd brings up the one Command Prompt window.
+  // cmd runs a new cmd in the same window, like XP.
   await h.enter("cmd");
-  expect(
-    s.document.querySelectorAll('.xp-window[data-game="__command-prompt"]'),
-  ).toHaveLength(1);
+  expect(s.document.querySelectorAll(".xp-command-prompt-window")).toHaveLength(
+    1,
+  );
   expect(h.output.textContent).not.toContain("'cmd' is not recognized");
   // An unknown name is no program.
   await h.enter("winword");
   expect(h.output.textContent).toContain("'winword' is not recognized");
+});
+
+// The controls of a Command Prompt window.
+const promptIn = (s, win) => {
+  const input = win.querySelector(".xp-terminal-prompt input");
+  const press = async (key) => {
+    input.dispatchEvent(
+      new s.window.KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await settle();
+  };
+  return {
+    win,
+    input,
+    press,
+    text: () => win.querySelector(".xp-terminal-output").textContent,
+    prompt: () => win.querySelector(".xp-terminal-prompt span").textContent,
+    enter: async (command) => {
+      input.value = command;
+      await press("Enter");
+    },
+  };
+};
+const runBox = async (s, command) => {
+  s.document.getElementById("start-button").click();
+  s.document.querySelector('[data-start-action="run"]').click();
+  const dialog = s.document.querySelector(".run-dialog");
+  dialog.querySelector(".shell-dialog-input").value = command;
+  dialog.querySelector('[data-action="run"]').click();
+  await settle();
+};
+const promptWindows = (s) => [
+  ...s.document.querySelectorAll(".xp-command-prompt-window"),
+];
+
+// In the XP VM, each cmd from Run, the Start menu or START has its own
+// window, folder, history and questions. A cmd that another window starts
+// does not answer a question that is open.
+test("each Command Prompt is its own window, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  Object.defineProperty(
+    s.document.getElementById("task-buttons"),
+    "clientWidth",
+    { value: 800 },
+  );
+  const foo = fs.createFolder(fs.USER_PROFILE, "foo");
+  fs.createFile(foo.id, "a.txt");
+  fs.createFolder(fs.USER_PROFILE, "yes");
+  await h.enter("del foo");
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${fs.getPath(foo.id)}\\*, Are you sure (Y/N)? `,
+  );
+  // Run's cmd opens a new window. Its command is not the answer.
+  await runBox(s, "cmd /k dir");
+  expect(promptWindows(s)).toHaveLength(2);
+  const second = promptIn(s, promptWindows(s)[1]);
+  expect(second.win.dataset.game).toBe("__command-prompt#2");
+  expect(second.text()).toContain(
+    ` Directory of ${fs.getPath(fs.USER_PROFILE)}`,
+  );
+  expect(fs.getChildren(foo.id)).toHaveLength(1);
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${fs.getPath(foo.id)}\\*, Are you sure (Y/N)? `,
+  );
+  // Each window has its own history. The command of /K is not in it.
+  await second.press("ArrowUp");
+  expect(second.input.value).toBe("");
+  await second.enter("cd foo");
+  // The task bar, the title and the icon are the Command Prompt's.
+  const buttons = [...s.document.querySelectorAll(".task-button")].filter(
+    (button) => button.dataset.game?.startsWith("__command-prompt"),
+  );
+  expect(buttons.map((button) => button.title)).toEqual([
+    "C:\\WINDOWS\\system32\\cmd.exe",
+    "C:\\WINDOWS\\system32\\cmd.exe",
+  ]);
+  expect(second.win.querySelector(".title-icon img").getAttribute("src")).toBe(
+    h.win.querySelector(".title-icon img").getAttribute("src"),
+  );
+  expect(buttons[1].querySelector(".task-icon img").getAttribute("src")).toBe(
+    h.win.querySelector(".title-icon img").getAttribute("src"),
+  );
+  // TITLE changes only its own window.
+  await second.enter("title Build");
+  expect(second.win.querySelector(".title-text").textContent).toBe("Build");
+  expect(h.win.querySelector(".title-text").textContent).toBe(
+    "C:\\WINDOWS\\system32\\cmd.exe",
+  );
+  expect(s.document.title).toBe("Build");
+  // The first window still has its question, and its answer.
+  await h.enter("n");
+  expect(fs.getChildren(foo.id)).toHaveLength(1);
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${fs.getPath(fs.USER_PROFILE)}>`,
+  );
+  await h.press("ArrowUp");
+  await h.press("ArrowUp");
+  expect(h.input.value).toBe("del foo");
+  // START opens a new window in the folder of its cmd. Each folder stays
+  // in use while its window is open.
+  await second.enter('start "Third" echo hi');
+  const third = promptIn(s, promptWindows(s)[2]);
+  expect(third.win.querySelector(".title-text").textContent).toBe("Third");
+  expect(third.text()).toBe("hi\n\n");
+  expect(third.prompt()).toBe(`${fs.getPath(foo.id)}>`);
+  await second.enter("cd ..");
+  expect(() => fs.checkChange("delete", foo.id)).toThrow();
+  await third.enter("exit");
+  expect(third.win.isConnected).toBeFalse();
+  expect(() => fs.checkChange("delete", foo.id)).not.toThrow();
+  // A closed window frees its number for the next one.
+  await second.enter("exit");
+  await runBox(s, "cmd");
+  expect(promptWindows(s).map((win) => win.dataset.game)).toEqual([
+    "__command-prompt",
+    "__command-prompt#2",
+  ]);
+  expect(promptIn(s, promptWindows(s)[1]).text()).toContain(
+    "Microsoft Windows XP",
+  );
+});
+
+// In the XP VM, cmd typed at the prompt runs a new cmd in the same window:
+// its banner, then EXIT goes back. cmd /c runs its command there, and the
+// new cmd starts in the folder of the old one.
+test("cmd at the prompt runs a new cmd in the same window, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const profile = fs.getPath(fs.USER_PROFILE);
+  const sub = fs.createFolder(fs.USER_PROFILE, "sub");
+  await h.enter("cls");
+  await h.enter("set NAME=one");
+  await h.enter("cmd");
+  expect(h.output.textContent).toBe(
+    `\n${profile}>set NAME=one\n\n${profile}>cmd\nMicrosoft Windows XP [Version 5.1.2600]\n(C) Copyright 1985-2001 Microsoft Corp.\n\n`,
+  );
+  // The new cmd has a copy of the variables, and its own folder.
+  await h.enter("set NAME=two");
+  await h.enter("cd sub");
+  expect(() => fs.checkChange("delete", sub.id)).toThrow();
+  await h.enter("exit");
+  expect(h.win.isConnected).toBeTrue();
+  expect(() => fs.checkChange("delete", sub.id)).not.toThrow();
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${profile}>`,
+  );
+  await h.enter("cls");
+  await h.enter("echo %NAME%");
+  expect(h.output.textContent).toBe(`\n${profile}>echo %NAME%\none\n\n`);
+  // cmd /c runs the command with all its arguments, and comes back. The
+  // command can touch the switch.
+  await h.enter("cls");
+  await h.enter("cmd /c dir /b");
+  await h.enter("cmd /cecho hi");
+  expect(h.output.textContent).toBe(
+    `\n${profile}>cmd /c dir /b\nDesktop\nMy Documents\nsub\n\n${profile}>cmd /cecho hi\nhi\n\n`,
+  );
+  // A question of cmd /c takes the next line, and then cmd /c ends.
+  fs.createFile(sub.id, "a.txt");
+  await h.enter("cmd /c del sub");
+  await h.enter("y");
+  expect(fs.getChildren(sub.id)).toHaveLength(0);
+  await h.enter("cmd /k cd sub");
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${fs.getPath(sub.id)}>`,
+  );
+  await h.enter("cmd /c exit");
+  await h.enter("exit");
+  expect(h.win.querySelector(".xp-terminal-prompt span").textContent).toBe(
+    `${profile}>`,
+  );
+  // The history of the window has the lines typed in each cmd.
+  await h.press("ArrowUp");
+  expect(h.input.value).toBe("exit");
+  // EXIT in the first cmd closes the window.
+  await h.enter("exit");
+  expect(h.win.isConnected).toBeFalse();
+});
+
+// In the XP VM, cmd /c and /k lose the first quote and the last quote of
+// their command.
+test("Run's cmd takes a quoted command, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  fs.createFolder(fs.USER_PROFILE, "x y");
+  await runBox(s, 'cmd /k "dir C:\\ /b"');
+  const first = promptIn(s, promptWindows(s)[0]);
+  expect(first.text()).toBe("Documents and Settings\n\n");
+  await runBox(s, 'cmd /k "dir" /b');
+  expect(promptIn(s, promptWindows(s)[1]).text()).toBe(
+    "Desktop\nMy Documents\nx y\n\n",
+  );
+  await runBox(s, "cmd /kecho hi");
+  expect(promptIn(s, promptWindows(s)[2]).text()).toBe("hi\n\n");
+});
+
+// In the XP VM, Explorer reads its own command line: a quoted path with a
+// space after /select or /e, and a path with spaces and no quotes.
+test("the Command Prompt gives Explorer its switches as typed, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "a b, c");
+  const file = fs.createFile(folder.id, "x y.txt");
+  const explorer = () =>
+    s.document.querySelector('.xp-window[data-game="__my-documents"]');
+  const address = () => explorer().querySelector(".explorer-address input");
+  const folders = () =>
+    explorer()
+      .querySelector(".explorer-content")
+      .classList.contains("folders-visible");
+  const close = async () => {
+    explorer().querySelector(".close-btn").click();
+    await settle();
+  };
+  await h.enter(`explorer /select,"${fs.getPath(file.id)}"`);
+  expect(address().value).toBe(fs.getPath(folder.id));
+  expect(
+    explorer()
+      .querySelector(`.explorer-item[data-node-id="${file.id}"]`)
+      .classList.contains("selected"),
+  ).toBeTrue();
+  await close();
+  await h.enter(`explorer /e,"${fs.getPath(folder.id)}"`);
+  expect(address().value).toBe(fs.getPath(folder.id));
+  expect(folders()).toBeTrue();
+  await close();
+  await h.enter(`explorer ${fs.getPath(fs.MY_DOCUMENTS)}`);
+  expect(address().value).toBe("My Documents");
+  expect(folders()).toBeFalse();
+  await close();
+  await h.enter(`start explorer /root,"${fs.getPath(folder.id)}"`);
+  expect(address().value).toBe(fs.getPath(folder.id));
+  await close();
+  expect(h.output.textContent).not.toContain("does not exist");
+});
+
+// In the XP VM, "explorer .." from a folder opens the folder above it, and
+// Run's ".." opens the folder above the profile.
+test("programs take . and .. from the Command Prompt and from Run, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const docs = fs.getPath(fs.MY_DOCUMENTS);
+  const sub = fs.createFolder(fs.MY_DOCUMENTS, "sub");
+  fs.createFile(fs.MY_DOCUMENTS, "a.txt", { content: "up" });
+  fs.createFile(fs.MY_DOCUMENTS, "p.bmp");
+  const address = () =>
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .explorer-address input',
+    ).value;
+  const closeAll = async () => {
+    s.document
+      .querySelectorAll(
+        '.xp-window:not(.xp-command-prompt-window) .close-btn, .xp-dialog [data-action="ok"]',
+      )
+      .forEach((button) => button.click());
+    await settle();
+  };
+  const titles = () =>
+    [...s.document.querySelectorAll(".xp-window .title-text")].map(
+      (title) => title.textContent,
+    );
+  const lastDialog = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  await h.enter(`cd "${fs.getPath(sub.id)}"`);
+  await h.enter("explorer .");
+  expect(address()).toBe(fs.getPath(sub.id));
+  await closeAll();
+  await h.enter("explorer ..");
+  expect(address()).toBe("My Documents");
+  await closeAll();
+  await h.enter("start explorer .\\..\\sub\\.");
+  expect(address()).toBe(fs.getPath(sub.id));
+  await closeAll();
+  await h.enter("notepad ..\\a.txt");
+  expect(titles()).toContain("a.txt - Notepad");
+  await closeAll();
+  // Paint gets the file: the empty file is no picture.
+  await h.enter("mspaint ..\\p.bmp");
+  expect(lastDialog().textContent).toContain("Paint cannot read this file.");
+  await closeAll();
+  await h.enter("notepad ..\\new");
+  lastDialog().querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(fs.resolvePath(`${docs}\\new.txt`) === null).toBeFalse();
+  await closeAll();
+  expect(h.output.textContent).not.toContain("not recognized");
+  // Run starts in the profile folder.
+  await runBox(s, ".");
+  expect(address()).toBe(fs.getPath(fs.USER_PROFILE));
+  await closeAll();
+  await runBox(s, "..");
+  expect(address()).toBe(fs.getPath(fs.getParent(fs.USER_PROFILE).id));
+  await closeAll();
+  await runBox(s, "explorer My Documents\\..\\My Documents\\sub");
+  expect(address()).toBe(fs.getPath(sub.id));
 });

@@ -477,13 +477,17 @@ test("Run gives cmd its /c and /k commands, like XP", async () => {
   );
   expect(output().textContent).not.toContain("Microsoft Windows XP");
   expect(output().textContent).not.toContain(">dir");
-  // An open Command Prompt runs the next command.
+  // Each cmd opens its own window, like XP.
   await run(s, '"cmd" /K echo again');
   await settle();
-  expect(output().textContent).toContain("again");
-  expect(
-    s.document.querySelectorAll('.xp-window[data-game="__command-prompt"]'),
-  ).toHaveLength(1);
+  const second = s.document.querySelector(
+    '.xp-window[data-game="__command-prompt#2"]',
+  );
+  expect(second.querySelector(".xp-terminal-output").textContent).toBe(
+    "again\n\n",
+  );
+  expect(output().textContent).not.toContain("again");
+  second.querySelector(".close-btn").click();
   prompt().querySelector(".close-btn").click();
   await settle();
   // /c runs the command and closes.

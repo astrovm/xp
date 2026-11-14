@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createRequire } from "node:module";
 import {
   CommandSession,
+  cmdArguments,
   matchesPattern,
 } from "../site/apps/programs/command-session.js";
 
@@ -17,6 +18,7 @@ const run = (line) => session.execute(line).output;
 // so it can delete the current folder.
 const inOtherTab = (action) => {
   fs.releaseFolder(session);
+  fs.releaseFolder(session.jobFolder);
   action();
 };
 
@@ -64,6 +66,24 @@ beforeEach(() => {
 });
 
 describe("Command Prompt session", () => {
+  // Like XP, /C and /K lose the first quote and the last quote.
+  test("cmd takes its /C and /K command like XP", () => {
+    expect(cmdArguments('/c "echo hi"')).toEqual({
+      command: "echo hi",
+      close: true,
+    });
+    expect(cmdArguments('/K "dir" /b')).toEqual({
+      command: "dir /b",
+      close: false,
+    });
+    expect(cmdArguments('/c "echo hi')).toEqual({
+      command: "echo hi",
+      close: true,
+    });
+    expect(cmdArguments("/cdir")).toEqual({ command: "dir", close: true });
+    expect(cmdArguments("")).toEqual({ command: undefined, close: false });
+  });
+
   test("starts in the user profile with the XP banner and prompt", () => {
     expect(session.banner).toBe(
       "Microsoft Windows XP [Version 5.1.2600]\n(C) Copyright 1985-2001 Microsoft Corp.\n",
@@ -171,11 +191,11 @@ describe("Command Prompt session", () => {
     expect(run("rd")).toBe("The syntax of the command is incorrect.");
     expect(run("rd /s")).toBe("The syntax of the command is incorrect.");
     // A folder that goes to the Recycle Bin while the question is open is
-    // gone.
+    // gone. In the XP VM, a folder that moves then gets this text.
     const binned = fs.createFolder(fs.USER_PROFILE, "Binned");
     expect(run("rd /s Binned")).toBe("");
     fs.remove(binned.id);
-    expect(run("y")).toBe("The system cannot find the path specified.");
+    expect(run("y")).toBe("The system cannot find the file specified.");
     expect(run("rd Missing")).toBe(
       "The system cannot find the path specified.",
     );
@@ -228,24 +248,54 @@ describe("Command Prompt session", () => {
   test("launches applications and opens files through start and aliases", () => {
     run('cd "My Documents"');
     const here = "C:\\Documents and Settings\\astro\\My Documents";
-    // A program gets its arguments and the current folder, like XP. A
-    // name with a space keeps its quotes.
-    expect(run('notepad "a b.txt" x')).toBe("");
-    expect(context.ran.at(-1)).toEqual(["notepad", '"a b.txt" x', here]);
+    // A program gets the text after its name as it is typed, and the
+    // current folder, like XP.
+    expect(run('notepad "a b.txt"  x')).toBe("");
+    expect(context.ran.at(-1)).toEqual(["notepad", '"a b.txt"  x', here]);
+    expect(run('"notepad" /select,"C:\\a b\\c.txt"')).toBe("");
+    expect(context.ran.at(-1)).toEqual([
+      "notepad",
+      '/select,"C:\\a b\\c.txt"',
+      here,
+    ]);
     expect(run("CALC.EXE")).toBe("");
     expect(context.ran.at(-1)).toEqual(["calc.exe", "", here]);
     expect(run('start "" mspaint')).toBe("");
     expect(context.ran.at(-1)).toEqual(["mspaint", "", here]);
-    // cmd brings up the Command Prompt.
-    expect(run("cmd")).toBe("");
-    expect(run("command.com /c dir")).toBe("");
+    expect(run('start /min /d "C:\\x y" mspaint a.bmp')).toBe("");
+    expect(context.ran.at(-1)).toEqual(["mspaint", "a.bmp", here]);
+    // cmd runs a new cmd in this window: the window starts it. START opens
+    // a new Command Prompt window.
+    expect(session.execute("cmd")).toEqual({
+      output: "",
+      shell: { command: undefined, close: false },
+    });
+    expect(session.execute('command.com /c "dir"')).toEqual({
+      output: "",
+      shell: { command: "dir", close: true },
+    });
+    expect(context.launched).toEqual([]);
+    expect(run("start cmd /k dir")).toBe("");
+    expect(run('start "Build" dir /w')).toBe("");
+    expect(run("start")).toBe("");
     expect(context.launched).toEqual([
-      ["__command-prompt", {}],
-      ["__command-prompt", {}],
+      [
+        "__command-prompt",
+        { arguments: "/k dir", from: session, title: undefined },
+      ],
+      [
+        "__command-prompt",
+        { arguments: "/K dir /w", from: session, title: "Build" },
+      ],
+      ["__command-prompt", { arguments: "", from: session, title: undefined }],
     ]);
     expect(run("winword note.txt")).toStartWith("'winword' is not recognized");
-    expect(run("start")).toBe("The system cannot find the file specified.");
     expect(run("start nothing")).toBe(
+      "The system cannot find the file specified.",
+    );
+    context.launchApplication = () => false;
+    expect(run("start")).toBe("The system cannot find the file specified.");
+    expect(run("start echo")).toBe(
       "The system cannot find the file specified.",
     );
   });
@@ -265,8 +315,9 @@ describe("Command Prompt session", () => {
     expect(run("frobnicate")).toBe(
       "'frobnicate' is not recognized as an internal or external command,\noperable program or batch file.",
     );
+    // The window ends the session: EXIT only says so.
     expect(session.execute("exit")).toEqual({ exit: true, output: "" });
-    expect(context.closed).toBeTrue();
+    expect(context.closed).toBeFalse();
   });
 
   test("reports refused names with the texts of cmd.exe", () => {
@@ -961,7 +1012,7 @@ describe("Command Prompt like cmd.exe", () => {
     const a = folderAt("a");
     const kept = file(a, "x.txt");
     expect(run("del C:\\a\\*.*")).toBe("");
-    fs.remove(a);
+    inOtherTab(() => fs.remove(a));
     expect(run("y")).toBe("The system cannot find the path specified.");
     expect(fs.getNode(kept.id).parent).toBe(a);
     // DEL /P: the folder goes after one answer, so no more questions.
@@ -969,7 +1020,7 @@ describe("Command Prompt like cmd.exe", () => {
     const first = file(b, "1.txt");
     const second = file(b, "2.txt");
     expect(run("del /p C:\\b\\*.txt")).toBe("");
-    fs.remove(b);
+    inOtherTab(() => fs.remove(b));
     expect(run("n")).toBe("The system cannot find the path specified.");
     expect(session.prompt).not.toContain("Delete (Y/N)?");
     expect(run("del /p C:\\b\\*.txt")).toBe(
@@ -977,7 +1028,7 @@ describe("Command Prompt like cmd.exe", () => {
     );
     fs.restore(b);
     expect(run("del /p C:\\b\\*.txt")).toBe("");
-    fs.remove(b);
+    inOtherTab(() => fs.remove(b));
     expect(run("y")).toBe("The system cannot find the path specified.");
     expect([fs.getNode(first.id), fs.getNode(second.id)]).toEqual([
       expect.anything(),
@@ -1000,6 +1051,117 @@ describe("Command Prompt like cmd.exe", () => {
     expect(session.prompt).not.toContain("Overwrite");
     expect(fs.getNode(old1.id).content).toBe("old\n");
     expect(fs.getNode(old2.id).content).toBe("old\n");
+  });
+
+  // Like cmd.exe on XP: a command that asks looks up its items again by
+  // path after the answer. An item that moved is gone, and a new item at
+  // the same path is the one that the command uses.
+  test("commands that ask look up their items by path after the answer", () => {
+    const NOT_FOUND = "The system cannot find the file specified.";
+    const PATH_NOT_FOUND = "The system cannot find the path specified.";
+    run("cd /d C:\\");
+    // RD /S: the folder moves while the question is open.
+    const r = folderAt("r");
+    expect(run("rd /s r")).toBe("");
+    fs.rename(r, "r2");
+    expect(run("y")).toBe(NOT_FOUND);
+    expect(fs.getNode(r).name).toBe("r2");
+    // A new folder takes the path, so RD deletes that one.
+    expect(run("rd /s r2")).toBe("");
+    fs.rename(r, "r3");
+    const replaced = folderAt("r2");
+    expect(run("y")).toBe("");
+    expect(fs.getNode(replaced)).toBeFalsy();
+    expect(fs.getNode(r)).toBeTruthy();
+    // A file at the path is not a folder.
+    expect(run("rd /s r3")).toBe("");
+    fs.rename(r, "r4");
+    file(fs.DRIVE_C, "r3");
+    expect(run("y")).toBe(NOT_FOUND);
+    // A folder on the way that moves gives the path text.
+    const deep = folderAt("p\\q");
+    expect(run("rd /s p\\q")).toBe("");
+    fs.rename(fs.resolvePath("C:\\p"), "p2");
+    expect(run("y")).toBe(PATH_NOT_FOUND);
+    expect(fs.getNode(deep)).toBeTruthy();
+
+    // COPY: the target folder moves while the question is open.
+    const s = folderAt("s");
+    const t = folderAt("t");
+    file(s, "a.txt", 1, "new\n");
+    const old = file(t, "a.txt", 1, "old\n");
+    expect(run("copy C:\\s\\a.txt C:\\t")).toBe("");
+    fs.rename(t, "t2");
+    expect(run("y")).toBe(`${PATH_NOT_FOUND}\n        0 file(s) copied.`);
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // MOVE: the file moves while the question is open.
+    fs.rename(t, "t");
+    expect(run("move C:\\s\\a.txt C:\\t")).toBe("");
+    fs.rename(fs.resolvePath("C:\\s\\a.txt"), "b.txt");
+    expect(run("y")).toBe(NOT_FOUND);
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // A folder at the path of the file is not the file.
+    fs.createFolder(s, "a.txt");
+    expect(run("move C:\\s\\b.txt C:\\t\\a.txt")).toBe("");
+    fs.rename(fs.resolvePath("C:\\s\\b.txt"), "c.txt");
+    fs.rename(fs.resolvePath("C:\\s\\a.txt"), "b.txt");
+    expect(run("y")).toBe(NOT_FOUND);
+
+    // COPY of many files onto one name: a file that moves gives no text,
+    // and a target folder that moves gets nothing.
+    const j = folderAt("j");
+    file(j, "1.txt", 1, "one\n");
+    file(j, "2.txt", 1, "two\n");
+    const joined = file(t, "all.txt", 1, "old\n");
+    expect(run("copy C:\\j\\*.txt C:\\t\\all.txt")).toBe(
+      "C:\\j\\1.txt\nC:\\j\\2.txt",
+    );
+    fs.rename(fs.resolvePath("C:\\j\\1.txt"), "3.txt");
+    expect(run("y")).toBe("        1 file(s) copied.");
+    expect(fs.getNode(joined.id).content).toBe("two\n");
+    expect(run("copy C:\\j\\*.txt C:\\t\\all.txt")).toBe(
+      "C:\\j\\2.txt\nC:\\j\\3.txt",
+    );
+    fs.rename(t, "t3");
+    expect(run("y")).toBe(`${PATH_NOT_FOUND}\n        0 file(s) copied.`);
+    expect(fs.getNode(joined.id).content).toBe("two\n");
+
+    // DEL /P: the file at the path after the answer is the one that goes.
+    const d = folderAt("d");
+    const first = file(d, "1.txt");
+    expect(run("del /p C:\\d\\1.txt")).toBe("");
+    fs.rename(first.id, "kept.txt");
+    const newer = file(d, "1.txt");
+    expect(run("y")).toBe("");
+    expect(fs.getNode(first.id)).toBeTruthy();
+    expect(fs.getNode(newer.id)).toBeFalsy();
+    // A file that moves away is not deleted.
+    expect(run("del /p C:\\d\\kept.txt")).toBe("");
+    fs.rename(first.id, "other.txt");
+    expect(run("y")).toBe("");
+    expect(fs.getNode(first.id)).toBeTruthy();
+  });
+
+  // Like XP, DEL keeps its folder in use while it asks, so another Command
+  // Prompt cannot move it then.
+  test("DEL keeps its folder in use while it asks", () => {
+    const IN_USE =
+      "The process cannot access the file because it is being used by another process.";
+    run("cd /d C:\\");
+    const other = new CommandSession(context);
+    other.execute("cd /d C:\\");
+    const d = folderAt("dl");
+    file(d, "x.txt");
+    expect(run("del C:\\dl\\*.*")).toBe("");
+    expect(other.execute("move dl dl2").output).toBe(IN_USE);
+    expect(() => fs.rename(d, "dl2")).toThrow();
+    expect(run("n")).toBe("");
+    expect(() => fs.rename(d, "dl2")).not.toThrow();
+    // Close frees the folder too.
+    expect(run("del C:\\dl2\\*.*")).toBe("");
+    expect(() => fs.rename(d, "dl3")).toThrow();
+    session.close();
+    expect(() => fs.rename(d, "dl3")).not.toThrow();
   });
 
   // Like cmd.exe on XP: "rd /s C:\\rdt" with a Command Prompt in

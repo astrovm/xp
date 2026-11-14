@@ -18,6 +18,8 @@ export const accessoryApplications = [
         resizable: true,
         maximizable: true,
         className: "xp-command-prompt-window",
+        // Each Command Prompt is its own window, like XP.
+        manyWindows: true,
       },
     },
   ),

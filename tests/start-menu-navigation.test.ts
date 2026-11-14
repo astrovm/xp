@@ -103,6 +103,43 @@ test.each(["click", "hover", "keyboard"])(
     expect(s.document.querySelector(".run-dialog") !== null).toBeTrue();
   },
 );
+// Like the menus of XP, a typed character goes to an item that starts with
+// that exact character, with no case. An AltGr character, such as "ł" on a
+// Polish keyboard, is a typed character too. "o" is not "ó".
+test("a menu takes the exact typed character, also from AltGr", async () => {
+  const s = await login(
+    await loadShell({
+      initialStorage: {
+        startMenuStyle: "classic",
+        startMenuOptions: JSON.stringify({
+          classicExpand: { documents: true },
+        }),
+      },
+    }),
+  );
+  const fs = s.window.VirtualFS;
+  fs.createFile(fs.MY_DOCUMENTS, "Łódź.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "Ósmy.txt", { content: "" });
+  s.document.getElementById("start-button").click();
+  s.document.querySelectorAll("#start-menu-places .sm-place")[0].click();
+  s.document
+    .querySelectorAll(".start-program-flyout .start-program-folder")[0]
+    .click();
+  const panel = panels(s)[1];
+  const focused = () => s.document.activeElement.textContent;
+  const first = () => panel.querySelector("button").focus();
+  first();
+  for (const event of pressAltGr(s.window, panel, "ł", "KeyL")) {
+    expect(event.defaultPrevented).toBeTrue();
+    expect(focused()).toContain("Łódź.txt");
+  }
+  first();
+  key(s, panel, "o");
+  expect(focused()).not.toContain("Ósmy.txt");
+  key(s, panel, "Ó");
+  expect(focused()).toContain("Ósmy.txt");
+});
+
 test("recent documents has an empty state and Internet Games can be launched from All Programs", async () => {
   const s = await login(await loadShell());
   clickStartAction(s, "recent");

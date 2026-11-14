@@ -1,13 +1,28 @@
 import { createProgramRoot } from "../ui.js";
-import { CommandSession } from "../command-session.js";
+import { CommandSession, cmdArguments } from "../command-session.js";
 
-// options.command runs that command first, like "cmd /k dir": there is no
-// banner, and the command line does not show. With options.closeAfter,
-// like "cmd /c dir", the window closes when the command ends.
+// Each Command Prompt window is its own cmd, like XP. options.arguments is
+// the text after "cmd": "/k dir" runs dir first, and "/c dir" also closes
+// the window when dir ends. Then there is no banner, and the command line
+// does not show. options.from is the session of the cmd that opens the
+// window with START: the new one starts in its folder. options.title is
+// the title that START gives the window.
 export const renderTerminal = (context, program, programId, options) => {
   const content = createProgramRoot(program);
-  const session = new CommandSession(context);
-  context.setTitle("C:\\WINDOWS\\system32\\cmd.exe");
+  const start = cmdArguments(options.arguments ?? "");
+  // The cmd sessions of the window, the last one on top. Like XP, "cmd"
+  // typed at the prompt runs a new cmd in the same window, and EXIT goes
+  // back to the one before it. close is true for a cmd that ends when its
+  // command ends, like "cmd /c dir", or that EXIT ends.
+  const shells = [];
+  const startShell = (from, close) => {
+    const session = new CommandSession(context, { from });
+    shells.push({ session, close });
+    return session;
+  };
+  const current = () => shells.at(-1).session;
+  startShell(options.from ?? null, start.close);
+  context.setTitle(options.title || "C:\\WINDOWS\\system32\\cmd.exe");
   content.innerHTML = `<div class="xp-terminal-screen" role="application" aria-label="Command Prompt"><pre class="xp-terminal-output" aria-live="polite"></pre><label class="xp-terminal-prompt"><span></span><input data-default-focus aria-label="Command" autocomplete="off" autocapitalize="off" spellcheck="false"></label></div>`;
   const output = content.querySelector(".xp-terminal-output");
   const screen = content.querySelector(".xp-terminal-screen");
@@ -16,12 +31,10 @@ export const renderTerminal = (context, program, programId, options) => {
   const history = [];
   let historyIndex = 0;
 
-  const startCommand = options.command;
-  // True while a command from cmd's command line runs with /c.
-  let closeAfter = false;
-  output.textContent = startCommand === undefined ? `${session.banner}\n` : "";
+  output.textContent =
+    start.command === undefined ? `${current().banner}\n` : "";
   const updatePrompt = () => {
-    prompt.textContent = session.prompt;
+    prompt.textContent = current().prompt;
   };
   updatePrompt();
 
@@ -135,26 +148,49 @@ export const renderTerminal = (context, program, programId, options) => {
     }
   };
 
-  // Runs a command line, like a press of Enter. A command from the command
-  // line of cmd does not show, like XP.
-  const run = async (command, { echo = true } = {}) => {
-    if (command.trim()) history.push(command);
-    historyIndex = history.length;
-    const enteredPrompt = session.prompt;
-    input.disabled = true;
-    let result;
+  const execute = async (session, command) => {
     try {
-      result = await session.execute(command);
+      return await session.execute(command);
     } catch (error) {
-      result = { output: error.message };
+      return { output: error.message };
+    }
+  };
+
+  // Runs a command line, like a press of Enter. A command from the command
+  // line of cmd does not show, like XP, and does not go in the history.
+  // It is false when the window closes.
+  const run = async (command, { echo = true } = {}) => {
+    if (echo && command.trim()) history.push(command);
+    historyIndex = history.length;
+    const enteredPrompt = current().prompt;
+    input.disabled = true;
+    let result = await execute(current(), command);
+    // A cmd that the line runs starts on top, and runs its own command.
+    // With no command, it shows its banner.
+    while (result.shell) {
+      const session = startShell(current(), result.shell.close);
+      result =
+        result.shell.command === undefined
+          ? { output: session.banner.trimEnd() }
+          : await execute(session, result.shell.command);
     }
     // A key press that is left over at the end goes away, like cmd.exe.
     pendingPress = false;
-    if (result.exit) return false;
+    if (result.exit) shells.at(-1).close = true;
+    // The cmds that end now go away, like XP. With no cmd left, the
+    // window closes.
+    const leaveShells = () => {
+      while (shells.length && shells.at(-1).close && !current().question)
+        shells.pop().session.close();
+      if (shells.length) return true;
+      context.close();
+      return false;
+    };
+    if (result.exit && shells.length === 1) return leaveShells();
     // Like cmd.exe, a blank line comes after each command, but not after
     // an empty line, and not before the next question of the command.
     // CLS clears the screen, and the blank line stays at the top.
-    const blank = command.trim() && !session.question ? "\n" : "";
+    const blank = command.trim() && !current().question ? "\n" : "";
     // New text goes at the end. The text that is on the screen stays as
     // it is, so a long screen is not copied again for each command.
     if (result.clear) output.textContent = blank;
@@ -165,12 +201,12 @@ export const renderTerminal = (context, program, programId, options) => {
       else if (result.output) output.append(`${result.output}\n`);
       output.append(blank);
     }
+    if (!leaveShells()) return false;
     input.disabled = false;
     input.focus();
     input.value = "";
     updatePrompt();
     screen.scrollTop = screen.scrollHeight;
-    if (closeAfter && !session.question) context.close();
     return true;
   };
 
@@ -275,18 +311,12 @@ export const renderTerminal = (context, program, programId, options) => {
     setTimeout(() => input.focus(), 0);
   });
   setTimeout(() => input.focus(), 0);
-  // A command from cmd's command line. With /c, the window closes when it
-  // ends, also after the answer to a question that it asks.
-  const runCommand = (command, close = false) => {
-    closeAfter = close;
-    return run(command, { echo: false });
-  };
-  if (startCommand !== undefined)
-    runCommand(startCommand, options.closeAfter === true);
-  // The closed window frees the folder that the session is in.
+  // The command from cmd's command line. With /c, the window closes when
+  // it ends, also after the answer to a question that it asks.
+  if (start.command !== undefined) run(start.command, { echo: false });
+  // The closed window frees the folders that its sessions are in.
   return {
     element: content,
-    runCommand,
-    unmount: () => session.close(),
+    unmount: () => shells.forEach(({ session }) => session.close()),
   };
 };

@@ -22,6 +22,35 @@ const tokenize = (value) => {
   return tokens;
 };
 
+// The program of a command line and the text after it, like cmd.exe: the
+// name ends at the first space that is not in quotes, and its quotes go
+// away. The program gets the rest as it is typed, quotes and all.
+const splitProgram = (line) => {
+  const [, program, rest] = /^((?:"[^"]*"?|[^\s"])+)\s*([\s\S]*)$/.exec(line);
+  return { program: program.replaceAll('"', ""), rest };
+};
+
+// True for a name that starts cmd.exe.
+const isShellName = (name) => /^(?:cmd|command)(?:\.(?:exe|com))?$/i.test(name);
+
+// The command that cmd runs with /C or /K, like XP's cmd.exe. The command
+// can touch the switch, as in "cmd /cdir". Like XP, a command that starts
+// with a quote loses that quote and the last quote, and the text after the
+// last quote stays: `cmd /k "dir C:\"` runs `dir C:\`. close is true for
+// /C: cmd ends when the command ends. With no /C or /K, command is
+// undefined, and cmd shows its banner.
+export const cmdArguments = (text) => {
+  const match = /(?:^|\s)\/([ck])([\s\S]*)$/i.exec(text);
+  if (!match) return { command: undefined, close: false };
+  let command = match[2].trimStart();
+  if (command.startsWith('"')) {
+    // With one quote, last is 0, and only that quote goes.
+    const last = command.lastIndexOf('"');
+    command = `${command.slice(1, last)}${command.slice(last + 1)}`;
+  }
+  return { command, close: match[1].toLowerCase() === "c" };
+};
+
 const formatDate = (timestamp) => {
   const date = new Date(timestamp);
   const part = (value) => String(value).padStart(2, "0");
@@ -168,10 +197,13 @@ function* ask(text, choices) {
 }
 
 export class CommandSession {
-  constructor(context) {
+  // from is the session that starts this one, such as the cmd that runs
+  // "cmd" or "start". Like XP, the new session starts in its folder, with
+  // a copy of its variables.
+  constructor(context, { from = null } = {}) {
     this.context = context;
     this.fs = context.fs;
-    this.cwd = this.fs.USER_PROFILE;
+    this.cwd = from?.cwd ?? this.fs.USER_PROFILE;
     // The profile folder and the user name come from the file system, so
     // the prompt and the variables always show the real user.
     const profile = this.fs.getPath(this.fs.USER_PROFILE);
@@ -183,24 +215,26 @@ export class CommandSession {
       .map((part, index) => (index ? shortName(part) : part))
       .join("\\");
     const temp = `${shortProfile}\\LOCALS~1\\Temp`;
-    this.environment = new Map([
-      ["COMPUTERNAME", COMPUTER_NAME],
-      ["COMSPEC", DEFAULT_TITLE],
-      ["HOMEDRIVE", "C:"],
-      ["HOMEPATH", profile.replace(/^[A-Z]:/i, "")],
-      ["OS", "Windows_NT"],
-      ["PATH", "C:\\WINDOWS\\system32;C:\\WINDOWS"],
-      ["PATHEXT", ".COM;.EXE;.BAT;.CMD"],
-      ["PROMPT", "$P$G"],
-      ["SYSTEMDRIVE", "C:"],
-      ["SYSTEMROOT", "C:\\WINDOWS"],
-      ["TEMP", temp],
-      ["TMP", temp],
-      ["USERDOMAIN", COMPUTER_NAME],
-      ["USERNAME", userName],
-      ["USERPROFILE", profile],
-      ["WINDIR", "C:\\WINDOWS"],
-    ]);
+    this.environment = new Map(
+      from?.environment ?? [
+        ["COMPUTERNAME", COMPUTER_NAME],
+        ["COMSPEC", DEFAULT_TITLE],
+        ["HOMEDRIVE", "C:"],
+        ["HOMEPATH", profile.replace(/^[A-Z]:/i, "")],
+        ["OS", "Windows_NT"],
+        ["PATH", "C:\\WINDOWS\\system32;C:\\WINDOWS"],
+        ["PATHEXT", ".COM;.EXE;.BAT;.CMD"],
+        ["PROMPT", "$P$G"],
+        ["SYSTEMDRIVE", "C:"],
+        ["SYSTEMROOT", "C:\\WINDOWS"],
+        ["TEMP", temp],
+        ["TMP", temp],
+        ["USERDOMAIN", COMPUTER_NAME],
+        ["USERNAME", userName],
+        ["USERPROFILE", profile],
+        ["WINDIR", "C:\\WINDOWS"],
+      ],
+    );
   }
 
   // The folder the session is in. Like XP, nothing deletes, moves or
@@ -214,9 +248,22 @@ export class CommandSession {
     this.fs.useFolder(this, id);
   }
 
-  // The window closes: the folder is free again.
+  // The window closes: the folders are free again.
   close() {
     this.fs.releaseFolder(this);
+    this.fs.releaseFolder(this.jobFolder);
+  }
+
+  // The item at a path now, like Windows: { id }, or { error } with the
+  // text of cmd.exe. A missing item is "file", and a missing folder on the
+  // way to it is "path". A command that asks a question looks up its items
+  // again by path after the answer, like XP: an item that moved, or went
+  // to the Recycle Bin, is gone.
+  findByPath(path) {
+    const id = this.fs.resolvePath(path);
+    if (id) return { id, node: this.fs.getNode(id) };
+    const parent = this.fs.resolvePath(path.slice(0, path.lastIndexOf("\\")));
+    return { error: parent ? NOT_FOUND : PATH_NOT_FOUND };
   }
 
   get banner() {
@@ -310,7 +357,12 @@ export class CommandSession {
       if (/^[cdf]:$/i.test(command)) return this.changeDrive(command);
       const method = this[`command_${command}`];
       if (method) return method.call(this, tokens, line);
-      if (this.launch(command, tokens)) return { output: "" };
+      const { rest } = splitProgram(line);
+      // Like XP, cmd typed at the prompt runs a new cmd in this window.
+      // The window runs it, and EXIT goes back to this one.
+      if (isShellName(command))
+        return { output: "", shell: cmdArguments(rest) };
+      if (this.launch(command, rest)) return { output: "" };
       return {
         output: `'${command}' is not recognized as an internal or external command,\noperable program or batch file.`,
       };
@@ -341,7 +393,17 @@ export class CommandSession {
     } catch (error) {
       out.push(errorText(error));
     }
+    // A folder that the job keeps in use is free when the job ends.
+    if (!this.question) this.fs.releaseFolder(this.jobFolder);
     return { output: out.join("\n") };
+  }
+
+  // The owner of the folder that a job keeps in use, such as the folder
+  // of DEL while it asks. Like XP, nothing deletes, moves or renames that
+  // folder then.
+  get jobFolder() {
+    this.jobFolderOwner ??= {};
+    return this.jobFolderOwner;
   }
 
   // The folder and the name part of a path, as typed: "d\*.txt" gives the
@@ -448,24 +510,23 @@ export class CommandSession {
     }
     const out = [];
     const session = this;
-    const liveFolders = this.liveFoldersOf(source.items);
-    // The folder of each file when the command starts. A file that leaves
-    // it while a question is open is gone.
-    const folders = source.items.map((item) => item.parent);
+    // The path of each file and of the target folder when the command
+    // starts. Each check looks them up again by path, like XP.
+    const itemPaths = source.items.map((item) => this.fs.getPath(item.id));
+    const targetPath = this.fs.getPath(target.folderId);
     // MOVE names each file at the place where it found it, also when the
     // folder moves while a question is open.
-    const foundAt = source.items.map((item) =>
-      move
-        ? session.joinPath(item.parent, item.name)
-        : `${source.prefix}${item.name}`,
+    const foundAt = source.items.map((item, index) =>
+      move ? itemPaths[index] : `${source.prefix}${item.name}`,
     );
     function* job() {
       let count = 0;
-      for (const [index, item] of source.items.entries()) {
-        const from = folders[index];
+      for (const [index, first] of source.items.entries()) {
+        let item = first;
+        let from = item.parent;
         if (source.many) out.push(foundAt[index]);
         const name = target.nameOf(item);
-        const folderId = target.folderId;
+        let folderId = target.folderId;
         if (
           !move &&
           from === folderId &&
@@ -482,17 +543,27 @@ export class CommandSession {
         }
         // The files and the folders can change while an earlier question
         // is open, and while this one is open. So the checks come before
-        // and after each question. MOVE takes no file out of the Recycle
-        // Bin. COPY reads a file from a current folder that is in the
-        // Recycle Bin, but a folder that goes there after the command
-        // starts is gone.
-        const refusal = () =>
-          session.fs.getNode(item.id)?.parent !== from
-            ? NOT_FOUND
-            : !session.takesFiles(folderId) ||
-                (!session.takesFiles(from) && (move || liveFolders.has(from)))
-              ? PATH_NOT_FOUND
-              : null;
+        // and after each question, by path, like XP. MOVE takes no file
+        // out of the Recycle Bin. COPY reads a file from a current folder
+        // that is in the Recycle Bin, but a folder that goes there after
+        // the command starts has a new path, so it is gone.
+        const refusal = () => {
+          const found = session.findByPath(itemPaths[index]);
+          if (found.error) return found.error;
+          if (found.node.type !== first.type) return NOT_FOUND;
+          item = found.node;
+          from = item.parent;
+          folderId = session.fs.resolvePath(targetPath);
+          return session.fs.getNode(folderId)?.type !== "folder" ||
+            !session.takesFiles(folderId) ||
+            (move && !session.takesFiles(from))
+            ? PATH_NOT_FOUND
+            : null;
+        };
+        if (refusal()) {
+          out.push(refusal());
+          continue;
+        }
         const existing = session.fs.findChild(folderId, name);
         if (
           existing &&
@@ -503,10 +574,6 @@ export class CommandSession {
           continue;
         }
         if (existing && existing.id !== item.id && !all) {
-          if (refusal()) {
-            out.push(refusal());
-            continue;
-          }
           const text = session.overwriteText(
             move,
             typed,
@@ -561,22 +628,15 @@ export class CommandSession {
     return this.runJob(job(), out);
   }
 
-  // The folders of the items that take files when a command starts. A
-  // folder that goes to the Recycle Bin after that is gone for the
-  // command, like a deleted folder in cmd.exe.
-  liveFoldersOf(items) {
-    return new Set(
-      items.map((item) => item.parent).filter((id) => this.takesFiles(id)),
-    );
-  }
-
   // COPY of many files onto one name joins their text into one file.
   combine(source, target, typed, all) {
     const out = [];
     const session = this;
     const name = target.nameOf();
-    const liveFolders = this.liveFoldersOf(source.items);
-    const folders = source.items.map((item) => item.parent);
+    // Like XP, the files and the target folder are looked up again by
+    // path after the question.
+    const paths = source.items.map((item) => this.fs.getPath(item.id));
+    const targetPath = this.fs.getPath(target.folderId);
     function* job() {
       for (const item of source.items) out.push(`${source.prefix}${item.name}`);
       session.fs.validateName(name);
@@ -589,31 +649,29 @@ export class CommandSession {
           return;
         }
       }
-      // A file that left its folder, or whose folder went to the Recycle
-      // Bin while the question was open, gives no text.
-      const content = source.items
-        .filter((item, index) => {
-          const folder = session.fs.getNode(item.id)?.parent;
-          return (
-            folder === folders[index] &&
-            (session.takesFiles(folder) || !liveFolders.has(folder))
-          );
-        })
+      // A file that left its path, such as one whose folder went to the
+      // Recycle Bin while the question was open, gives no text.
+      const content = paths
+        .map((path) => session.findByPath(path).node)
+        .filter(isFile)
         .map((item) => session.fs.getContent(item.id))
         .join("");
       // The folder can go away while the question is open.
-      if (!session.takesFiles(target.folderId)) {
+      const folderId = session.fs.resolvePath(targetPath);
+      if (
+        session.fs.getNode(folderId)?.type !== "folder" ||
+        !session.takesFiles(folderId)
+      ) {
         out.push(PATH_NOT_FOUND, "        0 file(s) copied.");
         return;
       }
-      const current = session.fs.findChild(target.folderId, name);
+      const current = session.fs.findChild(folderId, name);
       if (current && (!isFile(current) || session.fs.isProtected(current.id))) {
         out.push(ACCESS_DENIED, "        0 file(s) copied.");
         return;
       }
       if (current) session.fs.setContent(current.id, content);
-      else
-        session.context.fileOps.createFile(target.folderId, name, { content });
+      else session.context.fileOps.createFile(folderId, name, { content });
       out.push("        1 file(s) copied.");
     }
     return this.runJob(job(), out);
@@ -652,6 +710,9 @@ export class CommandSession {
           continue;
         }
         const shown = session.joinPath(folderId, pattern);
+        // Like XP, DEL keeps the folder in use while it works on it, also
+        // while it asks: nothing moves or deletes the folder then.
+        session.fs.useFolder(session.jobFolder, folderId);
         const matches = () =>
           isFile(node)
             ? [session.fs.getNode(node.id)].filter(Boolean)
@@ -674,16 +735,18 @@ export class CommandSession {
           const choice = yield* ask(`${shown}, Are you sure (Y/N)? `, "yn");
           if (choice === "n" || folderGone()) continue;
         }
-        for (const file of matches()) {
+        for (let file of matches()) {
           if (eachFile) {
             if (folderGone()) break;
-            const choice = yield* ask(
-              `${session.joinPath(file.parent, file.name)}, Delete (Y/N)? `,
-              "yn",
-            );
+            // Like XP, the file at the path that DEL shows is the one that
+            // goes, also when another file takes that path.
+            const asked = session.joinPath(folderId, file.name);
+            const choice = yield* ask(`${asked}, Delete (Y/N)? `, "yn");
             if (choice === "n") continue;
             if (folderGone()) break;
-            if (session.fs.getNode(file.id)?.parent !== folderId) continue;
+            const found = session.findByPath(asked);
+            if (!isFile(found.node)) continue;
+            file = found.node;
           }
           try {
             session.fs.destroy(file.id);
@@ -716,8 +779,9 @@ export class CommandSession {
     return { output: `\n${VERSION}` };
   }
 
+  // The window ends this session. It goes back to the cmd that started
+  // it, or closes when there is none.
   command_exit() {
-    this.context.close();
     return { exit: true, output: "" };
   }
 
@@ -1168,17 +1232,21 @@ export class CommandSession {
     }
     const out = [];
     const session = this;
+    const path = this.fs.getPath(node.id);
     function* job() {
       if (!quiet) {
         const choice = yield* ask(`${typed}, Are you sure (Y/N)? `, "yn");
         if (choice === "n") return;
-        // The folder can go to the Recycle Bin while the question is open.
-        if (!session.takesFiles(node.id)) {
-          out.push(PATH_NOT_FOUND);
-          return;
-        }
       }
-      session.removeTree(node.id, null, typed, out);
+      // Like XP, RD deletes the folder at the path after the answer. A
+      // folder that moved, or went to the Recycle Bin, while the question
+      // was open is gone.
+      const found = session.findByPath(path);
+      if (found.node?.type !== "folder") {
+        out.push(found.error ?? NOT_FOUND);
+        return;
+      }
+      session.removeTree(found.id, null, typed, out);
     }
     return this.runJob(job(), out);
   }
@@ -1242,16 +1310,34 @@ export class CommandSession {
     return { output: "" };
   }
 
-  command_start(args) {
-    // The tokenizer drops empty quoted titles such as `start "" notepad`.
-    const values = args;
-    if (!values.length)
-      return { output: "The system cannot find the file specified." };
-    const pathId = this.resolve(values.join(" "));
+  // START opens a new window, like XP. A first argument in quotes is the
+  // title of a new Command Prompt window. With no command, START opens a
+  // new Command Prompt, and a command of cmd runs in a new one that stays
+  // open. Each new Command Prompt starts in this folder.
+  command_start(args, line) {
+    let body = line.slice(line.search(/\s|$/)).trim();
+    const titled = /^"([^"]*)"?\s*/.exec(body);
+    const title = titled?.[1] || undefined;
+    if (titled) body = body.slice(titled[0].length);
+    // The switches of START, such as /MIN or /D with its folder, change
+    // only how the window shows here.
+    body = body.replace(/^(?:\/d\s*(?:"[^"]*"|\S+)\s*|\/[a-z]+\s*)*/i, "");
+    const newPrompt = (text) =>
+      this.context.launchApplication("__command-prompt", {
+        arguments: text,
+        from: this,
+        title,
+      });
+    if (!body) return newPrompt("") ? { output: "" } : { output: NOT_FOUND };
+    const { program, rest } = splitProgram(body);
+    const name = program.toLowerCase();
+    if (this[`command_${name}`])
+      return newPrompt(`/K ${body}`) ? { output: "" } : { output: NOT_FOUND };
+    const pathId = this.resolve(tokenize(body).join(" "));
     if (pathId && this.fs.open(pathId)) return { output: "" };
-    return this.launch(values[0], values.slice(1))
+    return this.launch(name, rest, { newWindow: true, title })
       ? { output: "" }
-      : { output: "The system cannot find the file specified." };
+      : { output: NOT_FOUND };
   }
 
   command_help() {
@@ -1279,15 +1365,17 @@ export class CommandSession {
   }
 
   // A program runs like from Run, with paths from the current folder, like
-  // XP: "notepad a.txt" opens or offers to create a.txt here. cmd starts
-  // a new Command Prompt in XP. Here the window is the only one, so cmd
-  // brings it up.
-  launch(command, args) {
-    if (/^(?:cmd|command)(?:\.(?:exe|com))?$/i.test(command))
-      return !!this.context.launchApplication("__command-prompt", {});
-    const text = args
-      .map((value) => (/\s/.test(value) ? `"${value}"` : value))
-      .join(" ");
-    return this.context.runProgram(command, text, this.displayPath());
+  // XP: "notepad a.txt" opens or offers to create a.txt here. Like cmd.exe,
+  // the program gets the text after its name as it is typed, and reads its
+  // own arguments. With newWindow, as from START, cmd opens a new Command
+  // Prompt window that starts in this folder.
+  launch(command, rest, { newWindow = false, title } = {}) {
+    if (newWindow && isShellName(command))
+      return !!this.context.launchApplication("__command-prompt", {
+        arguments: rest,
+        from: this,
+        title,
+      });
+    return this.context.runProgram(command, rest, this.displayPath());
   }
 }

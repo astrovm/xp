@@ -296,18 +296,18 @@ const keepWindowsInWorkArea = () => {
   });
 };
 
+// The place, the size and the minimized and maximized state of each
+// window, so a resolution preview can put them back. The stacking order
+// and the focus are not part of it: they stay as the user leaves them, and
+// the layers stay as compactWindowLayers numbers them.
 const snapshotWindowState = () => ({
-  focusedGameId,
-  zIndexCounter,
   windows: [...openWindows.values()].map((win) => ({
     gameId: win.gameId,
     minimized: win.minimized,
     maximized: win.maximized,
-    zIndex: win.zIndex,
-    lastUsed: win.lastUsed,
     prevRect: win.prevRect ? { ...win.prevRect } : null,
     styles: Object.fromEntries(
-      ["left", "top", "width", "height", "display", "zIndex"].map((name) => [
+      ["left", "top", "width", "height", "display"].map((name) => [
         name,
         win.el.style[name],
       ]),
@@ -323,25 +323,18 @@ const restoreWindowState = (snapshot) => {
     Object.assign(win, {
       minimized: saved.minimized,
       maximized: saved.maximized,
-      zIndex: saved.zIndex,
-      lastUsed: saved.lastUsed,
       prevRect: saved.prevRect ? { ...saved.prevRect } : null,
     });
     Object.assign(win.el.style, saved.styles);
     win.el.classList.toggle("maximized", saved.maximized);
     showOwnedDialogs(win);
   });
-  focusedGameId = openWindows.has(snapshot.focusedGameId)
-    ? snapshot.focusedGameId
-    : null;
-  // Opening a window focuses it, so every open window has a z-index.
-  zIndexCounter = Math.max(
-    snapshot.zIndexCounter,
-    ...[...openWindows.values()].map((win) => win.zIndex),
-  );
-  openWindows.forEach((win, gameId) =>
-    win.el.classList.toggle("active", gameId === focusedGameId),
-  );
+  // A window that goes back to the taskbar gives the focus to the top
+  // window, like a minimized window.
+  if (openWindows.get(focusedGameId)?.minimized) {
+    focusedGameId = null;
+    focusTopWindow();
+  }
   // A bounded selected monitor is not a physical viewport constraint. Only
   // clamp a restored snapshot when the browser itself is the limiting edge.
   const monitor = getSimulatedMonitorSize();
@@ -354,7 +347,8 @@ const restoreWindowState = (snapshot) => {
 };
 
 const updateDocumentTitle = () => {
-  document.title = focusedGameId ? formatGameTitle(focusedGameId) : "Astro XP";
+  const win = openWindows.get(focusedGameId);
+  document.title = win ? windowTitleOf(win) : "Astro XP";
 };
 
 const applyFocusVolumes = () => {
@@ -486,7 +480,9 @@ const trackGamePlay = (gameId) => {
   openWindows.get(gameId).lastUsed = timestamp;
 };
 
-const createWindowElement = (gameId) => {
+// applicationId is the program of the window. A program with many
+// windows gives each one its own gameId, such as "__command-prompt#2".
+const createWindowElement = (gameId, applicationId = gameId) => {
   const win = document.createElement("div");
   win.className = "xp-window";
   win.dataset.game = gameId;
@@ -514,11 +510,11 @@ const createWindowElement = (gameId) => {
   titleBar.className = "title-bar";
   titleBar.dataset.mouseKeepsFocus = "";
 
-  const titleIcon = createGameIconElement(gameId, "title-icon");
+  const titleIcon = createGameIconElement(applicationId, "title-icon");
 
   const titleText = document.createElement("span");
   titleText.className = "title-text";
-  titleText.textContent = formatGameTitle(gameId);
+  titleText.textContent = formatGameTitle(applicationId);
 
   const titleButtons = document.createElement("div");
   titleButtons.className = "title-buttons";
@@ -1050,7 +1046,8 @@ const activateWindow = (win) => {
 
   const deepLinkId = gamesList[gameId]
     ? gameId
-    : window.XPApplicationRegistry?.get(gameId)?.deepLinkId;
+    : window.XPApplicationRegistry?.get(win.applicationId ?? gameId)
+        ?.deepLinkId;
   if (deepLinkId && window.location.hash !== `#${deepLinkId}`) {
     const deepLinkUrl = new URL("/", window.location.origin);
     deepLinkUrl.search = window.location.search;

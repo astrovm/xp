@@ -234,12 +234,12 @@ const runProgram = (programId, args, base) => {
 // - /select,<item> opens the folder of the item, with the item selected.
 // - /n opens a new window. Here Explorer has one window, so it does
 //   nothing.
-// With no path, Explorer opens My Documents with the Folders bar. A path
-// of a file opens the file.
+// Like XP, a comma in quotes is part of the path, the quotes are not, and
+// a path can have spaces with no quotes. With no path, Explorer opens My
+// Documents with the Folders bar. A path of a file opens the file.
 const runExplorer = (args, base) => {
-  const parts = args
-    .split(",")
-    .map((part) => part.trim().replace(/^"(.*)"$/, "$1"))
+  const parts = (args.match(/(?:"[^"]*"?|[^,"])+/g) ?? [])
+    .map((part) => part.replaceAll('"', "").trim())
     .filter(Boolean);
   let folders = !parts.length;
   let select = false;
@@ -267,16 +267,10 @@ const runExplorer = (args, base) => {
   return openSystemWindow("__my-documents", { folderId: node.id, folders });
 };
 
-// XP's cmd runs the command after /c and then closes, or runs the command
-// after /k and stays open. Other arguments open it as it is.
-const runCommandPrompt = (args) => {
-  const [, keep, command] = /(?:^|\s)\/([ck])(?:\s+|$)(.*)$/i.exec(args) || [];
-  if (!keep) return openXPProgram("__command-prompt");
-  return openXPProgram("__command-prompt", {
-    command,
-    closeAfter: keep.toLowerCase() === "c",
-  });
-};
+// XP's cmd opens a new window each time. The window reads its arguments,
+// such as "/c dir" or "/k dir", like cmd.exe.
+const runCommandPrompt = (args) =>
+  openXPProgram("__command-prompt", { arguments: args });
 
 // XP's Notepad opens the file. A name with no extension that no file has
 // gets ".txt", like XP: "notepad foo" opens or asks for "foo.txt".

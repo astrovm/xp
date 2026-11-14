@@ -17,6 +17,9 @@ const open = async ({
   clipboardFails = false,
   noClipboard = false,
   failStorage = false,
+  // The layout map of navigator.keyboard: a Map, "fails" for a map that
+  // the browser refuses, or null for a browser with no layout map.
+  layoutMap = null,
 } = {}) => {
   const sounds = [];
   const copied = [];
@@ -37,6 +40,16 @@ const open = async ({
             this.paused = true;
           }
         };
+        if (layoutMap)
+          Object.defineProperty(window.navigator, "keyboard", {
+            configurable: true,
+            value: {
+              getLayoutMap: () =>
+                layoutMap === "fails"
+                  ? Promise.reject(new Error("denied"))
+                  : Promise.resolve(layoutMap),
+            },
+          });
         Object.defineProperty(window.navigator, "clipboard", {
           configurable: true,
           value: noClipboard
@@ -265,6 +278,92 @@ test("the keyboard follows calc.exe's accelerators", async () => {
   h.key("Escape");
   h.type("30s");
   expect(h.display()).toBe("0.5");
+});
+
+// Windows sends AltGr as Ctrl and Alt. Like Windows, Ctrl+Alt types only
+// when the key gives a character that its place does not type alone.
+test("Ctrl+Alt types only an AltGr character, with each layout", async () => {
+  const h = await open();
+  const ctrlAlt = (key, code) =>
+    h.key(key, { code, ctrlKey: true, altKey: true });
+  const { isAltGr } = h.s.window.XPDialogs;
+  const ctrlAltEvent = (key, code) => ({
+    key,
+    code,
+    ctrlKey: true,
+    altKey: true,
+  });
+  // US: Ctrl+Alt+3 gives "3", the character of the key. It types nothing.
+  h.type("12");
+  expect(ctrlAlt("3", "Digit3").defaultPrevented).toBeFalse();
+  expect(h.display()).toBe("12.");
+  expect(isAltGr(ctrlAltEvent("a", "KeyA"))).toBeFalse();
+  expect(isAltGr(ctrlAltEvent("A", "KeyA"))).toBeFalse();
+  // Polish: AltGr+A types "ą". German: AltGr+Q types "@", the square
+  // root of Calculator.
+  expect(isAltGr(ctrlAltEvent("ą", "KeyA"))).toBeTrue();
+  h.key("Escape");
+  h.type("9");
+  expect(ctrlAlt("@", "KeyQ").defaultPrevented).toBeTrue();
+  expect(h.display()).toBe("3.");
+  // German: the Y place types "z". The shell learns it from a plain key,
+  // so Ctrl+Alt on that place is no AltGr key.
+  expect(isAltGr(ctrlAltEvent("z", "KeyY"))).toBeTrue();
+  h.key("z", { code: "KeyY" });
+  expect(isAltGr(ctrlAltEvent("z", "KeyY"))).toBeFalse();
+  expect(isAltGr(ctrlAltEvent("Z", "KeyY"))).toBeFalse();
+  // Shift and a key teach its character too.
+  h.key("§", { code: "Digit3", shiftKey: true });
+  expect(isAltGr(ctrlAltEvent("§", "Digit3"))).toBeFalse();
+  // Keys with a modifier or with no place teach nothing.
+  h.key("ł", { code: "KeyL", ctrlKey: true });
+  h.key("ł", { code: "KeyL", altKey: true });
+  h.key("ł", { code: "KeyL", metaKey: true });
+  h.key("ł", { code: "KeyL", isComposing: true });
+  h.key("ł", { code: "" });
+  h.key("Enter", { code: "KeyL" });
+  const altGraph = new h.s.window.KeyboardEvent("keydown", {
+    key: "ł",
+    code: "KeyL",
+    bubbles: true,
+  });
+  Object.defineProperty(altGraph, "getModifierState", {
+    value: (name) => name === "AltGraph",
+  });
+  h.win.querySelector(".xp-calculator").dispatchEvent(altGraph);
+  expect(isAltGr(ctrlAltEvent("ł", "KeyL"))).toBeTrue();
+  // A named key or a key with no place is no AltGr key.
+  expect(isAltGr(ctrlAltEvent("Enter", "Enter"))).toBeFalse();
+  expect(isAltGr(ctrlAltEvent("ę", undefined))).toBeTrue();
+});
+
+test("the layout map of the browser gives each key place at the start", async () => {
+  const h = await open({
+    layoutMap: new Map([
+      ["KeyY", "z"],
+      ["KeyZ", "y"],
+    ]),
+  });
+  await h.settle();
+  const { isAltGr } = h.s.window.XPDialogs;
+  const ctrlAltEvent = (key, code) => ({
+    key,
+    code,
+    ctrlKey: true,
+    altKey: true,
+  });
+  expect(isAltGr(ctrlAltEvent("z", "KeyY"))).toBeFalse();
+  expect(isAltGr(ctrlAltEvent("y", "KeyZ"))).toBeFalse();
+  expect(isAltGr(ctrlAltEvent("@", "KeyQ"))).toBeTrue();
+  // A browser that refuses the map keeps the US places.
+  const refused = await open({ layoutMap: "fails" });
+  await refused.settle();
+  expect(
+    refused.s.window.XPDialogs.isAltGr(ctrlAltEvent("z", "KeyY")),
+  ).toBeTrue();
+  expect(
+    refused.s.window.XPDialogs.isAltGr(ctrlAltEvent("a", "KeyA")),
+  ).toBeFalse();
 });
 
 test("Scientific view, with bases, word sizes, angles, Inv and Hyp", async () => {

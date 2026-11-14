@@ -408,6 +408,11 @@ const formatGameTitle = (gameId) =>
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 
+// The title of an open window: the title that it sets, such as a Command
+// Prompt's TITLE, or else the name of its program or game.
+const windowTitleOf = (win) =>
+  win.title || formatGameTitle(win.applicationId ?? win.gameId);
+
 const getGameIcon = (gameId) =>
   categoryIcons[gamesList[gameId]?.category] || categoryIcons["Other"];
 
