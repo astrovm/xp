@@ -7,6 +7,7 @@ import {
   login,
 } from "./helpers/shell-harness";
 import { checkMenuBar } from "./helpers/menu-bar";
+import { pressAltGr } from "./helpers/keys";
 
 afterEach(cleanupShells);
 
@@ -198,6 +199,27 @@ test("the keyboard follows calc.exe's accelerators", async () => {
   h.key("Escape");
   h.type("9@");
   expect(h.display()).toBe("3.");
+  // A German layout types "@" with AltGr+Q. Like XP, the character works
+  // like a typed one, with each shape of the AltGr event.
+  h.key("Escape");
+  h.type("256");
+  for (const event of pressAltGr(
+    h.s.window,
+    h.win.querySelector(".xp-calculator"),
+    "@",
+    "KeyQ",
+  ))
+    expect(event.defaultPrevented).toBeTrue();
+  expect(h.display()).toBe("2.");
+  // An AltGr letter with no command, such as "ą", does nothing.
+  for (const event of pressAltGr(
+    h.s.window,
+    h.win.querySelector(".xp-calculator"),
+    "ą",
+    "KeyA",
+  ))
+    expect(event.defaultPrevented).toBeFalse();
+  expect(h.display()).toBe("2.");
   h.type("4r");
   expect(h.display()).toBe("0.25");
   h.key("Escape");

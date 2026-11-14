@@ -448,6 +448,10 @@ export class CommandSession {
     }
     const out = [];
     const session = this;
+    const liveFolders = this.liveFoldersOf(source.items);
+    // The folder of each file when the command starts. A file that leaves
+    // it while a question is open is gone.
+    const folders = source.items.map((item) => item.parent);
     // MOVE names each file at the place where it found it, also when the
     // folder moves while a question is open.
     const foundAt = source.items.map((item) =>
@@ -458,13 +462,13 @@ export class CommandSession {
     function* job() {
       let count = 0;
       for (const [index, item] of source.items.entries()) {
-        const from = item.parent;
+        const from = folders[index];
         if (source.many) out.push(foundAt[index]);
         const name = target.nameOf(item);
         const folderId = target.folderId;
         if (
           !move &&
-          item.parent === folderId &&
+          from === folderId &&
           item.name.toLowerCase() === name.toLowerCase()
         ) {
           out.push("The file cannot be copied onto itself.");
@@ -478,12 +482,15 @@ export class CommandSession {
         }
         // The files and the folders can change while an earlier question
         // is open, and while this one is open. So the checks come before
-        // and after each question.
+        // and after each question. MOVE takes no file out of the Recycle
+        // Bin. COPY reads a file from a current folder that is in the
+        // Recycle Bin, but a folder that goes there after the command
+        // starts is gone.
         const refusal = () =>
           session.fs.getNode(item.id)?.parent !== from
             ? NOT_FOUND
             : !session.takesFiles(folderId) ||
-                (move && !session.takesFiles(from))
+                (!session.takesFiles(from) && (move || liveFolders.has(from)))
               ? PATH_NOT_FOUND
               : null;
         const existing = session.fs.findChild(folderId, name);
@@ -518,8 +525,9 @@ export class CommandSession {
           continue;
         }
         // A protected item or a folder in use shows cmd.exe's text, and
-        // the next item goes on.
-        if (move) {
+        // the next item goes on. An item that stays where it is does not
+        // move, so nothing checks it.
+        if (move && (from !== folderId || item.name !== name)) {
           try {
             session.fs.checkChange("move", item.id);
           } catch (error) {
@@ -553,11 +561,22 @@ export class CommandSession {
     return this.runJob(job(), out);
   }
 
+  // The folders of the items that take files when a command starts. A
+  // folder that goes to the Recycle Bin after that is gone for the
+  // command, like a deleted folder in cmd.exe.
+  liveFoldersOf(items) {
+    return new Set(
+      items.map((item) => item.parent).filter((id) => this.takesFiles(id)),
+    );
+  }
+
   // COPY of many files onto one name joins their text into one file.
   combine(source, target, typed, all) {
     const out = [];
     const session = this;
     const name = target.nameOf();
+    const liveFolders = this.liveFoldersOf(source.items);
+    const folders = source.items.map((item) => item.parent);
     function* job() {
       for (const item of source.items) out.push(`${source.prefix}${item.name}`);
       session.fs.validateName(name);
@@ -570,8 +589,16 @@ export class CommandSession {
           return;
         }
       }
+      // A file that left its folder, or whose folder went to the Recycle
+      // Bin while the question was open, gives no text.
       const content = source.items
-        .filter((item) => session.fs.getNode(item.id))
+        .filter((item, index) => {
+          const folder = session.fs.getNode(item.id)?.parent;
+          return (
+            folder === folders[index] &&
+            (session.takesFiles(folder) || !liveFolders.has(folder))
+          );
+        })
         .map((item) => session.fs.getContent(item.id))
         .join("");
       // The folder can go away while the question is open.
@@ -1111,24 +1138,73 @@ export class CommandSession {
     return this.command_md(args);
   }
 
+  // RD /S asks first, like cmd.exe, and /Q does not ask. It deletes all
+  // that it can. A folder that is in use, or that is above one, stays: the
+  // folder in use gets cmd.exe's text, and the folders above it stay with
+  // no text.
   command_rd(args) {
-    const recursive = args.some((value) => value.toLowerCase() === "/s");
-    const target = args.filter((value) => !value.startsWith("/"));
-    const id = this.resolve(target.join(" "));
+    const switches = args
+      .filter((value) => value.startsWith("/"))
+      .map((value) => value.toLowerCase());
+    const recursive = switches.includes("/s");
+    const quiet = switches.includes("/q");
+    const typed = args.filter((value) => !value.startsWith("/")).join(" ");
+    if (!typed) return { output: SYNTAX_ERROR };
+    const id = this.resolve(typed);
     const node = id && this.fs.getNode(id);
     if (!node || node.type !== "folder" || !this.takesFiles(node.id)) {
-      return { output: "The system cannot find the path specified." };
+      return { output: PATH_NOT_FOUND };
     }
     if (node.protected) return { output: ACCESS_DENIED };
-    if (this.fs.getChildren(node.id).length && !recursive) {
-      return { output: "The directory is not empty." };
+    if (!recursive) {
+      if (this.fs.getChildren(node.id).length)
+        return { output: "The directory is not empty." };
+      try {
+        this.fs.destroy(node.id);
+      } catch (error) {
+        return { output: changeErrorText(error) };
+      }
+      return { output: "" };
     }
+    const out = [];
+    const session = this;
+    function* job() {
+      if (!quiet) {
+        const choice = yield* ask(`${typed}, Are you sure (Y/N)? `, "yn");
+        if (choice === "n") return;
+        // The folder can go to the Recycle Bin while the question is open.
+        if (!session.takesFiles(node.id)) {
+          out.push(PATH_NOT_FOUND);
+          return;
+        }
+      }
+      session.removeTree(node.id, null, typed, out);
+    }
+    return this.runJob(job(), out);
+  }
+
+  // Deletes a folder and all that is in it, from the bottom up. path is
+  // the folder's path as RD shows it, or null for the folder that RD
+  // names: its error has no path, like cmd.exe.
+  removeTree(id, path, typed, out) {
+    for (const child of this.fs.getChildren(id).sort(byName)) {
+      const childPath = `${path ?? typed.replace(/[\\/]+$/, "")}\\${child.name}`;
+      if (child.type === "folder")
+        this.removeTree(child.id, childPath, typed, out);
+      else this.removeItem(child.id, childPath, out);
+    }
+    // A folder that still has items, such as one above a folder in use,
+    // stays with no text.
+    if (!this.fs.getChildren(id).length) this.removeItem(id, path, out);
+  }
+
+  removeItem(id, path, out) {
     try {
-      this.fs.destroy(node.id);
+      this.fs.destroy(id);
     } catch (error) {
-      return { output: changeErrorText(error) };
+      const text = changeErrorText(error);
+      out.push(path ? `${path} - ${text}` : text);
     }
-    return { output: "" };
   }
 
   command_rmdir(args) {
@@ -1202,29 +1278,16 @@ export class CommandSession {
     };
   }
 
+  // A program runs like from Run, with paths from the current folder, like
+  // XP: "notepad a.txt" opens or offers to create a.txt here. cmd starts
+  // a new Command Prompt in XP. Here the window is the only one, so cmd
+  // brings it up.
   launch(command, args) {
-    const aliases = {
-      calc: "__calculator",
-      "calc.exe": "__calculator",
-      command: "__command-prompt",
-      explorer: "__my-computer",
-      "explorer.exe": "__my-computer",
-      mspaint: "__paint",
-      "mspaint.exe": "__paint",
-      notepad: "__notepad",
-      "notepad.exe": "__notepad",
-    };
-    const applicationId = aliases[command.toLowerCase()];
-    if (!applicationId) return false;
-    let file = null;
-    if (args.length) {
-      const id = this.resolve(args.join(" "));
-      file = id && this.fs.getNode(id);
-      if (!file) return false;
-    }
-    return !!this.context.launchApplication(
-      applicationId,
-      file ? { file } : {},
-    );
+    if (/^(?:cmd|command)(?:\.(?:exe|com))?$/i.test(command))
+      return !!this.context.launchApplication("__command-prompt", {});
+    const text = args
+      .map((value) => (/\s/.test(value) ? `"${value}"` : value))
+      .join(" ");
+    return this.context.runProgram(command, text, this.displayPath());
   }
 }

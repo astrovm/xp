@@ -677,3 +677,40 @@ test("the Command Prompt types the path of an item dropped on it, like XP", asyn
   expect(h.input.value).toBe(path.includes(" ") ? `"${path}"` : path);
   expect(fs.getNode(icon.id).parent).toBe(fs.DESKTOP);
 });
+
+// Like XP, a program that the Command Prompt runs takes its paths from the
+// current folder.
+test("the Command Prompt runs programs with paths from its folder, like XP", async () => {
+  const h = await openCommandPrompt();
+  const { s } = h;
+  const fs = s.window.VirtualFS;
+  const lastDialog = () =>
+    [...s.document.querySelectorAll(".xp-dialog")].at(-1);
+  await h.enter("cd \\");
+  await h.enter("notepad foo");
+  expect(lastDialog().textContent).toContain(
+    "Cannot find the foo.txt file.\n\nDo you want to create a new file?",
+  );
+  lastDialog().querySelector('[data-action="yes"]').click();
+  await settle();
+  expect(fs.resolvePath("C:\\foo.txt") === null).toBeFalse();
+  expect(
+    s.document.querySelector('.xp-window[data-game="__notepad"] .title-text')
+      .textContent,
+  ).toBe("foo.txt - Notepad");
+  // A path that starts with "\" is on the drive of the folder.
+  await h.enter("cd /d D:\\");
+  await h.enter("notepad \\bar");
+  expect(lastDialog().textContent).toContain("Cannot find the \\bar.txt file.");
+  lastDialog().querySelector('[data-action="cancel"]').click();
+  await settle();
+  // cmd brings up the one Command Prompt window.
+  await h.enter("cmd");
+  expect(
+    s.document.querySelectorAll('.xp-window[data-game="__command-prompt"]'),
+  ).toHaveLength(1);
+  expect(h.output.textContent).not.toContain("'cmd' is not recognized");
+  // An unknown name is no program.
+  await h.enter("winword");
+  expect(h.output.textContent).toContain("'winword' is not recognized");
+});

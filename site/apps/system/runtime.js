@@ -949,9 +949,9 @@ export const createSystemRuntime = (context) => {
           event.target.closest(".explorer-context-menu")
         )
           return;
-        // AltGr sends Ctrl and Alt, and types. Like XP, it opens no menu.
+        // AltGr types. Like XP, it opens no menu.
         if (event.altKey) {
-          if (!event.ctrlKey && !event.metaKey)
+          if (XPDialogs.isAccessKeyPress(event))
             openExplorerMenuByAccessKey(event);
           return;
         }
@@ -992,8 +992,10 @@ export const createSystemRuntime = (context) => {
         const heading = document.activeElement?.closest?.(
           "[data-explorer-menu]",
         );
+        // AltGr types in the Address bar, and opens no menu, like XP.
         if (event.altKey) {
-          openExplorerMenuByAccessKey(event);
+          if (XPDialogs.isAccessKeyPress(event))
+            openExplorerMenuByAccessKey(event);
           return;
         }
         if (

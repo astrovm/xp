@@ -6,6 +6,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 const dialogs = (s) => [...s.document.querySelectorAll(".xp-dialog")];
 const current = (s) => dialogs(s).at(-1);
@@ -549,6 +550,15 @@ test("Views switches between XP's five list views", async () => {
   keyOn(s, menuKey, "Tab", { shiftKey: true });
   expect(menu.hidden).toBeFalse();
   expect(s.document.activeElement === menuKey).toBeTrue();
+  // AltGr types "ś" on the S key of a Polish keyboard. It chooses no view.
+  pressAltGr(s.window, menuKey, "ś", "KeyS");
+  expect(menu.hidden).toBeFalse();
+  expect(list.dataset.view).toBe("icons");
+  // Alt and a letter closes the menu and chooses no view.
+  keyOn(s, menuKey, "s", { altKey: true, code: "KeyS" });
+  expect(menu.hidden).toBeTrue();
+  expect(list.dataset.view).toBe("icons");
+  views.click();
   key(s, "S");
   expect(list.dataset.view).toBe("tiles");
   expect(menu.hidden).toBeTrue();

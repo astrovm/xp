@@ -43,9 +43,12 @@ const expectNeedsMatcher = {
 // test does not wait for it unless it is awaited or returned, so a failed
 // check can come after the test ends, or never. This rule finds each such
 // check that is not awaited or returned. It follows the promise through a
-// variable, an array in Promise.all, a .map callback and a test callback.
-// A promise that a callback gives to forEach or another call is lost.
-const PROMISE_GROUPS = new Set(["all", "allSettled", "any", "race"]);
+// variable, an array in Promise.all, a .map callback, a test callback and
+// a function that returns it, to each call of that function. A promise
+// that a callback gives to forEach or another call is lost.
+// Only Promise.all fails when one check fails. Promise.allSettled,
+// Promise.any and Promise.race can hide a failed check.
+const PROMISE_GROUPS = new Set(["all"]);
 const TEST_FUNCTIONS = new Set(["test", "it"]);
 const isMethodCall = (node, names) =>
   node?.type === "CallExpression" &&
@@ -83,10 +86,11 @@ const awaitAsyncExpect = {
       const { parent } = node;
       switch (parent.type) {
         case "AwaitExpression":
-        case "ReturnStatement":
           return true;
+        case "ReturnStatement":
+          return returnWaited(parent, seen);
         case "ArrowFunctionExpression":
-          return parent.body === node && callbackWaited(parent, seen);
+          return parent.body === node && functionWaited(parent, seen);
         case "ArrayExpression":
           return arrayWaited(parent, seen);
         case "VariableDeclarator":
@@ -118,18 +122,47 @@ const awaitAsyncExpect = {
         waited(parent, seen)
       );
     };
-    // A callback's result is waited for when it is the callback of a test,
-    // a helper function kept in a variable, or the callback of a .map
-    // whose array is waited for.
-    const callbackWaited = (callback, seen) => {
-      const { parent } = callback;
-      if (parent.type === "VariableDeclarator") return true;
-      if (parent.type !== "CallExpression" || parent.callee === callback)
-        return false;
+    // A returned value is waited for when the function that returns it is
+    // waited for. A return outside a function ends the test file's code.
+    const returnWaited = (statement, seen) => {
+      let fn = statement.parent;
+      while (fn && !/Function/.test(fn.type)) fn = fn.parent;
+      if (!fn) return true;
+      return fn.type === "FunctionDeclaration"
+        ? callsWaited(fn, seen)
+        : functionWaited(fn, seen);
+    };
+    // A function's result is waited for when each call of it is waited
+    // for. A function in a variable, or a declared function, is followed
+    // to each place that reads it. A function with no reads is never
+    // called, so it loses nothing.
+    const callsWaited = (declaration, seen) =>
+      sourceCode
+        .getDeclaredVariables(declaration)
+        // A declared function also declares its parameters.
+        .filter((variable) => variable.defs[0].type !== "Parameter")
+        .every((variable) =>
+          variable.references.every(
+            (reference) =>
+              !reference.isRead() || functionWaited(reference.identifier, seen),
+          ),
+        );
+    // The value of this node is a function. Its result is waited for when
+    // a waited call calls it, when it is the callback of a test or of a
+    // .map whose array is waited for, or when it goes in a variable whose
+    // calls are waited for.
+    const functionWaited = (fn, seen) => {
+      if (seen.has(fn)) return false;
+      seen.add(fn);
+      const { parent } = fn;
+      if (parent.type === "VariableDeclarator")
+        return parent.init === fn && callsWaited(parent, seen);
+      if (parent.type !== "CallExpression") return false;
+      if (parent.callee === fn) return waited(parent, seen);
       if (isTestCall(parent)) return true;
       return (
         isMethodCall(parent, new Set(["map"])) &&
-        parent.arguments[0] === callback &&
+        parent.arguments[0] === fn &&
         arrayWaited(parent, seen)
       );
     };

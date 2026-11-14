@@ -194,7 +194,32 @@
       ? ""
       : layoutKeyOf(event);
 
-  // The letter of an access key, such as F in Alt+F.
+  // AltGr types a character, such as "ę" on the E key of a Polish
+  // keyboard. Windows sends it as Ctrl and Alt. A Linux browser can send
+  // only the AltGraph state, with no Ctrl and no Alt. With Alt and no
+  // Ctrl, the key is Alt: some engines give the AltGraph state for each
+  // Alt key. A Mac has no AltGr: its Option key works like Alt.
+  const isAltGr = (event) =>
+    !isApplePlatform() &&
+    (event.ctrlKey || !event.altKey) &&
+    ((event.altKey && event.ctrlKey) ||
+      event.getModifierState?.("AltGraph") === true);
+
+  // True for Alt and a key, which opens a menu or clicks a button, like XP.
+  // Ctrl, the Windows key and AltGr make it no access key.
+  const isAccessKeyPress = (event) =>
+    event.altKey && !event.ctrlKey && !event.metaKey && !isAltGr(event);
+
+  // The character that a key types, or "". A plain key and an AltGr key
+  // type, like XP. A key with Ctrl, Alt or the Windows key types nothing.
+  const typedCharacterOf = (event) => {
+    if (event.isComposing || Array.from(event.key).length !== 1) return "";
+    if (isAltGr(event)) return event.key;
+    return event.ctrlKey || event.altKey || event.metaKey ? "" : event.key;
+  };
+
+  // The letter of an access key, such as F in Alt+F, or "". A key with
+  // Ctrl, the Windows key or AltGr is never an access key, like XP.
   // In a text box:
   // - A dead key (Option+E on a Mac starts an accent) is never an access
   //   key, because it types.
@@ -209,6 +234,7 @@
   // digit, a dead key too, gives the letter or digit of its place on the
   // keyboard. So Option works like Alt on a Mac.
   const accessKeyOf = (event) => {
+    if (event.ctrlKey || event.metaKey || isAltGr(event)) return "";
     const key = event.key.toLowerCase();
     if (isEditable(event.target)) {
       if (event.key === "Dead") return "";
@@ -234,6 +260,9 @@
       BUTTON_SETS,
       parseAccessKey,
       accessKeyOf,
+      isAltGr,
+      isAccessKeyPress,
+      typedCharacterOf,
       shortcutKeyOf,
       isComposingKey,
       describeFileType,
@@ -775,8 +804,9 @@
 
     // Alt+key always works; the bare key works outside text fields.
     const handleAccessKey = (e) => {
+      // AltGr types, so its keys are no access keys.
       const letter = accessKeyOf(e);
-      if (e.ctrlKey || e.metaKey || letter.length !== 1) return;
+      if (letter.length !== 1) return;
       const inTextField = /^(INPUT|TEXTAREA|SELECT)$/.test(
         document.activeElement?.tagName,
       );
@@ -1379,13 +1409,12 @@
         event.preventDefault();
         return true;
       }
-      // AltGr sends Ctrl+Alt, and its characters type as usual.
-      if (event.key === "Tab" || (event.altKey && !event.ctrlKey)) {
+      // AltGr types its characters as usual.
+      if (event.key === "Tab" || isAccessKeyPress(event)) {
         close();
         return false;
       }
-      if (event.key.length !== 1 || event.ctrlKey || event.metaKey)
-        return false;
+      if (!typedCharacterOf(event)) return false;
       // Outside a text box a typed key does nothing, so Space does not
       // click the box under the list.
       if (event.target.tagName !== "INPUT") event.preventDefault();
@@ -1424,17 +1453,13 @@
       }
       // A menu matches its access keys by their place on the keyboard,
       // and a list matches the typed character.
+      // An AltGr character, such as "ą", is typed like a plain one.
       const letter = chooseLetter
-        ? accessKeyOf(event)
-        : String(event.key).toLowerCase();
-      if (
-        !letterOf ||
-        letter.length !== 1 ||
-        event.altKey ||
-        event.ctrlKey ||
-        event.metaKey
-      )
-        return false;
+        ? event.altKey
+          ? ""
+          : accessKeyOf(event)
+        : typedCharacterOf(event).toLowerCase();
+      if (!letterOf || letter.length !== 1) return false;
       const index = all
         .map((row, offset) => (getIndex() + 1 + offset) % all.length)
         .find((rowIndex) => letterOf(all[rowIndex]) === letter);
@@ -2419,6 +2444,9 @@
     BUTTON_SETS,
     parseAccessKey,
     accessKeyOf,
+    isAltGr,
+    isAccessKeyPress,
+    typedCharacterOf,
     shortcutKeyOf,
     isModalOpen,
     closeModelessDialogs,

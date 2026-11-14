@@ -80,19 +80,32 @@ test("await-async-expect follows the check through variables, arrays and callbac
         "await Promise.all(promises.filter((p) => expect(p).resolves.toBe(1)));",
         "(() => expect(p).resolves.toBe(1))();",
         "await Promise.all(promises.map(f, (p) => expect(p).resolves.toBe(1)));",
+        // Lost: allSettled, any and race do not fail on each rejection.
+        "await Promise.allSettled(promises.map((p) => expect(p).resolves.toBe(1)));",
+        "await Promise.any([expect(a).resolves.toBe(1)]);",
+        "await Promise.race([expect(a).resolves.toBe(1)]);",
+        // Lost: a return in a forEach callback, and a function that is
+        // called with no wait.
+        "promises.forEach((p) => { return expect(p).resolves.toBe(1); });",
+        "const f1 = () => expect(p).resolves.toBe(1); f1();",
+        "function f2() { return expect(p).resolves.toBe(1); } f2();",
+        "const f3 = function () { return expect(p).resolves.toBe(1); }; f3();",
         // Waited for.
         "await Promise.all([expect(a).resolves.toBe(1)]);",
         "const d = expect(p).rejects.toThrow(); await d;",
         "const e = [expect(p).rejects.toThrow()]; await Promise.all(e);",
-        "await Promise.allSettled(promises.map((p) => expect(p).resolves.toBe(1)));",
         "return Promise.all([expect(a).resolves.toBe(1)]);",
         'test("x", () => expect(p).resolves.toBe(1));',
         'test.only("x", () => expect(p).resolves.toBe(1));',
         "const g = expect(p).rejects.toThrow(); const k = g; await k;",
+        "const f4 = () => expect(p).resolves.toBe(1); await f4();",
+        "function f5() { return expect(p).resolves.toBe(1); } await f5();",
+        "await Promise.all(promises.map((p) => { return expect(p).resolves.toBe(1); }));",
+        "return expect(p).resolves.toBe(1);",
       ].join("\n"),
       "await-async-expect",
     ),
-  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
 });
 
 test("the lint config runs the test rules on every test file", async () => {

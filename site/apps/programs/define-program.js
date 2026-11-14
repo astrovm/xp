@@ -13,8 +13,9 @@ export const defineProgram = (metadata) => {
   }
   return defineApplication({
     ...metadata,
-    // Renderers return { element, unmount }.
+    // Renderers return { element, unmount }. The options of the launch,
+    // such as a command for the Command Prompt, come with the instance.
     mount: (context, instance) =>
-      renderer(context, instance.application, metadata.id),
+      renderer(context, instance.application, metadata.id, instance),
   });
 };

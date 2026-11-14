@@ -260,3 +260,113 @@ test("an open Run leaves the card games their keys, but a modal dialog does not"
     cleanupShells();
   }
 });
+
+const openStatistics = async () => {
+  const s = await login(
+    await loadShell({
+      initialStorage: {
+        calculatorSettings: JSON.stringify({ view: "scientific" }),
+      },
+    }),
+  );
+  s.window.history.replaceState(null, "", "#calculator");
+  s.window.dispatchEvent(new s.window.HashChangeEvent("hashchange"));
+  await settle();
+  const calculator = s.document.querySelector(
+    '.xp-window[data-game="__calculator"]',
+  );
+  key(s, calculator, "s", { ctrlKey: true });
+  await settle();
+  const statistics = s.document.querySelector(
+    '.xp-dialog-modeless[data-owner="__calculator"]',
+  );
+  return { s, calculator, statistics };
+};
+
+// Like XP, Calculator is active again when its Statistics Box gives the
+// keys back, with RET or when the box closes.
+test("a window is active again when its dialog gives the keys back", async () => {
+  const { s, calculator, statistics } = await openStatistics();
+  const list = () => statistics.querySelector(".calculator-statistics");
+  list().focus();
+  await settle();
+  expect(calculator.classList.contains("active")).toBeFalse();
+  statistics.querySelector('[data-action="ret"]').click();
+  await settle();
+  expect(calculator.contains(s.document.activeElement)).toBeTrue();
+  expect(calculator.classList.contains("active")).toBeTrue();
+  expect(s.document.title).toBe("Calculator");
+  list().focus();
+  await settle();
+  expect(calculator.classList.contains("active")).toBeFalse();
+  statistics.querySelector(".title-bar .close-btn").click();
+  await settle();
+  expect(statistics.isConnected).toBeFalse();
+  expect(calculator.classList.contains("active")).toBeTrue();
+});
+
+// Like XP, the Statistics Box hides while Calculator is minimized, and
+// shows again when Calculator is restored.
+test("a window's dialog hides while the window is minimized", async () => {
+  const { s, calculator, statistics } = await openStatistics();
+  statistics.querySelector(".calculator-statistics").focus();
+  await settle();
+  calculator.querySelector(".minimize-btn").click();
+  await settle();
+  expect(statistics.hidden).toBeTrue();
+  // Happy DOM gives the taskbar no width, so Calculator's task button is
+  // in the overflow menu.
+  s.document.querySelector('#task-buttons [data-group="overflow"]').click();
+  s.document.querySelector(".taskbar-overflow-item").click();
+  await settle();
+  expect(statistics.hidden).toBeFalse();
+  expect(calculator.classList.contains("active")).toBeTrue();
+  // Show Desktop hides it too, and brings it back.
+  const showDesktop = async () => {
+    s.document.getElementById("taskbar").dispatchEvent(
+      new s.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 400,
+        clientY: 750,
+      }),
+    );
+    s.document
+      .querySelector(
+        '#taskbar-context-menu [data-taskbar-action="show-desktop"]',
+      )
+      .click();
+    await settle();
+  };
+  await showDesktop();
+  expect(statistics.hidden).toBeTrue();
+  await showDesktop();
+  expect(statistics.hidden).toBeFalse();
+});
+
+// Each press of a modeless dialog takes a new layer. The layers are
+// numbered again before they reach the topmost windows (6800), so a
+// window never goes above a topmost window or a shell dialog.
+test("the window layers stay below the topmost windows", async () => {
+  const s = await login(await loadShell());
+  const notepad = await openNotepad(s);
+  const run = await openRun(s);
+  const box = run.querySelector(".shell-dialog-input");
+  for (let index = 0; index < 7000; index += 1)
+    run.dispatchEvent(
+      new s.window.PointerEvent("pointerdown", { bubbles: true }),
+    );
+  expect(layer(overlayOf(run))).toBeLessThan(6800);
+  expect(layer(overlayOf(run))).toBeGreaterThan(layer(notepad));
+  notepad.dispatchEvent(
+    new s.window.PointerEvent("pointerdown", { bubbles: true }),
+  );
+  await settle();
+  expect(layer(notepad)).toBeGreaterThan(layer(overlayOf(run)));
+  expect(layer(notepad)).toBeLessThan(6800);
+  box.focus();
+  expect(layer(overlayOf(run))).toBeGreaterThan(layer(notepad));
+  expect(layer(overlayOf(run))).toBeLessThan(6800);
+  // Each of the 7000 presses runs the real activation, so the test needs
+  // more than the default time.
+}, 60000);

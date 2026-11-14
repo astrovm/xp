@@ -73,6 +73,48 @@ describe("XP dialogs", () => {
     ).toBe("f");
   });
 
+  test("tells AltGr from Alt with each shape of the event", () => {
+    const { isAltGr, isAccessKeyPress, typedCharacterOf } = loadDialogs();
+    const event = (init, altGraph = false) => ({
+      key: "ę",
+      code: "KeyE",
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      getModifierState: (name) => name === "AltGraph" && altGraph,
+      ...init,
+    });
+    // AltGr types "ę" with each shape: Ctrl and Alt, Ctrl and the AltGraph
+    // state, or only the AltGraph state.
+    for (const shape of [
+      event({ ctrlKey: true, altKey: true }),
+      event({ ctrlKey: true }, true),
+      event({}, true),
+    ]) {
+      expect(isAltGr(shape)).toBeTrue();
+      expect(isAccessKeyPress(shape)).toBeFalse();
+      expect(typedCharacterOf(shape)).toBe("ę");
+    }
+    // Alt with no Ctrl is Alt, also when the engine gives the AltGraph
+    // state for it.
+    for (const alt of [
+      event({ key: "e", altKey: true }),
+      event({ key: "e", altKey: true }, true),
+    ]) {
+      expect(isAltGr(alt)).toBeFalse();
+      expect(isAccessKeyPress(alt)).toBeTrue();
+      expect(typedCharacterOf(alt)).toBe("");
+    }
+    // Ctrl, Meta and named keys type nothing.
+    expect(typedCharacterOf(event({ key: "e", ctrlKey: true }))).toBe("");
+    expect(typedCharacterOf(event({ key: "e", metaKey: true }))).toBe("");
+    expect(typedCharacterOf(event({ key: "Enter" }))).toBe("");
+    expect(typedCharacterOf(event({ key: "e", isComposing: true }))).toBe("");
+    expect(typedCharacterOf(event({ key: "e" }))).toBe("e");
+    // An event with no modifier state is not AltGr.
+    expect(isAltGr({ key: "e" })).toBeFalse();
+  });
+
   test("gives each button set exactly one default button", () => {
     const dialogs = loadDialogs();
     Object.values(dialogs.BUTTON_SETS).forEach((buttons) => {

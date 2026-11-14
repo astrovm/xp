@@ -51,6 +51,14 @@ beforeEach(() => {
       this.launched.push([id, options]);
       return true;
     },
+    // The shell runs a program that XP has, like Run does.
+    ran: [],
+    runProgram(name, args, base) {
+      if (!["calc.exe", "mspaint", "notepad"].includes(name.toLowerCase()))
+        return false;
+      this.ran.push([name, args, base]);
+      return true;
+    },
   };
   session = new CommandSession(context);
 });
@@ -144,8 +152,30 @@ describe("Command Prompt session", () => {
     expect(run("rd Work")).toBe("The directory is not empty.");
     expect(run("ren Work Archive")).toBe("");
     expect(fs.findChild(fs.USER_PROFILE, "Archive")).not.toBeNull();
+    // RD /S asks first, with the path as it is typed, like cmd.exe.
     expect(run("rmdir /s Archive")).toBe("");
+    expect(session.prompt).toBe("Archive, Are you sure (Y/N)? ");
+    expect(run("n")).toBe("");
+    expect(fs.findChild(fs.USER_PROFILE, "Archive")).not.toBeNull();
+    expect(run("rmdir /s Archive")).toBe("");
+    expect(run("y")).toBe("");
     expect(fs.findChild(fs.USER_PROFILE, "Archive")).toBeNull();
+    // /Q does not ask.
+    run("md Quiet\\Inner");
+    expect(run("rd /S /Q Quiet")).toBe("");
+    expect(fs.findChild(fs.USER_PROFILE, "Quiet")).toBeNull();
+    // RD with no /S removes an empty folder and asks nothing.
+    run("md Empty");
+    expect(run("rd Empty")).toBe("");
+    expect(fs.findChild(fs.USER_PROFILE, "Empty")).toBeNull();
+    expect(run("rd")).toBe("The syntax of the command is incorrect.");
+    expect(run("rd /s")).toBe("The syntax of the command is incorrect.");
+    // A folder that goes to the Recycle Bin while the question is open is
+    // gone.
+    const binned = fs.createFolder(fs.USER_PROFILE, "Binned");
+    expect(run("rd /s Binned")).toBe("");
+    fs.remove(binned.id);
+    expect(run("y")).toBe("The system cannot find the path specified.");
     expect(run("rd Missing")).toBe(
       "The system cannot find the path specified.",
     );
@@ -197,17 +227,23 @@ describe("Command Prompt session", () => {
 
   test("launches applications and opens files through start and aliases", () => {
     run('cd "My Documents"');
-    run("echo text>note.txt");
-    expect(run("notepad note.txt")).toBe("");
-    expect(context.launched.at(-1)[0]).toBe("__notepad");
-    expect(context.launched.at(-1)[1].file.name).toBe("note.txt");
+    const here = "C:\\Documents and Settings\\astro\\My Documents";
+    // A program gets its arguments and the current folder, like XP. A
+    // name with a space keeps its quotes.
+    expect(run('notepad "a b.txt" x')).toBe("");
+    expect(context.ran.at(-1)).toEqual(["notepad", '"a b.txt" x', here]);
     expect(run("CALC.EXE")).toBe("");
-    expect(context.launched.at(-1)).toEqual(["__calculator", {}]);
+    expect(context.ran.at(-1)).toEqual(["calc.exe", "", here]);
     expect(run('start "" mspaint')).toBe("");
-    expect(context.launched.at(-1)).toEqual(["__paint", {}]);
-    expect(run("notepad missing.txt")).toStartWith(
-      "'notepad' is not recognized",
-    );
+    expect(context.ran.at(-1)).toEqual(["mspaint", "", here]);
+    // cmd brings up the Command Prompt.
+    expect(run("cmd")).toBe("");
+    expect(run("command.com /c dir")).toBe("");
+    expect(context.launched).toEqual([
+      ["__command-prompt", {}],
+      ["__command-prompt", {}],
+    ]);
+    expect(run("winword note.txt")).toStartWith("'winword' is not recognized");
     expect(run("start")).toBe("The system cannot find the file specified.");
     expect(run("start nothing")).toBe(
       "The system cannot find the file specified.",
@@ -838,7 +874,10 @@ describe("Command Prompt like cmd.exe", () => {
     const second = new CommandSession(context);
     second.execute(`cd "${fs.getPath(fs.DESKTOP)}"`);
     expect(second.execute("rd t\\t2").output).toBe(IN_USE);
-    expect(second.execute("rd /s /q t").output).toBe("Access is denied.");
+    // RD /S deletes all that it can. The folder in use gets cmd.exe's text
+    // with its path, and the folders above it stay with no text.
+    expect(second.execute("rd /s /q t").output).toBe(`t\\t2 - ${IN_USE}`);
+    expect(fs.getNode(outer.id).parent).toBe(fs.DESKTOP);
     expect(second.execute("ren t\\t2 t3").output).toBe(IN_USE);
     expect(second.execute("ren t u").output).toBe("Access is denied.");
     expect(second.execute("move t\\t2 other").output).toBe(IN_USE);
@@ -883,6 +922,20 @@ describe("Command Prompt like cmd.exe", () => {
         title: "Error Moving File or Folder",
         message: `Cannot remove folder t2: ${CLOSE_PROGRAMS}`,
       });
+    }
+    // An item that is already in the destination does not move, so like
+    // XP a drop or a paste of a folder in use on its own folder is no
+    // error. A rename to the same name is no error too.
+    for (const id of [inner.id, outer.id]) {
+      const parent = fs.getNode(id).parent;
+      fileOps.cut([id]);
+      await expect(fileOps.pasteWithConflicts(parent)).resolves.toMatchObject({
+        cancelled: false,
+      });
+      expect(fileOps.canPaste(parent)).toBeTrue();
+      expect(failure(() => fs.move(id, parent))).toBeNull();
+      expect(failure(() => fileOps.rename(id, fs.getNode(id).name))).toBeNull();
+      expect(fs.getNode(id).parent).toBe(parent);
     }
     expect(failure(() => fs.destroy(outer.id))?.[1]).toBe(
       `Cannot delete t: Access is denied.${MAKE_SURE}`,
@@ -947,6 +1000,77 @@ describe("Command Prompt like cmd.exe", () => {
     expect(session.prompt).not.toContain("Overwrite");
     expect(fs.getNode(old1.id).content).toBe("old\n");
     expect(fs.getNode(old2.id).content).toBe("old\n");
+  });
+
+  // Like cmd.exe on XP: "rd /s C:\\rdt" with a Command Prompt in
+  // C:\\rdt\\a deletes all else, and names the folder in use.
+  test("RD /S deletes all that it can around a folder in use", () => {
+    const IN_USE =
+      "The process cannot access the file because it is being used by another process.";
+    const root = folderAt("rdt");
+    const used = folderAt("rdt\\a");
+    const kept = file(used, "in.txt");
+    file(root, "top.txt");
+    file(folderAt("rdt\\b\\c"), "deep.txt");
+    const user = new CommandSession(context);
+    user.execute("cd /d C:\\rdt\\a");
+    run("cd /d C:\\");
+    expect(run("rd /s C:\\rdt\\")).toBe("");
+    expect(session.prompt).toBe("C:\\rdt\\, Are you sure (Y/N)? ");
+    expect(run("y")).toBe(`C:\\rdt\\a - ${IN_USE}`);
+    expect(fs.getChildren(root).map((node) => node.name)).toEqual(["a"]);
+    // The files in the folder in use go.
+    expect(fs.getNode(kept.id)).toBeNull();
+    // With the Command Prompt in the folder itself, the text has no path.
+    user.execute("cd ..");
+    expect(run("rd /s /q rdt")).toBe(IN_USE);
+    expect(fs.getChildren(root)).toEqual([]);
+    user.close();
+    expect(run("rd /s /q rdt")).toBe("");
+    expect(fs.getNode(root)).toBeNull();
+  });
+
+  test("COPY checks its source folder before and after each question", () => {
+    run("cd /d C:\\");
+    // The source folder goes to the Recycle Bin while the question is
+    // open, so the file is gone.
+    const e = folderAt("e");
+    const f = folderAt("f");
+    file(e, "1.txt", 1, "new\n");
+    const old = file(f, "1.txt", 1, "old\n");
+    expect(run("copy C:\\e\\1.txt C:\\f")).toBe("");
+    fs.remove(e);
+    expect(run("y")).toBe(
+      "The system cannot find the path specified.\n        0 file(s) copied.",
+    );
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // A file that moves to another folder while the question is open is
+    // gone too.
+    const g = folderAt("g");
+    const moved = file(g, "1.txt", 1, "new\n");
+    expect(run("copy C:\\g\\1.txt C:\\f")).toBe("");
+    fs.move(moved.id, folderAt("h"));
+    expect(run("y")).toBe(
+      "The system cannot find the file specified.\n        0 file(s) copied.",
+    );
+    expect(fs.getNode(old.id).content).toBe("old\n");
+    // COPY of many files onto one name leaves out the files of a folder
+    // that went to the Recycle Bin, and a file that left its folder.
+    const logs = folderAt("logs");
+    file(logs, "1.log", 1, "1\n");
+    const left = file(logs, "2.log", 1, "2\n");
+    file(folderAt("more"), "3.log", 1, "3\n");
+    file(fs.DRIVE_C, "out.txt", 1, "o\n");
+    expect(run("copy C:\\logs\\*.log out.txt")).toBe(
+      "C:\\logs\\1.log\nC:\\logs\\2.log",
+    );
+    fs.move(left.id, folderAt("more"));
+    expect(run("y")).toBe("        1 file(s) copied.");
+    expect(run("type out.txt")).toBe("1");
+    expect(run("copy C:\\logs\\*.log out.txt")).toBe("C:\\logs\\1.log");
+    fs.remove(logs);
+    expect(run("y")).toBe("        1 file(s) copied.");
+    expect(run("type out.txt")).toBe("");
   });
 
   test("wildcards follow the DOS rules", () => {

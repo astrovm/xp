@@ -19,6 +19,10 @@
 .xp-dialog-modeless {
   pointer-events: none;
 }
+/* A dialog of a minimized window hides with it. */
+.xp-dialog-overlay[hidden] {
+  display: none;
+}
 .xp-dialog-modeless > .xp-dialog {
   pointer-events: auto;
 }

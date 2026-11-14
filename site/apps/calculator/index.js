@@ -227,7 +227,17 @@ const CONTROL_KEYS = {
   d: "s",
 };
 
+// The command of a typed character, such as "@" for x^2.
+const characterCommand = (key) =>
+  /^[a-z]$/i.test(key)
+    ? LETTER_KEYS[key.toUpperCase()] || null
+    : CHARACTER_KEYS[key] || null;
+
 const commandForKey = (event) => {
+  // AltGr types a character, such as "@" on a German keyboard, and the
+  // character works like a typed one, like XP.
+  if (globalThis.XPDialogs.isAltGr(event))
+    return characterCommand(globalThis.XPDialogs.typedCharacterOf(event));
   if (event.altKey || event.metaKey) return null;
   if (event.ctrlKey) {
     const letter = globalThis.XPDialogs.shortcutKeyOf(event);
@@ -238,9 +248,7 @@ const commandForKey = (event) => {
   }
   if (event.shiftKey && event.key === "Insert") return "paste";
   if (NAMED_KEYS[event.key]) return NAMED_KEYS[event.key];
-  if (/^[a-z]$/i.test(event.key))
-    return LETTER_KEYS[event.key.toUpperCase()] || null;
-  return CHARACTER_KEYS[event.key] || null;
+  return characterCommand(event.key);
 };
 
 const readSettings = () => {

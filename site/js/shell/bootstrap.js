@@ -87,17 +87,11 @@ const normalizeTypeaheadText = (value) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase();
+// A typed character goes to the next item whose name starts with it. Like
+// XP, an AltGr character, such as "ą" on a Polish keyboard, is a typed
+// character too.
 const cycleTypeaheadItem = (event, scope, items, getLabel) => {
-  if (
-    event.altKey ||
-    event.ctrlKey ||
-    event.metaKey ||
-    event.isComposing ||
-    Array.from(event.key).length !== 1
-  )
-    return null;
-
-  const key = normalizeTypeaheadText(event.key);
+  const key = normalizeTypeaheadText(XPDialogs.typedCharacterOf(event));
   if (!key) return null;
   const matches = items.filter((item) =>
     normalizeTypeaheadText(getLabel(item)).startsWith(key),
@@ -150,7 +144,9 @@ document.addEventListener(
     ) {
       scope = startMenu;
     }
-    if (!scope) return;
+    // A menu matches only its access keys, and an AltGr character, such
+    // as "ą", is none, like XP.
+    if (!scope || XPDialogs.isAltGr(event)) return;
 
     const items = [...scope.querySelectorAll("button:not(:disabled)")].filter(
       (item) => {

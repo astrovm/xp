@@ -706,9 +706,11 @@ const buildPlaces = () => {
   };
 
   container.addEventListener("keydown", (event) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    // AltGr types a character, such as "ą", and chooses no item.
+    const key = XPDialogs.accessKeyOf(event);
+    if (event.altKey || !key) return;
     const item = container.querySelector(
-      `[data-access-key="${CSS.escape(XPDialogs.accessKeyOf(event))}"]`,
+      `[data-access-key="${CSS.escape(key)}"]`,
     );
     if (!item) return;
     event.preventDefault();
@@ -1020,12 +1022,9 @@ const wireStartFlyoutKeyboard = (panel, parentButton) => {
       parentButton.focus();
       return;
     }
-    // A key with Ctrl, such as AltGr, which sends Ctrl and Alt, types no
-    // letter of a menu item, like XP.
-    if (event.ctrlKey || event.metaKey) return;
-    const item = items.find(
-      (entry) => entry.dataset.accessKey === XPDialogs.accessKeyOf(event),
-    );
+    // A key with Ctrl and AltGr type no letter of a menu item, like XP.
+    const key = XPDialogs.accessKeyOf(event);
+    const item = key && items.find((entry) => entry.dataset.accessKey === key);
     if (item) {
       event.preventDefault();
       item.click();

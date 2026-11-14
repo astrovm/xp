@@ -7,6 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
+import { pressAltGr } from "./helpers/keys";
 afterEach(cleanupShells);
 const key = (s, el, value, extra = {}) =>
   el.dispatchEvent(
@@ -78,10 +79,13 @@ test.each(["click", "hover", "keyboard"])(
     expect(panels(s).length).toBe(1);
     expect(panels(s)[0].textContent).toContain("My Pictures");
     panels(s)[0].querySelector("button").focus();
-    // AltGr sends Ctrl and Alt, and types a character. Like XP, it
-    // chooses no item.
-    key(s, panels(s)[0], "π", { ctrlKey: true, altKey: true, code: "KeyP" });
+    // AltGr types a character, such as "π". Like XP, it chooses no item,
+    // also when the browser sends only the AltGraph state.
+    pressAltGr(s.window, panels(s)[0], "π", "KeyP");
     expect(panels(s).length).toBe(1);
+    expect(
+      s.document.querySelector('.xp-window[data-game="__my-pictures"]'),
+    ).toBeNull();
     key(s, panels(s)[0], "p");
     expect(
       s.document.querySelector('.xp-window[data-game="__my-pictures"]') !==
@@ -90,7 +94,9 @@ test.each(["click", "hover", "keyboard"])(
     expect(s.document.getElementById("start-menu").hidden).toBeTrue();
     s.document.getElementById("start-button").click();
     key(s, places, "r", { ctrlKey: true });
+    pressAltGr(s.window, places, "®", "KeyR");
     expect(s.document.querySelector(".run-dialog") === null).toBeTrue();
+    expect(s.document.getElementById("start-menu").hidden).toBeFalse();
     key(s, places, "r");
     expect(s.document.activeElement.dataset.startAction).toBe("run");
     s.document.activeElement.click();

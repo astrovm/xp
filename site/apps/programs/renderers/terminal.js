@@ -1,7 +1,10 @@
 import { createProgramRoot } from "../ui.js";
 import { CommandSession } from "../command-session.js";
 
-export const renderTerminal = (context, program, programId) => {
+// options.command runs that command first, like "cmd /k dir": there is no
+// banner, and the command line does not show. With options.closeAfter,
+// like "cmd /c dir", the window closes when the command ends.
+export const renderTerminal = (context, program, programId, options) => {
   const content = createProgramRoot(program);
   const session = new CommandSession(context);
   context.setTitle("C:\\WINDOWS\\system32\\cmd.exe");
@@ -13,7 +16,10 @@ export const renderTerminal = (context, program, programId) => {
   const history = [];
   let historyIndex = 0;
 
-  output.textContent = `${session.banner}\n`;
+  const startCommand = options.command;
+  // True while a command from cmd's command line runs with /c.
+  let closeAfter = false;
+  output.textContent = startCommand === undefined ? `${session.banner}\n` : "";
   const updatePrompt = () => {
     prompt.textContent = session.prompt;
   };
@@ -129,8 +135,9 @@ export const renderTerminal = (context, program, programId) => {
     }
   };
 
-  // Runs a command line, like a press of Enter.
-  const run = async (command) => {
+  // Runs a command line, like a press of Enter. A command from the command
+  // line of cmd does not show, like XP.
+  const run = async (command, { echo = true } = {}) => {
     if (command.trim()) history.push(command);
     historyIndex = history.length;
     const enteredPrompt = session.prompt;
@@ -152,7 +159,7 @@ export const renderTerminal = (context, program, programId) => {
     // it is, so a long screen is not copied again for each command.
     if (result.clear) output.textContent = blank;
     else {
-      output.append(`${enteredPrompt}${command}\n`);
+      if (echo) output.append(`${enteredPrompt}${command}\n`);
       input.value = "";
       if (result.paged) await writePaged(result.output);
       else if (result.output) output.append(`${result.output}\n`);
@@ -163,6 +170,7 @@ export const renderTerminal = (context, program, programId) => {
     input.value = "";
     updatePrompt();
     screen.scrollTop = screen.scrollHeight;
+    if (closeAfter && !session.question) context.close();
     return true;
   };
 
@@ -267,6 +275,18 @@ export const renderTerminal = (context, program, programId) => {
     setTimeout(() => input.focus(), 0);
   });
   setTimeout(() => input.focus(), 0);
+  // A command from cmd's command line. With /c, the window closes when it
+  // ends, also after the answer to a question that it asks.
+  const runCommand = (command, close = false) => {
+    closeAfter = close;
+    return run(command, { echo: false });
+  };
+  if (startCommand !== undefined)
+    runCommand(startCommand, options.closeAfter === true);
   // The closed window frees the folder that the session is in.
-  return { element: content, unmount: () => session.close() };
+  return {
+    element: content,
+    runCommand,
+    unmount: () => session.close(),
+  };
 };

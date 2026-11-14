@@ -241,7 +241,7 @@ const activateTaskbarToolbar = (element, id) => {
   element.classList.add("active");
   const layout = toolbarLayout(id);
   if (layout.floating && !layout.onTop)
-    element.style.zIndex = String(++zIndexCounter);
+    element.style.zIndex = String(nextWindowLayer());
 };
 const wireToolbarDrag = (handle, element, id, resize = false) => {
   handle.addEventListener("keydown", (event) => {
@@ -580,7 +580,7 @@ const renderTaskbarToolbars = () => {
     );
     if (layout.floating) {
       toolbar.style.height = `${layout.height}px`;
-      toolbar.style.zIndex = layout.onTop ? "8000" : String(++zIndexCounter);
+      toolbar.style.zIndex = layout.onTop ? "8000" : String(nextWindowLayer());
     }
     const grip = document.createElement("button");
     grip.className = "toolbar-grip";

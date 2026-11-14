@@ -7,6 +7,7 @@ import {
   flushShell,
   clickStartAction,
 } from "./helpers/shell-harness";
+import { IDBFactory } from "fake-indexeddb";
 afterEach(cleanupShells);
 const run = async (s, command) => {
   clickStartAction(s, "run");
@@ -291,8 +292,10 @@ test("Run opens a program with the file or folder that follows it, like XP", asy
   ).toBeTrue();
   await run(s, "explorer");
   expect(
-    !!s.document.querySelector('.xp-window[data-game="__my-computer"]'),
-  ).toBeTrue();
+    s.document.querySelector(
+      '.xp-window[data-game="__my-documents"] .explorer-address input',
+    ).value,
+  ).toBe("My Documents");
   expect(JSON.parse(s.window.localStorage.getItem("runHistory"))[0]).toBe(
     "explorer",
   );
@@ -348,4 +351,197 @@ test("Run gives XP's messages for a program's missing file or folder", async () 
   await run(s, 'notepad "C:\\No Folder\\x.txt"');
   await answer(s, "no");
   expect(windowTitles(s)).toContain("Untitled - Notepad");
+});
+
+// XP's Run starts programs in the user's profile folder, so a name with no
+// drive is a file in that folder.
+test("Run gives a program's relative path from the profile folder, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const profile = fs.getPath(fs.USER_PROFILE);
+  const closeNotepad = async () => {
+    s.document
+      .querySelector('.xp-window[data-game="__notepad"] .close-btn')
+      .click();
+    await flushShell();
+  };
+  await run(s, "notepad a.txt");
+  expect(lastDialog(s).textContent).toContain(
+    "Cannot find the a.txt file.\n\nDo you want to create a new file?",
+  );
+  await answer(s, "yes");
+  expect(fs.resolvePath(`${profile}\\a.txt`) === null).toBeFalse();
+  expect(windowTitles(s)).toContain("a.txt - Notepad");
+  await closeNotepad();
+  fs.createFile(fs.USER_PROFILE, "b.txt", { content: "in the profile" });
+  await run(s, "notepad b.txt");
+  expect(windowTitles(s)).toContain("b.txt - Notepad");
+  await closeNotepad();
+  // A name with no extension gets ".txt", like XP's Notepad.
+  await run(s, "notepad b");
+  expect(windowTitles(s)).toContain("b.txt - Notepad");
+  await closeNotepad();
+  await run(s, "notepad foo");
+  expect(lastDialog(s).textContent).toContain(
+    "Cannot find the foo.txt file.\n\nDo you want to create a new file?",
+  );
+  await answer(s, "yes");
+  expect(fs.resolvePath(`${profile}\\foo.txt`) === null).toBeFalse();
+  expect(windowTitles(s)).toContain("foo.txt - Notepad");
+  await closeNotepad();
+  // Paint finds a picture in the profile folder too. The empty file is no
+  // picture, so Paint's own message shows: Paint got the file.
+  fs.createFile(fs.USER_PROFILE, "pic.bmp");
+  await run(s, "mspaint pic.bmp");
+  await flushShell();
+  expect(lastDialog(s).textContent).toContain("Paint cannot read this file.");
+  await answer(s, "ok");
+  // A path that starts with "\" is on drive C.
+  await run(s, "notepad \\c.txt");
+  await answer(s, "yes");
+  expect(fs.resolvePath("C:\\c.txt") === null).toBeFalse();
+});
+
+test("Run gives Explorer its switches, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const explorer = () =>
+    s.document.querySelector('.xp-window[data-game="__my-documents"]');
+  const address = () => explorer().querySelector(".explorer-address input");
+  const folders = () =>
+    explorer()
+      .querySelector(".explorer-content")
+      .classList.contains("folders-visible");
+  const close = async () => {
+    explorer().querySelector(".close-btn").click();
+    await flushShell();
+  };
+  // With no path, Explorer opens My Documents with the Folders bar.
+  await run(s, "explorer");
+  expect(address().value).toBe("My Documents");
+  expect(folders()).toBeTrue();
+  expect(
+    explorer()
+      .querySelector('[data-explorer-action="folders"]')
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
+  await close();
+  await run(s, "explorer /e,C:\\");
+  expect(address().value).toBe("C:\\");
+  expect(folders()).toBeTrue();
+  await close();
+  await run(s, "explorer /root,C:\\");
+  expect(address().value).toBe("C:\\");
+  expect(folders()).toBeFalse();
+  await close();
+  // /select opens the folder of the item, with the item selected.
+  const note = fs.createFile(fs.USER_PROFILE, "pick.txt");
+  await run(s, `explorer /select,"${fs.getPath(note.id)}"`);
+  expect(address().value).toBe(fs.getPath(fs.USER_PROFILE));
+  expect(folders()).toBeFalse();
+  const item = explorer().querySelector(
+    `.explorer-item[data-node-id="${note.id}"]`,
+  );
+  expect(item.classList.contains("selected")).toBeTrue();
+  expect(explorer().querySelectorAll(".explorer-item.selected")).toHaveLength(
+    1,
+  );
+  await close();
+  // The hidden Recent folder has no icon to select. /n changes nothing.
+  await run(s, "explorer /select,Recent,/n");
+  expect(address().value).toBe(fs.getPath(fs.USER_PROFILE));
+  expect(explorer().querySelectorAll(".explorer-item.selected")).toHaveLength(
+    0,
+  );
+  await close();
+  // A file opens with its program.
+  await run(s, `explorer ${fs.getPath(note.id)}`);
+  expect(windowTitles(s)).toContain("pick.txt - Notepad");
+});
+
+test("Run gives cmd its /c and /k commands, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const prompt = () =>
+    s.document.querySelector('.xp-window[data-game="__command-prompt"]');
+  const output = () => prompt().querySelector(".xp-terminal-output");
+  const settle = async () => {
+    for (let index = 0; index < 4; index += 1) await flushShell();
+  };
+  // /k runs the command and stays open. Like XP, there is no banner and
+  // no typed command on the screen.
+  await run(s, "cmd /k dir");
+  await settle();
+  expect(output().textContent).toContain(
+    ` Directory of ${fs.getPath(fs.USER_PROFILE)}`,
+  );
+  expect(output().textContent).not.toContain("Microsoft Windows XP");
+  expect(output().textContent).not.toContain(">dir");
+  // An open Command Prompt runs the next command.
+  await run(s, '"cmd" /K echo again');
+  await settle();
+  expect(output().textContent).toContain("again");
+  expect(
+    s.document.querySelectorAll('.xp-window[data-game="__command-prompt"]'),
+  ).toHaveLength(1);
+  prompt().querySelector(".close-btn").click();
+  await settle();
+  // /c runs the command and closes.
+  await run(s, "cmd.exe /c md made");
+  await settle();
+  expect(
+    fs.resolvePath(`${fs.getPath(fs.USER_PROFILE)}\\made`) === null,
+  ).toBeFalse();
+  expect(prompt() === null).toBeTrue();
+  // Other arguments open the Command Prompt as it is.
+  await run(s, "cmd /q");
+  await settle();
+  expect(output().textContent).toContain("Microsoft Windows XP");
+});
+
+// Like XP, the games and Calculator do not use their arguments, and Hearts
+// shows an empty error for one.
+test("Run gives the games their XP answers to arguments", async () => {
+  const s = await login(await loadShell());
+  await run(s, "winmine missing.txt");
+  expect(
+    !!s.document.querySelector('.xp-window[data-game="__minesweeper"]'),
+  ).toBeTrue();
+  expect(s.document.querySelector(".xp-dialog") === null).toBeTrue();
+  await run(s, "calc missing.txt");
+  expect(
+    !!s.document.querySelector('.xp-window[data-game="__calculator"]'),
+  ).toBeTrue();
+  await run(s, "mshearts missing.txt");
+  expect(lastDialog(s).querySelector(".title-text").textContent).toBe(
+    "The Microsoft Hearts Network",
+  );
+  expect(lastDialog(s).querySelector(".dlg-text").textContent).toBe("");
+  await answer(s, "ok");
+  expect(
+    s.document.querySelector('.xp-window[data-game="__hearts"]') === null,
+  ).toBeTrue();
+});
+
+// In a browser, VirtualFS stores the documents, so a change ends later.
+// Notepad opens the new file when it is stored.
+test("Run's Notepad opens the file that it creates in stored documents", async () => {
+  const s = await login(
+    await loadShell({
+      documentStorage: "indexeddb",
+      beforeScripts: (window) => {
+        window.indexedDB = new IDBFactory();
+      },
+    }),
+  );
+  const settle = async () => {
+    for (let index = 0; index < 20; index += 1) await flushShell();
+  };
+  await settle();
+  await run(s, "notepad stored.txt");
+  await settle();
+  await answer(s, "yes");
+  await settle();
+  expect(s.document.querySelector(".xp-dialog") === null).toBeTrue();
+  expect(windowTitles(s)).toContain("stored.txt - Notepad");
 });

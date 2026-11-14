@@ -7,7 +7,7 @@ import {
   loadShell,
   login,
 } from "./helpers/shell-harness";
-import { pressAltGr } from "./helpers/keys";
+import { altGrEvents, pressAltGr } from "./helpers/keys";
 
 afterEach(cleanupShells);
 
@@ -218,6 +218,81 @@ test("Explorer keyboard shortcuts skip protected and empty selections", async ()
     .forEach((item) => item.classList.remove("selected"));
   press(s, drive, "c", { ctrlKey: true });
   expect(s.window.FileOperations.getClipboard()).toBeNull();
+});
+
+test("AltGr types in text boxes and lists and chooses no access key, like XP", async () => {
+  const h = await openFixtureFolder(),
+    { s, fs } = h;
+  const openMenu = () => h.win.querySelector(".explorer-menu:not([hidden])");
+  // A Polish layout types "ę" with AltGr+E. It opens no Edit menu from the
+  // Address bar or the rename box. Each shape of the event types.
+  const address = h.win.querySelector(".explorer-address input");
+  address.focus();
+  for (const event of pressAltGr(s.window, address, "ę", "KeyE"))
+    expect(event.defaultPrevented).toBeFalse();
+  expect(openMenu() === null).toBeTrue();
+  // Alt+E still opens the Edit menu.
+  press(s, address, "e", { altKey: true, code: "KeyE" });
+  expect(openMenu() === null).toBeFalse();
+  press(s, s.document.activeElement, "Escape");
+  press(s, s.document.activeElement, "Escape");
+  h.item(h.other.id).click();
+  h.surface().focus();
+  press(s, h.surface(), "F2");
+  const rename = h.win.querySelector(".explorer-rename");
+  for (const event of pressAltGr(s.window, rename, "ę", "KeyE"))
+    expect(event.defaultPrevented).toBeFalse();
+  expect(openMenu() === null).toBeTrue();
+  expect(h.win.querySelector(".explorer-rename") === rename).toBeTrue();
+  rename.dispatchEvent(
+    new s.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  await settle();
+
+  // An AltGr character goes to the next item that starts with it, like a
+  // typed character.
+  const first = fs.createFile(h.folder.id, "ąb.txt");
+  const second = fs.createFile(h.folder.id, "ąc.txt");
+  await settle();
+  h.item(h.other.id).focus();
+  const order = [first.id, second.id, first.id];
+  altGrEvents(s.window, "ą", "KeyA").forEach((event, index) => {
+    s.document.activeElement.dispatchEvent(event);
+    expect(s.document.activeElement.dataset.nodeId).toBe(order[index]);
+  });
+
+  // The desktop does the same.
+  const euro = fs.createFile(fs.DESKTOP, "€uro.txt");
+  await settle();
+  const icons = s.document.getElementById("desktop-icons");
+  icons.querySelector(".desktop-icon").focus();
+  altGrEvents(s.window, "€", "KeyE").forEach((event) => {
+    s.document.activeElement.dispatchEvent(event);
+    expect(s.document.activeElement.dataset.desktopId).toBe(euro.id);
+  });
+});
+
+test("AltGr chooses no button of a message box, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  let result = null;
+  d.message({
+    title: "Question",
+    text: "Save?",
+    buttons: d.BUTTON_SETS.yesNoCancel,
+  }).then((id) => {
+    result = id;
+  });
+  await settle();
+  const yes = s.document.querySelector('.xp-dialog [data-action="yes"]');
+  yes.focus();
+  // A Polish layout types "ń" with AltGr+N. It does not choose No.
+  pressAltGr(s.window, yes, "ń", "KeyN");
+  await settle();
+  expect(result).toBeNull();
+  press(s, yes, "n", { altKey: true, code: "KeyN" });
+  await settle();
+  expect(result).toBe("no");
 });
 
 test("desktop keyboard navigation extends selections and supports typeahead", async () => {

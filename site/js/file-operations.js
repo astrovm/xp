@@ -135,11 +135,13 @@
 
   // Paste asks with checkUse false: like XP, a folder in use leaves Paste
   // on and shows its error only when the paste runs. Cut already refuses
-  // protected items.
+  // protected items. An item that is already in the destination does not
+  // move, so like XP nothing checks it.
   const assertMovableTo = (ids, destinationId, checkUse = true) => {
     requireFolder(destinationId);
     ids.forEach((id) => {
       const node = fs.getNode(id);
+      if (node.parent === destinationId) return;
       if (checkUse) fs.checkChange("move", id);
       if (id === destinationId || fs.isDescendantOf(id, destinationId)) {
         throw new Error(

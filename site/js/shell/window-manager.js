@@ -21,9 +21,7 @@ const isShellWindowKey = (event) =>
 // Alt and a letter, which opens a window's menu from any of its controls,
 // like XP.
 const isMenuAccessKey = (event) =>
-  event.altKey &&
-  !event.ctrlKey &&
-  !event.metaKey &&
+  XPDialogs.isAccessKeyPress(event) &&
   /^\p{L}$/u.test(XPDialogs.accessKeyOf(event));
 // Call before a redraw that can remove or move the control with the keys.
 // Call the function it returns after the redraw. It gives the keys to the
@@ -331,6 +329,7 @@ const restoreWindowState = (snapshot) => {
     });
     Object.assign(win.el.style, saved.styles);
     win.el.classList.toggle("maximized", saved.maximized);
+    showOwnedDialogs(win);
   });
   focusedGameId = openWindows.has(snapshot.focusedGameId)
     ? snapshot.focusedGameId
@@ -1033,13 +1032,12 @@ const activateWindow = (win) => {
   soundGameId = null;
   win.needsAttention = false;
   win.lastUsed = Date.now();
-  win.zIndex = ++zIndexCounter;
-  win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : win.zIndex;
+  setWindowLayer(win, nextWindowLayer());
   // The window's own modeless dialogs stay above it, like XP's owned
   // windows.
-  document
-    .querySelectorAll(`.xp-dialog-modeless[data-owner="${CSS.escape(gameId)}"]`)
-    .forEach((overlay) => (overlay.style.zIndex = nextWindowLayer()));
+  ownedDialogsOf(gameId).forEach(
+    (overlay) => (overlay.style.zIndex = nextWindowLayer()),
+  );
 
   openWindows.forEach((w, id) => {
     w.el.classList.toggle("active", id === gameId);
@@ -1061,18 +1059,62 @@ const activateWindow = (win) => {
   }
 };
 
-// The next layer on the desktop, above every window and modeless dialog.
-// The dialogs of dialogs.js take their layers here too.
-const nextWindowLayer = () => ++zIndexCounter;
-window.nextWindowLayer = nextWindowLayer;
-
 // Topmost windows (Task Manager's Always On Top) stay above the others but
 // below shell dialogs (6900) and the taskbar.
 const TOPMOST_Z_INDEX = 6800;
+// The first layer of the windows. The desktop is below it.
+const FIRST_WINDOW_LAYER = 100;
+
+// The modeless dialogs that a window owns, such as Calculator's
+// Statistics Box.
+const ownedDialogsOf = (gameId) =>
+  document.querySelectorAll(
+    `.xp-dialog-modeless[data-owner="${CSS.escape(gameId)}"]`,
+  );
+
+const setWindowLayer = (win, layer) => {
+  win.zIndex = layer;
+  win.el.style.zIndex = win.alwaysOnTop ? TOPMOST_Z_INDEX : layer;
+};
+
+// Gives the windows, the modeless dialogs and the floating toolbars the
+// layers from FIRST_WINDOW_LAYER up, in the same order. Each one that
+// comes to the top takes a new layer, so the layers only go up. This keeps
+// them below the topmost windows and the shell dialogs.
+const compactWindowLayers = () => {
+  const layered = [
+    ...[...openWindows.values()].map((win) => ({
+      layer: win.zIndex,
+      set: (layer) => setWindowLayer(win, layer),
+    })),
+    ...[
+      ...document.querySelectorAll(
+        ".xp-dialog-modeless, .taskbar-toolbar.floating",
+      ),
+    ]
+      .map((element) => ({
+        layer: Number(element.style.zIndex),
+        set: (layer) => (element.style.zIndex = String(layer)),
+      }))
+      // A toolbar that is always on top keeps its own layer.
+      .filter(({ layer }) => layer < TOPMOST_Z_INDEX),
+  ].sort((a, b) => a.layer - b.layer);
+  layered.forEach((item, index) => item.set(FIRST_WINDOW_LAYER + index + 1));
+  zIndexCounter = FIRST_WINDOW_LAYER + layered.length;
+};
+
+// The next layer on the desktop, above every window and modeless dialog.
+// The dialogs of dialogs.js and the floating toolbars take their layers
+// here too.
+const nextWindowLayer = () => {
+  if (zIndexCounter + 1 >= TOPMOST_Z_INDEX) compactWindowLayers();
+  return ++zIndexCounter;
+};
+window.nextWindowLayer = nextWindowLayer;
 const setWindowTopmost = (gameId, topmost) => {
   const win = openWindows.get(gameId);
   win.alwaysOnTop = topmost;
-  win.el.style.zIndex = topmost ? TOPMOST_Z_INDEX : win.zIndex;
+  setWindowLayer(win, win.zIndex);
 };
 
 const focusTopWindow = () => {
@@ -1247,11 +1289,19 @@ const animateCaption = (
   tick();
 };
 
+// Like XP, the dialogs that a window owns hide while the window is
+// minimized, and show again when it is restored.
+const showOwnedDialogs = (win) =>
+  ownedDialogsOf(win.gameId).forEach(
+    (overlay) => (overlay.hidden = win.minimized),
+  );
+
 const minimizeWindow = (gameId, { animate = false } = {}) => {
   const win = openWindows.get(gameId);
   if (!win || win.minimized) return;
 
   win.minimized = true;
+  showOwnedDialogs(win);
   const hide = () => {
     if (win.minimized) win.el.style.display = "none";
   };
@@ -1288,6 +1338,7 @@ const restoreWindow = (gameId, { animate = false } = {}) => {
   const show = () => {
     if (win.minimized) return;
     win.el.style.display = "flex";
+    showOwnedDialogs(win);
     if (focusedGameId === gameId) focusWindowContent(win);
   };
   if (animate && animationsEnabled()) {
@@ -1309,6 +1360,7 @@ const minimizeAllWindows = () => {
   openWindows.forEach((win) => {
     win.minimized = true;
     win.el.style.display = "none";
+    showOwnedDialogs(win);
   });
   focusedGameId = null;
   applyFocusVolumes();
@@ -1850,12 +1902,18 @@ document.addEventListener(
 
 // A window that takes the keys becomes the active window, like XP, also
 // when no press put them there: Tab, a script or a control that gives them
-// back. A minimized window takes no keys.
+// back. A minimized window takes no keys. A window that gets the keys back
+// from its own dialog, such as Calculator from its Statistics Box, is
+// still the focused window but draws inactive, so it becomes active again.
 const activateWindowOf = (element) => {
   const win = openWindows.get(
     element.closest(".xp-window[data-game]")?.dataset.game,
   );
-  if (win && win.gameId !== focusedGameId && !win.minimized)
+  if (
+    win &&
+    !win.minimized &&
+    (win.gameId !== focusedGameId || !win.el.classList.contains("active"))
+  )
     activateWindow(win);
 };
 document.addEventListener(

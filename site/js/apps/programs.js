@@ -33,6 +33,9 @@ const applicationContext = (win) => ({
     else openXPProgram(applicationId, options);
     return true;
   },
+  // Runs a program by its name, such as "notepad", like Run does, from the
+  // folder with the path base.
+  runProgram: (name, args, base) => runNamedProgram(name, args, base),
   getDesktopSize,
   getSystemVolume,
   setSystemVolume,
@@ -108,6 +111,8 @@ const openXPProgram = (programId, options = {}) => {
   if (existing) {
     restoreWindow(programId);
     focusWindow(programId);
+    if (options.command !== undefined)
+      return existing.mountedApplication.runCommand(options.command);
     return options.file
       ? existing.mountedApplication?.openFile?.(options.file)
       : existing;
@@ -161,6 +166,8 @@ const openXPProgram = (programId, options = {}) => {
   const mounted = program.mount(applicationContext(win), {
     application: program,
     file: options.file || null,
+    command: options.command,
+    closeAfter: options.closeAfter === true,
     window: win,
   });
   win.mountedApplication = mounted;
@@ -266,13 +273,15 @@ const systemApplicationContext = () => ({
 
 // options.folderId opens an Explorer window on that folder instead of the
 // shortcut's own folder, as the first folder of its history. An open window
-// navigates to the folder.
+// navigates to the folder. options.folders shows the Folders bar, and
+// options.selectId selects that item in the folder.
 const openSystemWindow = (shortcutId, options = {}) => {
   const existing = openWindows.get(shortcutId);
   if (existing) {
     restoreWindow(shortcutId);
     focusWindow(shortcutId);
     if (options.folderId) navigateExplorer(existing, options.folderId);
+    showExplorerOptions(existing, options);
     return;
   }
 
@@ -367,6 +376,7 @@ const openSystemWindow = (shortcutId, options = {}) => {
   }
   application.activate?.(context, { application, window: win }, mounted);
   focusWindow(shortcutId);
+  showExplorerOptions(win, options);
 };
 
 const openDesktopItem = (itemId) => {

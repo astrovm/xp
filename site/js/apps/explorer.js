@@ -145,13 +145,27 @@ const resolveShellCommand = (value) => {
   return {
     kind: "application",
     title: program,
-    run: () => runProgram(programId, runArgumentPath(args)),
+    run: () => runProgram(programId, args),
   };
 };
 
-// Like XP, Run cannot find an item by its place in the Recycle Bin.
-const findRunNode = (path) => {
-  const nodeId = fs.resolvePath(path);
+// A program starts in a folder: XP's Run starts it in the user's profile
+// folder, and the Command Prompt in its current folder. A path with no
+// drive, such as "a.txt", is in that folder. A path that starts with "\"
+// is on the drive of that folder.
+const runFullPath = (path, base = fs.getPath(fs.USER_PROFILE)) =>
+  /^[a-z]:/i.test(path)
+    ? path
+    : path.startsWith("\\")
+      ? `${base.slice(0, 2)}${path}`
+      : `${base.replace(/\\$/, "")}\\${path}`;
+
+// Like XP, Run cannot find an item by its place in the Recycle Bin. A path
+// that is not in the start folder can also start at My Computer, such as
+// "Local Disk (C:)\WINDOWS".
+const findRunNode = (path, base) => {
+  const nodeId =
+    fs.resolvePath(runFullPath(path, base)) || fs.resolvePath(path);
   return nodeId && !isDeletedNode(nodeId) ? fs.getNode(nodeId) : null;
 };
 
@@ -189,24 +203,24 @@ const splitShellCommand = (value) => {
 // them, like XP's Notepad.
 const runArgumentPath = (args) => /^"([^"]*)"?/.exec(args)?.[1] ?? args;
 
-// Opens a program from Run with the item that its arguments name, like
-// XP. A missing item gets the program's own message.
-const runProgram = (programId, path) => {
-  const node = path && findRunNode(path);
-  if (programId === "explorer") {
-    if (!path) return openSystemWindow("__my-computer");
-    if (node) return fs.open(node.id);
-    return XPDialogs.alert(
-      `The path '${path}' does not exist or is not a directory.`,
-      "Windows Explorer",
-      "warning",
-    );
-  }
+// Opens a program with the item that its arguments name, like XP. base is
+// the path of the folder that the program starts in. A missing item gets
+// the program's own message.
+const runProgram = (programId, args, base) => {
+  if (programId === "explorer") return runExplorer(args, base);
+  if (programId === "__command-prompt") return runCommandPrompt(args);
+  const path = runArgumentPath(args);
   const application = window.XPApplicationRegistry.get(programId);
   if (application.kind === "system") return openSystemWindow(programId);
-  if (!path || programId === "__calculator") return openXPProgram(programId);
+  if (path && programId === "__notepad") return runNotepad(path, base);
+  // XP's Hearts takes no arguments. It shows an empty error and does not
+  // start.
+  if (path && programId === "__hearts")
+    return XPDialogs.alert("", "The Microsoft Hearts Network", "error");
+  // Calculator and the other games do not use their arguments, like XP.
+  if (!path || programId !== "__paint") return openXPProgram(programId);
+  const node = findRunNode(path, base);
   if (node?.type === "file") return openXPProgram(programId, { file: node });
-  if (programId === "__notepad") return createNotepadFile(path);
   return XPDialogs.alert(
     `${path} was not found.`,
     application.title,
@@ -214,9 +228,80 @@ const runProgram = (programId, path) => {
   );
 };
 
+// XP's Explorer takes its switches and its path split by commas:
+// - /e shows the Folders bar.
+// - /root,<folder> opens that folder.
+// - /select,<item> opens the folder of the item, with the item selected.
+// - /n opens a new window. Here Explorer has one window, so it does
+//   nothing.
+// With no path, Explorer opens My Documents with the Folders bar. A path
+// of a file opens the file.
+const runExplorer = (args, base) => {
+  const parts = args
+    .split(",")
+    .map((part) => part.trim().replace(/^"(.*)"$/, "$1"))
+    .filter(Boolean);
+  let folders = !parts.length;
+  let select = false;
+  let path = "";
+  for (const part of parts) {
+    const flag = part.toLowerCase();
+    if (flag === "/e") folders = true;
+    else if (flag === "/select") select = true;
+    else if (flag !== "/n" && flag !== "/root") path = part;
+  }
+  const node = path ? findRunNode(path, base) : fs.getNode(fs.MY_DOCUMENTS);
+  if (!node)
+    return XPDialogs.alert(
+      `The path '${path}' does not exist or is not a directory.`,
+      "Windows Explorer",
+      "warning",
+    );
+  if (select)
+    return openSystemWindow("__my-documents", {
+      folderId: node.parent,
+      folders,
+      selectId: node.id,
+    });
+  if (node.type !== "folder") return fs.open(node.id);
+  return openSystemWindow("__my-documents", { folderId: node.id, folders });
+};
+
+// XP's cmd runs the command after /c and then closes, or runs the command
+// after /k and stays open. Other arguments open it as it is.
+const runCommandPrompt = (args) => {
+  const [, keep, command] = /(?:^|\s)\/([ck])(?:\s+|$)(.*)$/i.exec(args) || [];
+  if (!keep) return openXPProgram("__command-prompt");
+  return openXPProgram("__command-prompt", {
+    command,
+    closeAfter: keep.toLowerCase() === "c",
+  });
+};
+
+// XP's Notepad opens the file. A name with no extension that no file has
+// gets ".txt", like XP: "notepad foo" opens or asks for "foo.txt".
+const runNotepad = (path, base) => {
+  const node = findRunNode(path, base);
+  if (node?.type === "file") return openXPProgram("__notepad", { file: node });
+  const named = path.split("\\").at(-1).includes(".") ? path : `${path}.txt`;
+  const file = findRunNode(named, base);
+  if (file?.type === "file") return openXPProgram("__notepad", { file });
+  return createNotepadFile(named, base);
+};
+
+// Runs a program that XP has by its name, such as "notepad" or
+// "winmine.exe", from the folder with the path base. The Command Prompt
+// uses it. It is false for a name that is not a program.
+const runNamedProgram = (name, args, base) => {
+  const programId = RUN_PROGRAMS[name.toLowerCase()];
+  if (!programId) return false;
+  void runProgram(programId, args, base);
+  return true;
+};
+
 // XP's Notepad offers to create a file that Run names but that does not
 // exist. No opens an empty Notepad, and Cancel opens nothing.
-const createNotepadFile = async (path) => {
+const createNotepadFile = async (path, base) => {
   const answer = await XPDialogs.message({
     title: "Notepad",
     text: `Cannot find the ${path} file.\n\nDo you want to create a new file?`,
@@ -228,12 +313,17 @@ const createNotepadFile = async (path) => {
     openXPProgram("__notepad");
     return;
   }
-  const separator = path.lastIndexOf("\\");
-  const parent = findRunNode(path.slice(0, separator));
+  const fullPath = runFullPath(path, base);
+  const separator = fullPath.lastIndexOf("\\");
+  const parent = findRunNode(fullPath.slice(0, separator));
   try {
     if (parent?.type !== "folder")
       throw new Error("The system cannot find the path specified.");
-    const file = fileOps.createFile(parent.id, path.slice(separator + 1));
+    // With stored documents, a change ends after the browser stores it.
+    const file = await fileOps.createFile(
+      parent.id,
+      fullPath.slice(separator + 1),
+    );
     openXPProgram("__notepad", { file });
   } catch (error) {
     await XPDialogs.alert(error.message, "Notepad", "error");
@@ -1546,6 +1636,28 @@ const renderExplorerDetails = (win) => {
     size.textContent = `Size: ${XPDialogs.formatBytes(fs.getSize(node.id))}`;
     body.append(modified, size);
   }
+};
+
+// Shows the Folders bar of an Explorer window, and selects an item in its
+// folder, as Run's "explorer /e" and "explorer /select" ask.
+const showExplorerOptions = (win, { folders = false, selectId = null }) => {
+  if (folders) {
+    win.el.querySelector(".explorer-content").classList.add("folders-visible");
+    win.el
+      .querySelector('[data-explorer-action="folders"]')
+      .setAttribute("aria-pressed", "true");
+  }
+  const item =
+    selectId &&
+    win.el.querySelector(
+      `.explorer-item[data-node-id="${CSS.escape(selectId)}"]`,
+    );
+  if (!item) return;
+  win.el
+    .querySelectorAll(".explorer-item")
+    .forEach((other) => other.classList.toggle("selected", other === item));
+  item.focus({ preventScroll: true });
+  renderExplorerSelection(win);
 };
 
 const renderExplorerSelection = (win) => {

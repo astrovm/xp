@@ -637,11 +637,13 @@
   const createFile = (parentId, name, options) =>
     createNode(parentId, name, "file", options);
 
+  // A rename to the same name changes nothing, so like XP nothing checks
+  // that the item can change.
   const rename = (id, newName) => {
     const node = requireNode(id);
-    checkChange("rename", id);
     const validName = validateName(newName);
     if (node.name === validName) return node;
+    checkChange("rename", id);
     // Like XP, a rename never takes the name of another item in its folder.
     if (
       node.parent &&
@@ -663,16 +665,18 @@
     return node;
   };
 
+  // An item that is already in the target folder stays, and like XP
+  // nothing checks it, so a folder in use does not show an error.
   const move = (id, targetParentId) => {
     const node = requireNode(id);
     const target = requireFolder(targetParentId);
+    if (node.parent === targetParentId) return node;
     checkChange("move", id);
     if (id === targetParentId || isDescendantOf(id, targetParentId)) {
       throw new Error(
         `Cannot move ${node.name}: The destination folder is a subfolder of the source folder.`,
       );
     }
-    if (node.parent === targetParentId) return node;
 
     detach(node);
     node.name = dedupeName(targetParentId, node.name);

@@ -219,9 +219,7 @@ export const wireMenuBar = ({
         return;
       }
       const title =
-        event.altKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
+        globalThis.XPDialogs.isAccessKeyPress(event) &&
         titles().find(
           (entry) =>
             accessKey(entry) === globalThis.XPDialogs.accessKeyOf(event),

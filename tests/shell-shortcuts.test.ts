@@ -92,14 +92,15 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   icon().click();
   icon().focus();
   // AltGr types characters, such as "ć" and "ź" on a Polish keyboard. Like
-  // XP, it runs no Ctrl shortcut.
+  // XP, it runs no Ctrl shortcut. The character goes to type-ahead.
   for (const [key, code] of [
     ["ć", "KeyC"],
     ["ź", "KeyX"],
   ])
-    for (const event of pressAltGr(s.window, icon(), key, code))
-      expect(event.defaultPrevented).toBeFalse();
+    pressAltGr(s.window, icon(), key, code);
   expect(ops.getClipboard()).toBeNull();
+  icon().click();
+  icon().focus();
   // Like Windows, a layout of another script gives the letter of the key's
   // place: a Russian C key types "с", and a Greek X key types "χ".
   key(s, icon(), "с", { ctrlKey: true, code: "KeyC" });
@@ -126,9 +127,10 @@ test("desktop keyboard copy, cut, paste, rename and permanent delete update file
   ops.copy([other.id]);
   const surface = s.document.getElementById("desktop-icons");
   surface.focus();
+  // "æ" starts the name of no icon, so type-ahead selects nothing.
   for (const [key, code] of [
     ["√", "KeyV"],
-    ["ą", "KeyA"],
+    ["æ", "KeyA"],
   ])
     for (const event of pressAltGr(s.window, surface, key, code))
       expect(event.defaultPrevented).toBeFalse();
