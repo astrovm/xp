@@ -365,7 +365,11 @@ test("shell shortcuts wait while a replace question is open, and Escape cancels 
   };
   ops.copy([file.id]);
   paste();
-  await settle(() => dialogText(s).includes("already exists"));
+  await settle(() =>
+    dialogText(s).includes(
+      "This folder already contains a file named 'same.txt'.",
+    ),
+  );
   paste();
   await flushShell();
   expect(s.document.querySelectorAll(".xp-dialog")).toHaveLength(1);

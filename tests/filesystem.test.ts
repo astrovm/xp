@@ -111,6 +111,24 @@ describe("virtual filesystem", () => {
     );
   });
 
+  test("gives each refused name a code, so callers can choose their message", () => {
+    const code = (name) => {
+      try {
+        fs.validateName(name);
+      } catch (error) {
+        return error.code;
+      }
+      return null;
+    };
+    expect(code(null)).toBe("name-required");
+    expect(code("  ")).toBe("name-required");
+    expect(code("a?b")).toBe("name-invalid");
+    expect(code("trailing.")).toBe("name-invalid");
+    expect(code("con")).toBe("name-reserved");
+    expect(code("Lpt1.txt")).toBe("name-reserved");
+    expect(code("console.txt")).toBeNull();
+  });
+
   test("creates folders and files with timestamps and sizes", () => {
     const folder = fs.createFolder(fs.MY_DOCUMENTS, "Test Folder");
     expect(folder.type).toBe("folder");

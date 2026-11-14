@@ -615,33 +615,36 @@ const confirmEmptyRecycleBin = () => {
   });
 };
 
-const choosePasteConflict = ({ existing }) =>
-  new Promise((resolve) => {
-    const dialog = XPDialogs.createDialog({
-      title: "Confirm File Replace",
-      onCancel: () => dialog.close("cancel"),
+// XP's question for a name in use, with Yes, Yes to All, No and Cancel.
+// Each move, copy or import asks with its own function, so Yes to All
+// answers the rest of its questions. The answers are the ones that
+// pasteWithConflicts takes: "replace", "skip" or "cancel".
+const describeReplacedFile = (node) =>
+  `${XPDialogs.formatBytes(node.size).replace(/ \(.*\)$/, "")}\nmodified on ${new Date(
+    node.modified,
+  ).toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  })}, ${new Date(node.modified).toLocaleTimeString("en-US")}`;
+const createReplaceQuestion = () => {
+  let replaceAll = false;
+  return async ({ source, existing }) => {
+    if (replaceAll) return "replace";
+    const folder = existing.type === "folder";
+    const answer = await XPDialogs.message({
+      title: folder ? "Confirm Folder Replace" : "Confirm File Replace",
+      text: folder
+        ? `This folder already contains a folder named '${existing.name}'.\n\nIf the files in the existing folder have the same name as files in the folder you are moving or copying, they will be replaced. Do you still want to move or copy the folder?`
+        : `This folder already contains a file named '${existing.name}'.\n\nWould you like to replace the existing file\n\n${describeReplacedFile(existing)}\n\nwith this one?\n\n${describeReplacedFile(source)}`,
+      icon: "warning",
+      buttons: XPDialogs.BUTTON_SETS.yesAllNoCancel,
     });
-    const text = document.createElement("p");
-    text.className = "dlg-text";
-    text.textContent = `${existing.name} already exists. What do you want to do?`;
-    const row = document.createElement("div");
-    row.className = "dlg-buttons";
-    [
-      ["Replace", "replace"],
-      ["Keep Both", "rename"],
-      ["Cancel", "cancel"],
-    ].forEach(([label, value]) => {
-      row.appendChild(
-        XPDialogs.createDialogButton({ id: value, label }, () =>
-          dialog.close(value),
-        ),
-      );
-    });
-    dialog.body.append(text, row);
-    dialog.onResult(resolve);
-    dialog.defaultButton = row.firstChild;
-    row.firstChild.focus();
-  });
+    replaceAll = answer === "all";
+    return { yes: "replace", all: "replace", no: "skip" }[answer] || "cancel";
+  };
+};
 // Every caller checks canPaste or fills the clipboard first. Pastes cannot
 // overlap: the conflict and progress dialogs are modal.
 // Pastes the clipboard, or moves or copies `items` ({ mode, ids }) without
@@ -663,7 +666,7 @@ const pasteIntoFolder = async (destinationId, items = null) => {
   try {
     const result = await fileOps.pasteWithConflicts(
       destinationId,
-      choosePasteConflict,
+      createReplaceQuestion(),
       {
         items,
         isCancelled: () => cancelled,
@@ -712,13 +715,20 @@ const importFileEntry = (entry, destinationId, state) =>
         const existing = fs.findChild(destinationId, file.name);
         let replaceId;
         if (existing) {
-          const choice = await choosePasteConflict({ existing });
-          if (choice === "cancel") {
-            state.cancelled = true;
-            return resolve(false);
-          }
-          if (choice === "replace" && existing.type === "file")
-            replaceId = existing.id;
+          if (existing.type !== "file")
+            throw fileOps.nameInUseError(file.name, existing, "copy");
+          const choice = await state.ask({
+            source: {
+              type: "file",
+              name: file.name,
+              size: file.size,
+              modified: file.lastModified,
+            },
+            existing,
+          });
+          if (choice === "cancel") state.cancelled = true;
+          if (choice !== "replace") return resolve(false);
+          replaceId = existing.id;
         }
         await fs.transaction(() => {
           if (replaceId) fs.destroy(replaceId);
@@ -736,30 +746,32 @@ const importFileEntry = (entry, destinationId, state) =>
     }, reject),
   );
 // Callers check state.cancelled before importing each entry.
+// A folder joins the folder with its name, like XP, after a Yes.
 const importDirectoryEntry = async (entry, destinationId, state) => {
   let folder = null;
   try {
     const existing = fs.findChild(destinationId, entry.name);
     if (existing) {
-      const choice = await choosePasteConflict({ existing });
-      if (choice === "cancel") {
-        state.cancelled = true;
-        return;
-      }
-      if (choice === "replace" && existing.type === "folder")
-        await fs.destroy(existing.id);
-    }
-    folder = await fileOps.createFolder(destinationId, entry.name);
+      if (existing.type !== "folder")
+        throw fileOps.nameInUseError(entry.name, existing, "copy");
+      const choice = await state.ask({
+        source: { type: "folder", name: entry.name },
+        existing,
+      });
+      if (choice === "cancel") state.cancelled = true;
+      if (choice !== "replace") return;
+    } else folder = await fileOps.createFolder(destinationId, entry.name);
+    const target = folder || existing;
     const entries = await readAllDirectoryEntries(entry.createReader());
     for (const child of entries) {
       if (state.cancelled) throw new Error("Directory import cancelled");
       if (child.isDirectory)
-        await importDirectoryEntry(child, folder.id, state);
-      else if (child.isFile) await importFileEntry(child, folder.id, state);
+        await importDirectoryEntry(child, target.id, state);
+      else if (child.isFile) await importFileEntry(child, target.id, state);
     }
   } catch (error) {
-    // A failed child has already removed its own folder, so this folder is
-    // still present.
+    // A failed child has already removed its own folder, so a folder that
+    // this import made is still present. A folder that was there stays.
     if (folder) await fs.destroy(folder.id);
     if (error.message === "Directory import cancelled") return;
     throw error;
@@ -767,7 +779,11 @@ const importDirectoryEntry = async (entry, destinationId, state) => {
 };
 // Only writable folders are wired as drop targets (see wireFolderDropTarget).
 const importDroppedFiles = async (destinationId, dataTransfer) => {
-  const state = { cancelled: false, completed: 0 };
+  const state = {
+    cancelled: false,
+    completed: 0,
+    ask: createReplaceQuestion(),
+  };
   state.progress = XPDialogs.progress({
     title: "Importing...",
     text: "Preparing dropped files...",
@@ -1174,9 +1190,10 @@ const startExplorerRename = (win, nodeId) => {
     }
   };
   // The box keeps its own keys from Explorer. The shell's window keys still
-  // reach the shell, like XP.
+  // reach the shell, and Alt with a letter still opens the window's menu,
+  // like XP. The menu takes the keys, so the rename commits.
   input.addEventListener("keydown", (event) => {
-    if (isShellWindowKey(event)) return;
+    if (isShellWindowKey(event) || isMenuAccessKey(event)) return;
     event.stopPropagation();
     if (event.key !== "Enter" && event.key !== "Escape") return;
     // The key ends here, so it cannot also press a button in an error box.
@@ -2019,8 +2036,14 @@ const resetAstroXp = async () => {
 };
 
 fs.registerFolderHandler((folder) => {
-  openSystemWindow("__my-documents");
-  navigateExplorer(openWindows.get("__my-documents"), folder.id);
+  const show = () => {
+    const win = openWindows.get("__my-documents");
+    if (win) navigateExplorer(win, folder.id);
+  };
+  // The first Explorer window waits for its code to load.
+  const opening = openSystemWindow("__my-documents");
+  if (opening) opening.then(show);
+  else show();
 });
 
 // Keep open explorer windows and desktop shortcuts in sync with filesystem changes.

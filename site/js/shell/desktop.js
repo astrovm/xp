@@ -211,6 +211,9 @@ const findDesktopDropTarget = (clientX, clientY, draggedIds) => {
 };
 
 const wireDesktopIconDrag = (icon) => {
+  // The icon moves with the pointer. A browser drag of its picture would
+  // cancel the pointer and leave the icon where it was.
+  icon.addEventListener("dragstart", (event) => event.preventDefault());
   icon.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
 

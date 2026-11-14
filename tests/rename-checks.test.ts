@@ -22,12 +22,34 @@ const key = (s, target, name, init = {}) =>
       ...init,
     }),
   );
-// Types text at the end of the box, as the keyboard does.
+// Types text like a browser: each character asks first with beforeinput,
+// and goes in where the caret is unless the box refuses it.
 const type = (s, input, text) => {
-  input.value += text;
-  input.setSelectionRange(input.value.length, input.value.length);
-  input.dispatchEvent(new s.window.Event("input", { bubbles: true }));
+  for (const character of text) {
+    const event = new s.window.InputEvent("beforeinput", {
+      data: character,
+      inputType: "insertText",
+      bubbles: true,
+      cancelable: true,
+    });
+    if (!input.dispatchEvent(event)) continue;
+    input.setRangeText(
+      character,
+      input.selectionStart,
+      input.selectionEnd,
+      "end",
+    );
+    input.dispatchEvent(new s.window.Event("input", { bubbles: true }));
+  }
 };
+const beforeInput = (s, input, init) =>
+  input.dispatchEvent(
+    new s.window.InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    }),
+  );
 const dialogs = (s) =>
   [...s.document.querySelectorAll(".xp-dialog")].map((dialog) => ({
     title: dialog.getAttribute("aria-label"),
@@ -86,16 +108,31 @@ test("a rename box drops the characters that a name cannot have and shows XP's b
   expect(input.value).toBe("bad");
   expect(balloon(s)).toEqual(BALLOON);
 
-  // The caret stays where the character would be.
-  input.value = "a*b";
-  input.setSelectionRange(2, 2);
-  input.dispatchEvent(new s.window.Event("input", { bubbles: true }));
-  expect(input.value).toBe("ab");
-  expect([input.selectionStart, input.selectionEnd]).toEqual([1, 1]);
+  // Pasted text goes in without its bad characters, where the caret is.
+  input.setSelectionRange(1, 1);
+  expect(
+    beforeInput(s, input, { data: "x:y", inputType: "insertFromPaste" }),
+  ).toBeFalse();
+  expect(input.value).toBe("bxyad");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([3, 3]);
   // One balloon shows at a time.
   expect(s.document.querySelectorAll(".xp-balloon")).toHaveLength(1);
+  // Dropped text comes with a DataTransfer, and a deletion with no text.
+  const drop = new s.window.InputEvent("beforeinput", {
+    inputType: "insertFromDrop",
+    bubbles: true,
+    cancelable: true,
+  });
+  Object.defineProperty(drop, "dataTransfer", {
+    value: { getData: (type) => (type === "text/plain" ? "*" : "") },
+  });
+  expect(input.dispatchEvent(drop)).toBeFalse();
+  expect(input.value).toBe("bxyad");
+  expect(
+    beforeInput(s, input, { inputType: "deleteContentBackward" }),
+  ).toBeTrue();
 
-  // The next key closes it.
+  // The next key closes the balloon.
   key(s, input, "c");
   expect(balloon(s)).toEqual([]);
   // So does the loss of the keys.
@@ -118,6 +155,64 @@ test("a rename box drops the characters that a name cannot have and shows XP's b
   key(s, box, "Escape");
   await settle();
   expect(fs.getNode(file.id).name).toBe("note.txt");
+});
+
+test("a rename box cleans text from an input method when it ends, and keeps every change in its undo", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Alpha");
+  const win = await openDocuments(s);
+  const input = await renameInExplorer(s, win, folder.id);
+  // Chrome's own edit, which Ctrl+Z can take back. Happy DOM has none.
+  const edits = [];
+  s.document.execCommand = (command, _, text) => {
+    edits.push([
+      command,
+      input.value.slice(input.selectionStart, input.selectionEnd),
+      text,
+    ]);
+    input.setRangeText(
+      command === "delete" ? "" : text,
+      input.selectionStart,
+      input.selectionEnd,
+      "end",
+    );
+    return true;
+  };
+  const compose = (value) => {
+    input.dispatchEvent(new s.window.Event("compositionstart"));
+    // The text that the input method composes goes in as it is.
+    expect(
+      beforeInput(s, input, {
+        data: value.slice(input.value.length),
+        inputType: "insertCompositionText",
+        isComposing: true,
+      }),
+    ).toBeTrue();
+    input.value = value;
+    input.setSelectionRange(value.length, value.length);
+    input.dispatchEvent(new s.window.Event("compositionend"));
+  };
+
+  compose("Alphax?y");
+  expect(input.value).toBe("Alphaxy");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([7, 7]);
+  expect(edits).toEqual([["delete", "?", ""]]);
+  expect(balloon(s)).toEqual(BALLOON);
+  // Many bad characters go in one edit, so one Ctrl+Z takes it back.
+  compose("Alphaxya?b?c");
+  expect(input.value).toBe("Alphaxyabc");
+  expect([input.selectionStart, input.selectionEnd]).toEqual([10, 10]);
+  expect(edits.at(-1)).toEqual(["insertText", "?b?", "b"]);
+  // Clean text needs no edit.
+  compose("Alphaxyabcd");
+  expect(edits).toHaveLength(2);
+  // A paste uses the same edit.
+  expect(
+    beforeInput(s, input, { data: "q|", inputType: "insertFromPaste" }),
+  ).toBeFalse();
+  expect(input.value).toBe("Alphaxyabcdq");
+  expect(edits.at(-1)).toEqual(["insertText", "", "q"]);
 });
 
 test("an Explorer rename to a name in use shows XP's error and opens the box again", async () => {

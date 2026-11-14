@@ -18,6 +18,13 @@ const isShellWindowKey = (event) =>
   event.key === "Meta" ||
   (event.ctrlKey && event.key === "Escape") ||
   (event.altKey && ["Tab", "Escape", "F4", " "].includes(event.key));
+// Alt and a letter, which opens a window's menu from any of its controls,
+// like XP.
+const isMenuAccessKey = (event) =>
+  event.altKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  /^\p{L}$/u.test(event.key);
 // Call before a redraw that can remove or move the control with the keys.
 // Call the function it returns after the redraw. It gives the keys to the
 // same control again, or to its new copy, found with the selector from
@@ -1266,8 +1273,6 @@ const restoreWindow = (gameId, { animate = false } = {}) => {
   if (!win || !win.minimized) return;
 
   win.minimized = false;
-  // The window that had the sound gets it back.
-  applyFocusVolumes();
   // A hidden window cannot take the focus, so the active window takes it
   // when it shows.
   const show = () => {
@@ -2154,7 +2159,7 @@ const wireWindowControls = (win) => {
     }
   });
   win.el.addEventListener("keydown", (event) => {
-    if (!event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!isMenuAccessKey(event)) return;
     const button = menuButtons.find(
       (item) => item.dataset.accessKey === event.key.toLowerCase(),
     );

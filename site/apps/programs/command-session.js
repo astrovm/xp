@@ -33,6 +33,53 @@ const formatDate = (timestamp) => {
 
 const displaySize = (size) => Number(size || 0).toLocaleString("en-US");
 
+// A name matches a pattern with * and ?, like cmd.exe. Case does not count.
+const matchesPattern = (name, pattern) =>
+  new RegExp(
+    `^${pattern
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".")}$`,
+    "i",
+  ).test(name);
+
+// The new name that REN makes from a name and a template with * and ?,
+// like cmd.exe: "*.bak" makes "notes.txt" into "notes.bak", and "???.x"
+// makes "abcdef.txt" into "abc.x".
+const renameByTemplate = (name, template) => {
+  let result = "";
+  let index = 0;
+  for (let position = 0; position < template.length; position += 1) {
+    const character = template[position];
+    if (character === "*") {
+      const next = template[position + 1];
+      // "*" copies the rest of the name, or the name up to the last
+      // character that comes after "*" in the template.
+      const end = next
+        ? name.toLowerCase().lastIndexOf(next.toLowerCase())
+        : -1;
+      const stop = end >= index ? end : name.length;
+      result += name.slice(index, stop);
+      index = stop;
+    } else if (character === "?") {
+      // "?" copies one character, but never a period.
+      if (index < name.length && name[index] !== ".") {
+        result += name[index];
+        index += 1;
+      }
+    } else if (character === ".") {
+      // "." goes on to the part of the name after its next period.
+      result += ".";
+      const period = name.indexOf(".", index);
+      index = period < 0 ? name.length : period + 1;
+    } else {
+      result += character;
+      if (index < name.length && name[index] !== ".") index += 1;
+    }
+  }
+  return result.replace(/[.\s]+$/, "");
+};
+
 const errorText = (error) =>
   error instanceof Error
     ? error.message.replace(/^(?:VirtualFS|FileOperations):\s*/, "")
@@ -76,8 +123,10 @@ export class CommandSession {
       : path;
   }
 
+  // A question, such as "Overwrite ...? (Yes/No/All): ", takes the place
+  // of the prompt until the next line answers it.
   get prompt() {
-    return `${this.displayPath()}>`;
+    return this.question?.text ?? `${this.displayPath()}>`;
   }
 
   resolve(path, options = {}) {
@@ -138,6 +187,7 @@ export class CommandSession {
   }
 
   executeInTransaction(rawLine) {
+    if (this.question) return this.question.answer(rawLine.trim());
     const line = this.expandEnvironment(rawLine).trim();
     if (!line) return { output: "" };
     const tokens = tokenize(line);
@@ -321,26 +371,52 @@ export class CommandSession {
     return this.command_rd(args);
   }
 
+  // REN takes * and ? in both names, like cmd.exe. A name in use leaves
+  // that file as it is.
   command_ren(args) {
     if (args.length < 2)
       return { output: "The syntax of the command is incorrect." };
-    const id = this.resolve(args[0]);
-    if (!id) return { output: "The system cannot find the file specified." };
-    try {
-      this.context.fileOps.rename(id, args.slice(1).join(" "));
-    } catch (error) {
-      if (error.code !== "name-exists") throw error;
-      return {
-        output: "A duplicate file name exists, or the file cannot be found.",
-      };
+    const source = args[0].replaceAll("/", "\\");
+    const slash = source.lastIndexOf("\\");
+    const folderId =
+      slash < 0 ? this.cwd : this.resolve(source.slice(0, slash) || "\\");
+    const pattern = source.slice(slash + 1);
+    const template = args.slice(1).join(" ");
+    const nodes = !folderId
+      ? []
+      : /[*?]/.test(pattern)
+        ? this.fs
+            .getChildren(folderId)
+            .filter(
+              (node) =>
+                node.type === "file" && matchesPattern(node.name, pattern),
+            )
+        : [this.fs.findChild(folderId, pattern)].filter(Boolean);
+    if (!nodes.length)
+      return { output: "The system cannot find the file specified." };
+    const lines = [];
+    for (const node of nodes) {
+      try {
+        this.context.fileOps.rename(
+          node.id,
+          renameByTemplate(node.name, template),
+        );
+      } catch (error) {
+        if (error.code !== "name-exists") throw error;
+        lines.push(
+          "A duplicate file name exists, or the file cannot be found.",
+        );
+      }
     }
-    return { output: "" };
+    return { output: lines.join("\n") };
   }
 
   command_rename(args) {
     return this.command_ren(args);
   }
 
+  // COPY and MOVE ask before they replace a file, like cmd.exe. A copy
+  // into its own folder copies nothing.
   copyOrMove(args, move) {
     if (args.length < 2)
       return { output: "The syntax of the command is incorrect." };
@@ -351,9 +427,41 @@ export class CommandSession {
     if (!source || !destination || destination.type !== "folder") {
       return { output: "The system cannot find the path specified." };
     }
-    if (move) this.fs.move(source.id, destination.id);
-    else this.fs.copy(source.id, destination.id);
-    return { output: "        1 file(s) copied." };
+    const done = (count) => ({
+      output: `        ${count} file(s) ${move ? "moved" : "copied"}.`,
+    });
+    if (!move && source.parent === destination.id)
+      return {
+        output: `The file cannot be copied onto itself.\n${done(0).output}`,
+      };
+    const put = () => {
+      if (move) this.fs.move(source.id, destination.id);
+      else this.fs.copy(source.id, destination.id);
+      return done(1);
+    };
+    const existing = this.fs.findChild(destination.id, source.name);
+    if (!existing || existing.id === source.id) return put();
+    if (existing.type !== "file" || source.type !== "file")
+      return { output: "Access is denied." };
+    const from = source.parent;
+    const text = `Overwrite ${this.displayPath(destination.id).replace(/\\?$/, "\\")}${existing.name}? (Yes/No/All): `;
+    this.question = {
+      text,
+      answer: (reply) => {
+        const choice = reply[0]?.toLowerCase();
+        // Any other answer asks again.
+        if (!["y", "n", "a"].includes(choice)) return { output: "" };
+        this.question = null;
+        if (choice === "n") return done(0);
+        // Another window may change the files while the question is open.
+        if (this.fs.getNode(source.id)?.parent !== from)
+          return { output: "The system cannot find the file specified." };
+        const current = this.fs.findChild(destination.id, source.name);
+        if (current?.id === existing.id) this.fs.destroy(existing.id);
+        return put();
+      },
+    };
+    return { output: "" };
   }
 
   command_copy(args) {

@@ -226,7 +226,7 @@ describe("file operations", () => {
     };
     try {
       await expect(
-        operations.pasteWithConflicts(conflictTarget.id, () => "rename", {
+        operations.pasteWithConflicts(conflictTarget.id, () => "replace", {
           items,
         }),
       ).rejects.toThrow("Storage is full.");
@@ -235,7 +235,7 @@ describe("file operations", () => {
     }
     const moved = await operations.pasteWithConflicts(
       conflictTarget.id,
-      () => "rename",
+      () => "replace",
       { items },
     );
     expect(moved.results[0].parent).toBe(conflictTarget.id);
@@ -405,7 +405,7 @@ describe("file operations", () => {
       conflictTarget.id,
       () => {
         fs.remove(conflictFile.id);
-        return "rename";
+        return "replace";
       },
     );
     expect(result).toEqual({ cancelled: false, results: [] });
@@ -463,41 +463,204 @@ describe("file operations", () => {
     expect(operations.getClipboard()).toBe(null);
   });
 
-  test("auto-renames a conflicting copy and leaves the existing file intact", async () => {
-    const { conflictFile, conflictTarget, existingFile } =
+  test("skips a conflicting item when the answer is No, and moves the rest", async () => {
+    const { conflictSource, conflictFile, conflictTarget, existingFile } =
       createConflictFixture();
+    const free = fs.createFile(conflictSource.id, "free.txt");
 
-    operations.copy([conflictFile.id]);
-    const renamed = await operations.pasteWithConflicts(
+    operations.cut([conflictFile.id, free.id]);
+    const skipped = await operations.pasteWithConflicts(
       conflictTarget.id,
-      () => "rename",
+      () => "skip",
     );
-    expect(renamed.results[0].name).toBe("same (2).txt");
-    expect(fs.getNode(existingFile.id)).toBeTruthy();
+    expect(skipped.results.map((node) => node.id)).toEqual([free.id]);
+    expect(fs.getNode(conflictFile.id).parent).toBe(conflictSource.id);
+    expect(fs.getContent(existingFile.id)).toBe("old");
+    expect(fs.getChildren(conflictTarget.id).map((node) => node.name)).toEqual([
+      "same.txt",
+      "same-folder",
+      "free.txt",
+    ]);
   });
 
-  test("auto-names folder conflicts instead of replacing the existing folder", async () => {
+  test("merges a copied folder into the folder with its name, and asks for each clash inside", async () => {
     const { conflictFolder, conflictTarget } = createConflictFixture();
+    const existingFolder = fs.findChild(conflictTarget.id, "same-folder");
+    const kept = fs.createFile(existingFolder.id, "kept.txt", {
+      content: "kept",
+    });
+    const clash = fs.createFile(existingFolder.id, "clash.txt", {
+      content: "old",
+    });
+    fs.createFile(conflictFolder.id, "clash.txt", { content: "new" });
+    fs.createFile(conflictFolder.id, "added.txt");
+    const deep = fs.createFolder(conflictFolder.id, "deep");
+    fs.createFile(deep.id, "inner.txt");
+
+    const questions = [];
+    operations.copy([conflictFolder.id]);
+    const result = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      ({ source, existing, mode }) => {
+        questions.push([source.name, existing.id, mode]);
+        return "replace";
+      },
+    );
+    expect(questions).toEqual([
+      ["same-folder", existingFolder.id, "copy"],
+      ["clash.txt", clash.id, "copy"],
+    ]);
+    expect(result.results.map((node) => node.id)).toEqual([existingFolder.id]);
+    expect(fs.getNode(clash.id)).toBeNull();
+    expect(fs.getContent(kept.id)).toBe("kept");
+    const names = fs.getChildren(existingFolder.id).map((node) => node.name);
+    expect(names.sort()).toEqual([
+      "added.txt",
+      "clash.txt",
+      "deep",
+      "kept.txt",
+    ]);
+    expect(fs.getContent(fs.findChild(existingFolder.id, "clash.txt").id)).toBe(
+      "new",
+    );
+    const deepCopy = fs.findChild(existingFolder.id, "deep");
+    expect(fs.findChild(deepCopy.id, "inner.txt")).toBeTruthy();
+    // A copy leaves the source folder as it was.
+    expect(fs.getChildren(conflictFolder.id).length).toBe(3);
+    expect(fs.findChild(conflictTarget.id, "same-folder (2)")).toBeNull();
+  });
+
+  test("merges a moved folder and removes it only when nothing stays behind", async () => {
+    const { conflictSource, conflictFolder, conflictTarget } =
+      createConflictFixture();
+    const existingFolder = fs.findChild(conflictTarget.id, "same-folder");
+    fs.createFile(existingFolder.id, "clash.txt", { content: "old" });
+    const clash = fs.createFile(conflictFolder.id, "clash.txt", {
+      content: "new",
+    });
+    const added = fs.createFile(conflictFolder.id, "added.txt");
+
+    operations.cut([conflictFolder.id]);
+    await operations.pasteWithConflicts(conflictTarget.id, ({ source }) =>
+      source.id === clash.id ? "skip" : "replace",
+    );
+    expect(fs.getNode(added.id).parent).toBe(existingFolder.id);
+    // The skipped file keeps its folder in place.
+    expect(fs.getNode(clash.id).parent).toBe(conflictFolder.id);
+    expect(fs.getNode(conflictFolder.id).parent).toBe(conflictSource.id);
+
+    operations.cut([conflictFolder.id]);
+    await operations.pasteWithConflicts(conflictTarget.id, () => "replace");
+    expect(fs.getNode(clash.id).parent).toBe(existingFolder.id);
+    expect(fs.getContent(clash.id)).toBe("new");
+    expect(fs.getNode(conflictFolder.id)).toBeNull();
+    expect(operations.getClipboard()).toBeNull();
+  });
+
+  test("leaves an item that left the folder while a question was open", async () => {
+    const { conflictSource, conflictFolder, conflictTarget } =
+      createConflictFixture();
+    const existingFolder = fs.findChild(conflictTarget.id, "same-folder");
+    const gone = fs.createFile(conflictFolder.id, "gone.txt");
+    const away = fs.createFile(conflictFolder.id, "away.txt");
+
+    operations.cut([conflictFolder.id]);
+    await operations.pasteWithConflicts(conflictTarget.id, () => {
+      fs.remove(gone.id);
+      fs.move(away.id, conflictSource.id);
+      return "replace";
+    });
+    expect(fs.isInRecycleBin(gone.id)).toBe(true);
+    expect(fs.getNode(away.id).parent).toBe(conflictSource.id);
+    expect(fs.getChildren(existingFolder.id)).toEqual([]);
+    // The folder is empty now, so the move removes it.
+    expect(fs.getNode(conflictFolder.id)).toBeNull();
+  });
+
+  test("puts an item in with its own name when the item it replaces was renamed", async () => {
+    const { conflictFolder, conflictTarget } = createConflictFixture();
+    const existingFolder = fs.findChild(conflictTarget.id, "same-folder");
+    const inside = fs.createFile(conflictFolder.id, "inside.txt");
 
     operations.copy([conflictFolder.id]);
-    const folderResult = await operations.pasteWithConflicts(
+    const result = await operations.pasteWithConflicts(
       conflictTarget.id,
-      () => "replace",
+      () => {
+        fs.rename(existingFolder.id, "renamed");
+        return "replace";
+      },
     );
-    expect(folderResult.results[0].name).toBe("same-folder (2)");
+    expect(result.results[0].name).toBe("same-folder");
+    expect(result.results[0].id).not.toBe(existingFolder.id);
+    expect(fs.findChild(result.results[0].id, "inside.txt")).toBeTruthy();
+    expect(fs.getChildren(existingFolder.id)).toEqual([]);
+    expect(fs.getNode(inside.id).parent).toBe(conflictFolder.id);
+
+    // The same holds for a file inside a folder that merges.
+    const clash = fs.createFile(existingFolder.id, "inside.txt", {
+      content: "old",
+    });
+    fs.rename(result.results[0].id, "other");
+    fs.rename(existingFolder.id, "same-folder");
+    const merged = await operations.pasteWithConflicts(
+      conflictTarget.id,
+      ({ existing }) => {
+        if (existing.id === clash.id) fs.rename(clash.id, "renamed.txt");
+        return "replace";
+      },
+    );
+    expect(merged.results[0].id).toBe(existingFolder.id);
+    expect(
+      fs
+        .getChildren(existingFolder.id)
+        .map((node) => node.name)
+        .sort(),
+    ).toEqual(["inside.txt", "renamed.txt"]);
+    expect(fs.getContent(clash.id)).toBe("old");
   });
 
-  test("auto-renames on invalid decisions rather than mutating the existing file", async () => {
+  test("refuses to put a file where a folder has its name, and the other way", async () => {
+    const { conflictSource, conflictTarget } = createConflictFixture();
+    const file = fs.createFile(conflictSource.id, "item");
+    fs.createFolder(conflictTarget.id, "item");
+    const folder = fs.createFolder(conflictSource.id, "box");
+    fs.createFile(conflictTarget.id, "box");
+    let asked = false;
+    const ask = () => {
+      asked = true;
+      return "replace";
+    };
+
+    operations.cut([file.id]);
+    await expect(
+      operations.pasteWithConflicts(conflictTarget.id, ask),
+    ).rejects.toThrow(
+      "Cannot move item: A folder with the name you specified already exists. Specify a different file name.",
+    );
+    operations.copy([folder.id]);
+    await expect(
+      operations.pasteWithConflicts(conflictTarget.id, ask),
+    ).rejects.toThrow(
+      "Cannot copy box: A file with the name you specified already exists. Specify a different file name.",
+    );
+    expect(asked).toBe(false);
+    expect(fs.getNode(file.id).parent).toBe(conflictSource.id);
+  });
+
+  test("cancels on an unknown answer or with no resolver, and changes nothing", async () => {
     const { conflictFile, conflictTarget, existingFile } =
       createConflictFixture();
 
     operations.copy([conflictFile.id]);
-    const invalidResult = await operations.pasteWithConflicts(
-      conflictTarget.id,
-      () => "unexpected",
-    );
-    expect(invalidResult.results[0].name.startsWith("same")).toBeTruthy();
-    expect(fs.getNode(existingFile.id)).toBeTruthy();
+    for (const resolver of [() => "unexpected", () => "rename", undefined]) {
+      const result = await operations.pasteWithConflicts(
+        conflictTarget.id,
+        resolver,
+      );
+      expect(result).toEqual({ cancelled: true, results: [] });
+    }
+    expect(fs.getContent(existingFile.id)).toBe("old");
+    expect(fs.getChildren(conflictTarget.id).length).toBe(2);
   });
 
   test("rejects protected destinations before running the resolver", async () => {
@@ -765,12 +928,9 @@ describe("file operations", () => {
     );
   });
 
-  test("renames conflicts without a resolver and stops a cancelled copy", async () => {
+  test("stops a cancelled copy", async () => {
     const { note, destination } = createClipboardFixture();
-    operations.createFile(destination.id, "note.txt");
     operations.copy([note.id]);
-    const renamed = await operations.pasteWithConflicts(destination.id);
-    expect(renamed.results[0].name).toBe("note (2).txt");
     const stopped = await operations.pasteWithConflicts(destination.id, null, {
       isCancelled: () => true,
     });
@@ -786,7 +946,7 @@ describe("file operations", () => {
       destination.id,
       async () => {
         await fs.destroy(note.id);
-        return "rename";
+        return "replace";
       },
       { isCancelled: () => true },
     );

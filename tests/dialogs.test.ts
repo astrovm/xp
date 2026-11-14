@@ -30,6 +30,7 @@ describe("XP dialogs", () => {
       "ok",
       "okCancel",
       "retryCancel",
+      "yesAllNoCancel",
       "yesNo",
       "yesNoCancel",
     ]);

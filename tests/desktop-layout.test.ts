@@ -537,3 +537,20 @@ test("keys never select a desktop icon that is still moving away", async () => {
   expect(movingIcon.classList.contains("selected")).toBeFalse();
   expect(icons.at(-2).classList.contains("selected")).toBeTrue();
 });
+
+test("the browser never starts its own drag from a desktop icon picture", async () => {
+  const s = await login(await loadShell()),
+    fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.DESKTOP, "picture.txt");
+  await flushShell();
+  const icon = s.document.querySelector(`[data-desktop-id="${file.id}"]`);
+  const image = icon.querySelector("img");
+  expect(image !== null).toBeTrue();
+  // Chrome cancels the pointer when its own drag of the picture starts.
+  const start = new s.window.Event("dragstart", {
+    bubbles: true,
+    cancelable: true,
+  });
+  image.dispatchEvent(start);
+  expect(start.defaultPrevented).toBeTrue();
+});

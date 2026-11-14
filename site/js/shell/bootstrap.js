@@ -460,15 +460,17 @@ document.addEventListener("keydown", async (e) => {
         else confirmRecycleDelete(selectedFsIds);
         return;
       }
-      // Alt+Enter shows the Properties of the icon, or of the display.
+      // Alt+Enter shows the Properties of the selected icon, wherever the
+      // keys are on the desktop. With no icon selected, it shows the
+      // display's, like XP. Like the menu, many icons show none.
       if (e.altKey && e.key === "Enter") {
         e.preventDefault();
-        const id = desktopIcon?.dataset.desktopId;
-        if (!desktopIcon) openSystemWindow("__display-properties");
+        const [id, ...more] = getSelectedDesktopIds();
+        if (!id) openSystemWindow("__display-properties");
+        else if (more.length) return;
         else if (id === "__recycle-bin") openShellProperties(fs.RECYCLE_BIN);
         else if (id === "__my-computer") openShellProperties(fs.MY_COMPUTER);
-        else if (selectedFsIds.length === 1)
-          openShellProperties(selectedFsIds[0]);
+        else if (fs.getNode(id)) openShellProperties(id);
         return;
       }
       if (e.key === "F2" && movable && selectedFsIds.length === 1) {

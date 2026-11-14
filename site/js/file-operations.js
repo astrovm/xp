@@ -206,9 +206,79 @@
       );
   };
 
-  // Resolver receives { source, existing, mode } and returns "replace",
-  // "rename", or "cancel" (sync or Promise). Replace is limited to files;
-  // folders always use the filesystem's deterministic copy naming.
+  // A move or copy never renames an item to make room, like XP. Each item
+  // whose name is in use is a question for resolveConflict, which gets
+  // { source, existing, mode } and returns (sync or Promise):
+  //   "replace" - a file replaces the file with its name. A folder joins
+  //               the folder with its name, and each of its items that
+  //               clashes there is a new question.
+  //   "skip"    - the item stays where it is.
+  //   "cancel"  - nothing changes. Any other answer, or no resolver, also
+  //               cancels.
+  // A file and a folder with the same name are an error. Every question
+  // comes before the first change, so Cancel leaves everything as it was.
+  // A copy into its own folder is never a question: it gets a "Copy of"
+  // name.
+  const cancelled = Symbol("cancelled");
+  // A file cannot replace a folder, and a folder cannot replace a file.
+  const nameInUseError = (name, existing, mode) =>
+    new Error(
+      `Cannot ${mode === "cut" ? "move" : "copy"} ${name}: A ${existing.type} with the name you specified already exists. Specify a different file name.`,
+    );
+  const planItem = async (id, destinationId, mode, resolveConflict) => {
+    const source = fs.getNode(id);
+    const existing = fs.findChild(destinationId, source.name);
+    if (!existing || existing.id === id)
+      return { id, destinationId, action: "put" };
+    if (existing.type !== source.type)
+      throw nameInUseError(source.name, existing, mode);
+    const decision = await Promise.resolve(
+      resolveConflict?.({ source, existing, mode }),
+    );
+    if (decision === "skip") return { id, action: "skip" };
+    if (decision !== "replace") throw cancelled;
+    if (source.type === "file")
+      return { id, destinationId, action: "replace", existingId: existing.id };
+    const children = [];
+    for (const child of fs.getChildren(id))
+      children.push(
+        await planItem(child.id, existing.id, mode, resolveConflict),
+      );
+    return {
+      id,
+      destinationId,
+      action: "merge",
+      existingId: existing.id,
+      children,
+    };
+  };
+  // Runs a plan inside a transaction. It returns the item that now holds
+  // the name in the destination, or null for an item that stayed. A folder
+  // that a move empties into the folder with its name goes away.
+  const runPlan = (plan, mode) => {
+    if (plan.action === "skip") return null;
+    const node = fs.getNode(plan.id);
+    // The item with the name may have moved or changed while a question
+    // was open. Then the item goes in with its own name.
+    const existing = fs.findChild(plan.destinationId, node.name);
+    const planned = existing?.id === plan.existingId ? existing : null;
+    if (plan.action === "merge" && planned) {
+      // An item deleted or moved out of the folder while a question was
+      // open stays where it is now.
+      const inside = new Set(fs.getChildren(plan.id).map((child) => child.id));
+      plan.children
+        .filter((child) => inside.has(child.id))
+        .forEach((child) => runPlan(child, mode));
+      if (mode === "cut" && !fs.getChildren(plan.id).length)
+        fs.destroy(plan.id);
+      return planned;
+    }
+    if (plan.action === "replace" && planned) fs.destroy(planned.id);
+    return mode === "cut"
+      ? fs.move(plan.id, plan.destinationId)
+      : fs.copy(plan.id, plan.destinationId);
+  };
+
   // options.items ({ mode, ids, fromBin }) moves or copies those items
   // instead of the clipboard, and leaves the clipboard as it is, like a
   // drag. fromBin lists the items that were in the Recycle Bin at drag
@@ -249,16 +319,16 @@
       fromBin = fromBin.filter((id) => fs.isInRecycleBin(id));
     });
     try {
-      const decisions = [];
-      for (const conflict of getConflicts(ids, destinationId)) {
-        const response = await Promise.resolve(
-          resolveConflict?.({ ...conflict, mode }) || "rename",
-        );
-        const decision = ["replace", "rename", "cancel"].includes(response)
-          ? response
-          : "rename";
-        if (decision === "cancel") return { cancelled: true, results: [] };
-        decisions.push({ conflict, decision });
+      const plans = new Map();
+      try {
+        for (const id of ids)
+          plans.set(
+            id,
+            await planItem(id, destinationId, mode, resolveConflict),
+          );
+      } catch (error) {
+        if (error !== cancelled) throw error;
+        return { cancelled: true, results: [] };
       }
       // Items already moved leave a cut clipboard; the rest can be retried.
       // A new cut or copy made during the paste stays on the clipboard.
@@ -291,29 +361,10 @@
           reportProgress();
           continue;
         }
-        const planned = decisions.find(
-          ({ conflict }) => conflict.source.id === id,
-        );
         try {
           await fs.transaction(() => {
-            // Replace only the file that still holds the clashing name; it may
-            // have been renamed or moved while the conflict dialog was open.
-            const existing =
-              planned?.decision === "replace"
-                ? fs.findChild(destinationId, fs.getNode(id).name)
-                : null;
-            if (
-              existing?.id === planned?.conflict.existing.id &&
-              existing?.type === "file" &&
-              planned.conflict.source.type === "file"
-            ) {
-              fs.destroy(existing.id);
-            }
-            results.push(
-              mode === "cut"
-                ? fs.move(id, destinationId)
-                : fs.copy(id, destinationId),
-            );
+            const result = runPlan(plans.get(id), mode);
+            if (result) results.push(result);
           });
         } catch (error) {
           keepUnmovedOnClipboard(index);
@@ -449,6 +500,7 @@
     copy,
     cut,
     getConflicts,
+    nameInUseError,
     dataUrlFromBlob,
     readFileContent,
     pasteWithConflicts,

@@ -38,6 +38,13 @@
       { id: "no", label: "&No" },
       { id: "cancel", label: "Cancel", isCancel: true },
     ],
+    // XP's Confirm File Replace and Confirm Folder Replace.
+    yesAllNoCancel: [
+      { id: "yes", label: "&Yes", isDefault: true },
+      { id: "all", label: "Yes to &All" },
+      { id: "no", label: "&No" },
+      { id: "cancel", label: "Cancel", isCancel: true },
+    ],
     retryCancel: [
       { id: "retry", label: "&Retry", isDefault: true },
       { id: "cancel", label: "Cancel", isCancel: true },
@@ -188,21 +195,55 @@
     return balloon;
   };
 
+  // Puts text in place of start..end. The browser's own edit keeps the
+  // change in the box's undo, so Ctrl+Z works like in XP's edit box. A
+  // browser without it changes the text directly.
+  const replaceText = (input, start, end, text) => {
+    input.setSelectionRange(start, end);
+    if (document.execCommand?.(text ? "insertText" : "delete", false, text))
+      return;
+    input.setRangeText(text, start, end);
+    input.setSelectionRange(start + text.length, start + text.length);
+  };
+
   // A file name box takes no character that Windows refuses in a name.
-  // Like XP's rename box, it drops the character and shows a balloon.
+  // Like XP's rename box, it drops the character and shows a balloon. Typed,
+  // pasted and dropped text never gets in. Text from an input method gets
+  // in while it is composed, and the box removes the bad characters when
+  // the composition ends.
   const guardFileName = (input) => {
     const invalid = new RegExp(fs().INVALID_NAME_CHARACTERS.source, "g");
-    input.addEventListener("input", () => {
-      const { value, selectionStart } = input;
-      const clean = value.replace(invalid, "");
-      if (clean === value) return;
-      const caret = value.slice(0, selectionStart).replace(invalid, "").length;
-      input.value = clean;
-      input.setSelectionRange(caret, caret);
+    const warn = () =>
       showBalloon(input, [
         "A file name cannot contain any of the following characters:",
         '\\ / : * ? " < > |',
       ]);
+    input.addEventListener("beforeinput", (event) => {
+      if (event.isComposing) return;
+      const text =
+        event.data || event.dataTransfer?.getData("text/plain") || "";
+      const clean = text.replace(invalid, "");
+      if (clean === text) return;
+      event.preventDefault();
+      if (clean)
+        replaceText(input, input.selectionStart, input.selectionEnd, clean);
+      warn();
+    });
+    input.addEventListener("compositionend", () => {
+      const { value, selectionStart } = input;
+      const bad = [...value.matchAll(invalid)];
+      if (!bad.length) return;
+      const start = bad[0].index;
+      const end = bad.at(-1).index + 1;
+      const caret = value.slice(0, selectionStart).replace(invalid, "").length;
+      replaceText(
+        input,
+        start,
+        end,
+        value.slice(start, end).replace(invalid, ""),
+      );
+      input.setSelectionRange(caret, caret);
+      warn();
     });
   };
 
@@ -1494,6 +1535,7 @@
         });
       typeSelect.addEventListener("change", () => {
         activeFilter = typeSelect.value ? typeSelect.value.split(",") : null;
+        namePattern = null;
         renderList();
       });
 
@@ -1549,10 +1591,14 @@
       );
       onDialog?.(dialog, { nameInput });
 
+      // A name with * or ? in the name box filters the list, like XP. A
+      // choice in the type box ends it.
+      let namePattern = null;
       const matchesFilter = (node) =>
         node.type === "folder" ||
-        !activeFilter ||
-        activeFilter.includes(node.ext);
+        (namePattern
+          ? namePattern.test(node.name)
+          : !activeFilter || activeFilter.includes(node.ext));
 
       const navigate = (folderId) => {
         if (!folderId || folderId === currentFolderId) return;
@@ -1561,28 +1607,97 @@
         renderList();
       };
 
+      // The folder that the typed folders name, from the open folder, like
+      // XP: "Sub", "..", "C:". Null when one of them is not a folder.
+      // A path starts in the open folder. A drive such as "C:", or a "\"
+      // at the start, starts it at the top of the drive.
+      const folderOfPath = (segments) => {
+        let id = currentFolderId;
+        for (const [index, segment] of segments.entries()) {
+          const top = index === 0 && (!segment || /^[a-z]:$/i.test(segment));
+          if (!top && (!segment || segment === ".")) continue;
+          const node = top
+            ? fs().getNode(fs().resolvePath(`${segment || "C:"}\\`))
+            : segment === ".."
+              ? fs().getParent(id) || fs().getNode(id)
+              : findChildByName(id, segment);
+          if (node?.type !== "folder") return null;
+          id = node.id;
+        }
+        return id;
+      };
+      const warn = (text) =>
+        message({ title, text, icon: "warning", buttons: BUTTON_SETS.ok });
+
       const accept = () => {
         // A message box must not open behind a drop-down list.
         dialog.closePopup?.();
         const typed = nameInput.value.trim();
-        const name = typed && completeName(typed, activeFilter);
+        // An empty name is for onAccept to refuse or take.
+        if (!typed) return finish(currentFolderId, "");
+        // A path names a file in another folder. A path that ends with a
+        // folder part, such as "..", "C:" or "\", opens that folder.
+        const segments = typed.replace(/\//g, "\\").split("\\");
+        const last = segments.at(-1);
+        const opensFolder =
+          ["", ".", ".."].includes(last) ||
+          (segments.length === 1 && /^[a-z]:$/i.test(last));
+        const folderId = folderOfPath(
+          opensFolder ? segments : segments.slice(0, -1),
+        );
+        if (!folderId) {
+          warn(`${typed}\nPath does not exist.\nCheck the path and try again.`);
+          return;
+        }
+        // A name with * or ? shows only the files that match it.
+        const pattern = last.replace(/[*?]/g, "");
+        if (pattern !== last && !fs().INVALID_NAME_CHARACTERS.test(pattern)) {
+          namePattern = new RegExp(
+            `^${last
+              .replace(/[.+^${}()[\]\\]/g, "\\$&")
+              .replace(/\*/g, ".*")
+              .replace(/\?/g, ".")}$`,
+            "i",
+          );
+          nameInput.value = last;
+          if (folderId === currentFolderId) renderList();
+          else navigate(folderId);
+          nameInput.select();
+          return;
+        }
+        const name = completeName(last, activeFilter);
         // Like XP, a folder's name opens that folder instead.
-        const folder = [typed, name]
-          .map((candidate) => findChildByName(currentFolderId, candidate))
-          .find((node) => node?.type === "folder");
+        const folder = opensFolder
+          ? fs().getNode(folderId)
+          : [last, name]
+              .map((candidate) => findChildByName(folderId, candidate))
+              .find((node) => node?.type === "folder");
         if (folder) {
           nameInput.value = "";
           navigate(folder.id);
           nameInput.focus();
           return;
         }
-        const context = { folderId: currentFolderId, name };
-        Promise.resolve(onAccept(context)).then((result) => {
+        // The file system's own name rules, so a name that it refuses never
+        // closes the dialog.
+        try {
+          fs().validateName(name);
+        } catch (error) {
+          warn(
+            error.code === "name-reserved"
+              ? `${name}\nThis file name is reserved for use by Windows.\nChoose another name and try again.`
+              : `${name}\nThe above file name is invalid.`,
+          );
+          return;
+        }
+        finish(folderId, name);
+      };
+      const finish = (folderId, name) =>
+        Promise.resolve(onAccept({ folderId, name })).then((result) => {
           if (result === false) return;
           rememberFileName(name);
           dialog.close(result);
         });
-      };
 
       // Details and Tiles also show each item's type, size and date.
       const itemDetails = (node) => {
@@ -1762,16 +1877,6 @@
         withDefaultExtension(name, defaultExtension, activeFilter),
       onAccept: ({ folderId, name }) => {
         if (!name) return false;
-        // XP's Save As takes any text in the box, and checks it on Save.
-        if (fs().INVALID_NAME_CHARACTERS.test(name)) {
-          message({
-            title,
-            text: `${name}\nThe above file name is invalid.`,
-            icon: "warning",
-            buttons: BUTTON_SETS.ok,
-          });
-          return false;
-        }
         const existing = findChildByName(folderId, name);
         const result = {
           parentId: folderId,

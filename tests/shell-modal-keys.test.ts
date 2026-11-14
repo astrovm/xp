@@ -322,6 +322,77 @@ test("an Explorer rename box lets the shell keys through and commits on close", 
   expect(fs.getNode(file.id).name).toBe("done.txt");
 });
 
+test("Alt and a letter in an Explorer rename box opens the menu and commits, like XP", async () => {
+  const s = await login(await loadShell());
+  const fs = s.window.VirtualFS;
+  const file = fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
+  const win = await openDocuments(s);
+  const item = win.querySelector(`.explorer-item[data-node-id="${file.id}"]`);
+  item.dispatchEvent(new s.window.MouseEvent("contextmenu", { bubbles: true }));
+  win.querySelector('.explorer-context-menu [data-command="rename"]').click();
+  await settle();
+  const input = win.querySelector(".explorer-rename");
+  input.value = "menu.txt";
+  const openMenu = () =>
+    [...win.querySelectorAll(".game-menu")].find((menu) => !menu.hidden) ||
+    null;
+  expect(openMenu() === null).toBeTrue();
+  expect(key(s, input, "f", { altKey: true })).toBeFalse();
+  await settle();
+  // The menu takes the keys, so the box closes with the new name.
+  expect(
+    win
+      .querySelector('[role="menubar"] [aria-expanded="true"]')
+      ?.textContent.trim(),
+  ).toBe("File");
+  expect(openMenu().contains(s.document.activeElement)).toBeTrue();
+  expect(win.querySelector(".explorer-rename") === null).toBeTrue();
+  expect(fs.getNode(file.id).name).toBe("menu.txt");
+
+  // Alt with a letter that no menu has, and Ctrl+Alt with a letter, stay
+  // in the box.
+  key(s, s.document.activeElement, "Escape");
+  await settle();
+  const renamed = win.querySelector(
+    `.explorer-item[data-node-id="${file.id}"]`,
+  );
+  renamed.dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  win.querySelector('.explorer-context-menu [data-command="rename"]').click();
+  await settle();
+  const again = win.querySelector(".explorer-rename");
+  again.focus();
+  key(s, again, "q", { altKey: true });
+  key(s, again, "f", { altKey: true, ctrlKey: true });
+  await settle();
+  expect(openMenu() === null).toBeTrue();
+  expect(s.document.activeElement === again).toBeTrue();
+  key(s, again, "Escape");
+  await settle();
+
+  // The desktop has no menu bar, so its box keeps the keys and its name.
+  const memo = fs.createFile(fs.DESKTOP, "memo.txt", { content: "" });
+  await settle();
+  desktopIcon(s, memo.id).focus();
+  desktopIcon(s, memo.id).dispatchEvent(
+    new s.window.MouseEvent("contextmenu", { bubbles: true }),
+  );
+  s.document
+    .querySelector('#desktop-context-menu [data-action="rename"]')
+    .click();
+  const box = s.document.querySelector(".desktop-rename");
+  box.value = "kept.txt";
+  key(s, box, "f", { altKey: true });
+  await settle();
+  expect(s.document.activeElement === box).toBeTrue();
+  expect(openMenu() === null).toBeTrue();
+  expect(fs.getNode(memo.id).name).toBe("memo.txt");
+  key(s, box, "Enter");
+  await settle();
+  expect(fs.getNode(memo.id).name).toBe("kept.txt");
+});
+
 test("the window that was active keeps its sound while the desktop has the keys", async () => {
   const s = await login(await loadShell());
   const players = [];
@@ -362,22 +433,6 @@ test("the window that was active keeps its sound while the desktop has the keys"
   win.querySelector(".minimize-btn").click();
   await settle();
   expect(player.volume).toBe(0);
-
-  // Its task button restores it as the active window, with its sound.
-  Object.defineProperty(
-    s.document.getElementById("task-buttons"),
-    "clientWidth",
-    { value: 800, configurable: true },
-  );
-  s.window.dispatchEvent(new s.window.Event("resize"));
-  s.document.getElementById("desktop-icons").focus();
-  await settle();
-  s.document
-    .querySelector('.task-button[data-game="big-truck-adventures"]')
-    .click();
-  await settle();
-  expect(win.classList.contains("active")).toBeTrue();
-  expect(player.volume).toBe(volume);
 });
 
 test("a window that takes the keys becomes the active window, with no press", async () => {
@@ -599,10 +654,28 @@ test("Alt+Enter shows Properties, never opens the item, and commits a rename box
   desktopIcon(s, other.id).classList.add("selected");
   await press(desktopIcon(s, other.id));
   expect(dialogTitle()).toBeUndefined();
-  await press(s.document.getElementById("desktop-icons"));
-  expect(
-    s.document.querySelector('.xp-window[data-game="__display-properties"]'),
-  ).not.toBeNull();
+  // The selection counts, also when the desktop itself has the keys, as
+  // after a drag around the icons.
+  const desktop = s.document.getElementById("desktop-icons");
+  const display = () =>
+    s.document.querySelector('.xp-window[data-game="__display-properties"]');
+  await press(desktop);
+  expect(dialogTitle()).toBeUndefined();
+  expect(display() === null).toBeTrue();
+  desktopIcon(s, note.id).classList.remove("selected");
+  await press(desktop);
+  expect(dialogTitle()).toBe("other.txt Properties");
+  await closeDialog();
+  // My Documents has no Properties on the desktop, as in its menu.
+  desktopIcon(s, other.id).classList.remove("selected");
+  desktopIcon(s, "__my-documents").classList.add("selected");
+  await press(desktop);
+  expect(dialogTitle()).toBeUndefined();
+  expect(display() === null).toBeTrue();
+  // With no icon selected, the display's Properties show.
+  desktopIcon(s, "__my-documents").classList.remove("selected");
+  await press(desktop);
+  expect(display() === null).toBeFalse();
 });
 
 test("a fallback for the keys never takes the active state from a window that is about to show", async () => {

@@ -140,7 +140,7 @@ describe("Command Prompt session", () => {
     expect(run("type Target\\a.txt")).toBe("copy me");
     expect(run("type a.txt")).toBe("copy me");
     run("echo move me>b.txt");
-    expect(run("move b.txt Target")).toBe("        1 file(s) copied.");
+    expect(run("move b.txt Target")).toBe("        1 file(s) moved.");
     expect(fs.findChild(fs.MY_DOCUMENTS, "b.txt")).toBeNull();
     expect(run("type Target\\b.txt")).toBe("move me");
     expect(run("copy a.txt Missing")).toBe(
@@ -250,6 +250,153 @@ describe("Command Prompt session", () => {
       },
     };
     expect(run("ren new.txt other.txt")).toBe("rename refused");
+  });
+
+  test("copy into the same folder copies nothing, like cmd.exe", () => {
+    const file = fs.createFile(session.cwd, "a.txt", { content: "a" });
+    expect(run("copy a.txt .")).toBe(
+      "The file cannot be copied onto itself.\n        0 file(s) copied.",
+    );
+    expect(
+      fs.getChildren(session.cwd).filter((node) => node.name.endsWith("a.txt")),
+    ).toEqual([fs.getNode(file.id)]);
+    // A move into its own folder leaves the file where it is.
+    expect(run("move a.txt .")).toBe("        1 file(s) moved.");
+    expect(fs.getNode(file.id).parent).toBe(session.cwd);
+  });
+
+  test("copy and move ask before they replace a file, and take Yes, No and All", () => {
+    const prompt = session.prompt;
+    const target = fs.createFolder(session.cwd, "Target");
+    fs.createFile(session.cwd, "a.txt", { content: "new" });
+    const old = fs.createFile(target.id, "a.txt", { content: "old" });
+    const question =
+      "Overwrite C:\\Documents and Settings\\Administrator\\Target\\a.txt? (Yes/No/All): ";
+    expect(run("copy a.txt Target")).toBe("");
+    expect(session.prompt).toBe(question);
+    // Any other answer asks again.
+    expect(run("maybe")).toBe("");
+    expect(run("")).toBe("");
+    expect(session.prompt).toBe(question);
+    expect(run("n")).toBe("        0 file(s) copied.");
+    expect(session.prompt).toBe(prompt);
+    expect(fs.getNode(old.id).content).toBe("old");
+
+    expect(run("copy a.txt Target")).toBe("");
+    expect(run("Yes")).toBe("        1 file(s) copied.");
+    expect(fs.getNode(old.id)).toBeNull();
+    expect(run("type Target\\a.txt")).toBe("new");
+    expect(run("type a.txt")).toBe("new");
+
+    const moved = fs.findChild(session.cwd, "a.txt");
+    fs.setContent(fs.findChild(target.id, "a.txt").id, "older");
+    expect(run("move a.txt Target")).toBe("");
+    expect(run("a")).toBe("        1 file(s) moved.");
+    expect(fs.getNode(moved.id).parent).toBe(target.id);
+    expect(fs.getChildren(target.id).map((node) => node.name)).toEqual([
+      "a.txt",
+    ]);
+    expect(fs.findChild(session.cwd, "a.txt")).toBeNull();
+  });
+
+  test("an overwrite question sees changes made while it is open", () => {
+    const target = fs.createFolder(session.cwd, "Target");
+    const source = fs.createFile(session.cwd, "a.txt", { content: "new" });
+    const old = fs.createFile(target.id, "a.txt", { content: "old" });
+    expect(run("copy a.txt Target")).toBe("");
+    fs.remove(source.id);
+    expect(run("y")).toBe("The system cannot find the file specified.");
+    expect(fs.getNode(old.id).content).toBe("old");
+
+    const again = fs.createFile(session.cwd, "a.txt", { content: "new" });
+    expect(run("copy a.txt Target")).toBe("");
+    // The file it would replace has a new name now, so it stays.
+    fs.rename(old.id, "kept.txt");
+    expect(run("y")).toBe("        1 file(s) copied.");
+    expect(fs.getNode(old.id).content).toBe("old");
+    expect(fs.findChild(target.id, "a.txt").content).toBe("new");
+    expect(fs.getNode(again.id).parent).toBe(session.cwd);
+  });
+
+  test("copy and move refuse a folder and a file with the same name", () => {
+    fs.createFolder(session.cwd, "Target");
+    const inside = fs.createFolder(
+      fs.findChild(session.cwd, "Target").id,
+      "item",
+    );
+    fs.createFile(session.cwd, "item");
+    const folder = fs.createFolder(session.cwd, "Box");
+    fs.createFolder(inside.parent, "Box");
+    expect(run("copy item Target")).toBe("Access is denied.");
+    expect(run("move Box Target")).toBe("Access is denied.");
+    expect(fs.getNode(folder.id).parent).toBe(session.cwd);
+    expect(session.prompt).toEndWith(">");
+  });
+
+  test("ren takes * and ? like cmd.exe", () => {
+    run("md Work");
+    run("cd Work");
+    const folder = fs.createFolder(session.cwd, "Notes");
+    for (const name of ["one.txt", "two.txt", "three.log", "abcdef.txt"])
+      fs.createFile(session.cwd, name);
+    fs.createFolder(session.cwd, "dir.txt");
+    fs.createFile(folder.id, "deep.txt");
+    expect(run("ren *.txt *.bak")).toBe("");
+    expect(
+      fs
+        .getChildren(session.cwd)
+        .map((node) => node.name)
+        .sort(),
+    ).toEqual([
+      "Notes",
+      "abcdef.bak",
+      "dir.txt",
+      "one.bak",
+      "three.log",
+      "two.bak",
+    ]);
+    // Wildcards match files only, and only in the folder that is named.
+    expect(fs.findChild(folder.id, "deep.txt")).toBeTruthy();
+    expect(run("ren ???def.bak ???.x")).toBe("");
+    expect(fs.findChild(session.cwd, "abc.x")).toBeTruthy();
+    expect(run("ren t*.* *.old")).toBe("");
+    expect(fs.findChild(session.cwd, "two.old")).toBeTruthy();
+    expect(fs.findChild(session.cwd, "three.old")).toBeTruthy();
+    expect(run("ren Notes\\*.txt new*.md")).toBe("");
+    expect(fs.getChildren(folder.id).map((node) => node.name)).toEqual([
+      "newp.md",
+    ]);
+    expect(run("ren o?e.bak ?ne.")).toBe("");
+    expect(fs.findChild(session.cwd, "one")).toBeTruthy();
+    // "*" with no period to stop at, and a "*" at the end, take the rest.
+    expect(run("ren one *.txt")).toBe("");
+    expect(run("ren one.txt x*")).toBe("");
+    expect(fs.findChild(session.cwd, "xne.txt")).toBeTruthy();
+    // "?" never copies a period, nor more than the name has.
+    expect(run("ren abc.x ????.??y")).toBe("");
+    expect(fs.findChild(session.cwd, "abc.xy")).toBeTruthy();
+    expect(run("ren \\*.nothing *.x")).toBe(
+      "The system cannot find the file specified.",
+    );
+    expect(run("ren Missing\\*.txt *.x")).toBe(
+      "The system cannot find the file specified.",
+    );
+  });
+
+  test("ren goes on after a name in use, and reports it", () => {
+    run("md Work");
+    run("cd Work");
+    for (const name of ["a.txt", "b.txt", "c.txt", "b.bak"])
+      fs.createFile(session.cwd, name);
+    expect(run("ren *.txt *.bak")).toBe(
+      "A duplicate file name exists, or the file cannot be found.",
+    );
+    expect(
+      fs
+        .getChildren(session.cwd)
+        .map((node) => node.name)
+        .sort(),
+    ).toEqual(["a.bak", "b.bak", "b.txt", "c.bak"]);
   });
 
   test("ren refuses the name of another file with XP's message", () => {

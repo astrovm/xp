@@ -115,27 +115,39 @@
   const INVALID_NAME_CHARACTERS = /[<>:"/\\\\|?*\u0000-\u001f]/;
   const RESERVED_DEVICE_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
+  // A refused name throws an error with a code: "name-required",
+  // "name-invalid" (a character, or a period or space at the end) or
+  // "name-reserved" (a DOS device name).
+  const nameError = (code, message) =>
+    Object.assign(new Error(`VirtualFS: ${message}`), { code });
   const validateName = (name) => {
     if (typeof name !== "string" && typeof name !== "number") {
-      throw new Error("VirtualFS: a name is required");
+      throw nameError("name-required", "a name is required");
     }
 
     const rawName = String(name);
     const normalizedName = rawName.trim();
     if (!normalizedName) {
-      throw new Error("VirtualFS: a name is required");
+      throw nameError("name-required", "a name is required");
     }
     if (INVALID_NAME_CHARACTERS.test(rawName)) {
-      throw new Error(`VirtualFS: "${rawName}" contains invalid characters`);
+      throw nameError(
+        "name-invalid",
+        `"${rawName}" contains invalid characters`,
+      );
     }
     if (/[.\s]$/.test(rawName)) {
-      throw new Error(
-        `VirtualFS: "${rawName}" cannot end with a period or space`,
+      throw nameError(
+        "name-invalid",
+        `"${rawName}" cannot end with a period or space`,
       );
     }
     const baseName = normalizedName.split(".")[0].trimEnd();
     if (RESERVED_DEVICE_NAMES.test(baseName)) {
-      throw new Error(`VirtualFS: "${rawName}" is a reserved device name`);
+      throw nameError(
+        "name-reserved",
+        `"${rawName}" is a reserved device name`,
+      );
     }
     return normalizedName;
   };

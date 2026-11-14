@@ -891,3 +891,153 @@ test("Open and Save open a folder whose name is typed, like XP", async () => {
     expect(await result).toBeNull();
   }
 });
+
+test("Save As and Open take patterns, paths and the file system's name rules, like XP", async () => {
+  const s = await login(await loadShell());
+  const d = s.window.XPDialogs;
+  const fs = s.window.VirtualFS;
+  const sub = fs.createFolder(fs.MY_DOCUMENTS, "Sub");
+  const inside = fs.createFile(sub.id, "inside.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "notes.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "note.txt", { content: "" });
+  fs.createFile(fs.MY_DOCUMENTS, "photo.bmp", { content: "" });
+  const names = (dialog) =>
+    [...dialog.querySelectorAll(".dlg-file-item")].map((item) =>
+      item.textContent.trim(),
+    );
+  const folderOf = (dialog) =>
+    dialog.querySelector(".dlg-file-folder").textContent;
+  const submit = (dialog, label, typed) => {
+    dialog.querySelector("#dlg-file-name").value = typed;
+    [...dialog.querySelectorAll(".dlg-buttons button")]
+      .find((button) => button.textContent === label)
+      .click();
+  };
+  // A warning keeps the dialog open. OK closes the warning.
+  const warning = async (dialog) => {
+    await flushShell();
+    const box = current(s);
+    expect(box === dialog).toBeFalse();
+    const text = box.textContent;
+    box.querySelector('[data-action="ok"]').click();
+    await flushShell();
+    expect(current(s) === dialog).toBeTrue();
+    return text;
+  };
+
+  for (const [show, label] of [
+    [
+      () =>
+        d.saveFile({
+          startFolder: fs.MY_DOCUMENTS,
+          defaultExtension: ".txt",
+          filter: [".txt"],
+        }),
+      "Save",
+    ],
+    [
+      () => d.openFile({ startFolder: fs.MY_DOCUMENTS, filter: [".txt"] }),
+      "Open",
+    ],
+  ]) {
+    show();
+    const dialog = current(s);
+    const box = dialog.querySelector("#dlg-file-name");
+    // A pattern shows only the files that match it, and stays in the box.
+    submit(dialog, label, "note?.txt");
+    await flushShell();
+    expect(current(s) === dialog).toBeTrue();
+    expect(names(dialog)).toEqual([
+      "My Music",
+      "My Pictures",
+      "Sub",
+      "notes.txt",
+    ]);
+    expect(box.value).toBe("note?.txt");
+    submit(dialog, label, "*.bmp");
+    await flushShell();
+    expect(names(dialog)).toEqual([
+      "My Music",
+      "My Pictures",
+      "Sub",
+      "photo.bmp",
+    ]);
+    // A pattern with a folder opens that folder with the pattern.
+    submit(dialog, label, "sub\\*.*");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Sub");
+    expect(names(dialog)).toEqual(["inside.txt"]);
+    expect(box.value).toBe("*.*");
+    // A new file type ends the pattern.
+    const type = dialog.querySelector(".dlg-file-type");
+    type.value = "";
+    type.dispatchEvent(new s.window.Event("change"));
+    // "..", "\" at the end, "C:" and "\" at the start move between folders.
+    submit(dialog, label, "..");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("My Documents");
+    expect(names(dialog)).toContain("photo.bmp");
+    expect(box.value).toBe("");
+    submit(dialog, label, "Sub\\");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Sub");
+    submit(dialog, label, "C:");
+    await flushShell();
+    expect(folderOf(dialog)).toMatch(/C:/);
+    submit(dialog, label, "\\Documents and Settings");
+    await flushShell();
+    expect(folderOf(dialog)).toBe("Documents and Settings");
+    dialog.querySelector('[data-action="back"]').click();
+    dialog.querySelector('[data-action="back"]').click();
+    dialog.querySelector('[data-action="back"]').click();
+    expect(folderOf(dialog)).toBe("My Documents");
+    // A path that is not there, or that goes through a file, is refused.
+    submit(dialog, label, "Nope\\x");
+    expect(await warning(dialog)).toContain(
+      "Nope\\x\nPath does not exist.\nCheck the path and try again.",
+    );
+    submit(dialog, label, "notes.txt\\x");
+    expect(await warning(dialog)).toContain("Path does not exist.");
+    // The file system's name rules, before the dialog closes.
+    submit(dialog, label, "con");
+    expect(await warning(dialog)).toContain(
+      "This file name is reserved for use by Windows.",
+    );
+    submit(dialog, label, "bad<name");
+    expect(await warning(dialog)).toContain("The above file name is invalid.");
+    // ".." at the top stays at the top.
+    submit(dialog, label, "..\\..\\..\\..\\..");
+    await flushShell();
+    const top = folderOf(dialog);
+    submit(dialog, label, "..");
+    await flushShell();
+    expect(folderOf(dialog)).toBe(top);
+    key(s, "Escape");
+  }
+
+  // A path names a file in another folder.
+  let result = d.saveFile({
+    startFolder: fs.MY_DOCUMENTS,
+    defaultExtension: ".txt",
+  });
+  submit(current(s), "Save", "Sub\\made");
+  expect(await result).toEqual({
+    parentId: sub.id,
+    name: "made.txt",
+    existingId: null,
+  });
+  // A "\\" at the start is the top of the drive.
+  result = d.saveFile({
+    startFolder: fs.MY_DOCUMENTS,
+    defaultExtension: ".txt",
+  });
+  submit(current(s), "Save", "\\top");
+  expect(await result).toEqual({
+    parentId: fs.resolvePath("C:\\"),
+    name: "top.txt",
+    existingId: null,
+  });
+  result = d.openFile({ startFolder: fs.MY_DOCUMENTS });
+  submit(current(s), "Open", "./sub/inside.txt");
+  expect((await result).id).toBe(inside.id);
+});

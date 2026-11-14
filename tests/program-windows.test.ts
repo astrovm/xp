@@ -33,6 +33,36 @@ const overrideRegistry = (s, overrides) => {
   };
 };
 
+test("a folder opens in Explorer while Explorer's code still loads", async () => {
+  const s = await login(await loadShell({ preloadApplications: false }));
+  const fs = s.window.VirtualFS;
+  const folder = fs.createFolder(fs.MY_DOCUMENTS, "Projects");
+  expect(() => fs.open(folder.id)).not.toThrow();
+  await settle();
+  const win = s.document.querySelector(
+    '.xp-window[data-game="__my-documents"]',
+  );
+  expect(win?.querySelector(".title-text")?.textContent).toBe("Projects");
+
+  // A window that fails to load leaves nothing to show the folder in.
+  win.querySelector(".close-btn").click();
+  await settle();
+  overrideRegistry(s, {
+    "__my-documents": {
+      kind: "system",
+      title: "My Documents",
+      loaded: null,
+      load: () => Promise.reject(new Error("offline")),
+    },
+  });
+  expect(() => fs.open(folder.id)).not.toThrow();
+  await settle();
+  expect(dialogText(s)).toContain("offline");
+  expect(
+    s.document.querySelector('.xp-window[data-game="__my-documents"]') === null,
+  ).toBeTrue();
+});
+
 test("system windows load lazily and report load failures", async () => {
   const s = await login(await loadShell({ preloadApplications: false }));
   clickStartAction(s, "documents");
