@@ -31,6 +31,7 @@ async function flashGame(options) {
     newest: () => ({
       createPlayer: () => {
         const player = s.document.createElement("ruffle-player");
+        player.attachShadow({ mode: "open" });
         player.load = (config) => {
           player.config = config;
         };
@@ -370,6 +371,73 @@ test("installed Flash games rewrite asset URLs and use native frame rates by def
   expect(players).toHaveLength(1);
   await open("big-truck-adventures");
   expect(players.at(-1).config.volume).toBeGreaterThan(0);
+});
+
+test("Flash movie input uses visible pixels and leaves player controls alone", async () => {
+  const { s, players, open } = await flashGame();
+  await open("big-truck-adventures");
+  const player = players[0];
+  const shadow = player.shadowRoot;
+  shadow.dispatchEvent(new s.window.PointerEvent("pointermove"));
+  const container = s.document.createElement("div");
+  const canvas = s.document.createElement("canvas");
+  const overlay = s.document.createElement("button");
+  container.append(canvas, overlay);
+  shadow.append(container);
+  canvas.getBoundingClientRect = () => ({ left: 200, top: 100 });
+  const seen = [];
+  for (const type of [
+    "pointerenter",
+    "pointermove",
+    "pointerleave",
+    "pointerdown",
+    "pointerup",
+    "wheel",
+  ]) {
+    container.addEventListener(type, (event) =>
+      seen.push([
+        event.offsetX,
+        event.offsetY,
+        event.button,
+        event.defaultPrevented,
+      ]),
+    );
+    for (const target of [canvas, container]) {
+      const Event =
+        type === "wheel" ? s.window.MouseEvent : s.window.PointerEvent;
+      const event = new Event(type, {
+        bubbles: true,
+        composed: type !== "pointerenter" && type !== "pointerleave",
+        cancelable: true,
+        clientX: 556,
+        clientY: 351,
+        button: 2,
+      });
+      // CSS zoom and transform cancel visually, but offsetX/Y still include
+      // the inverse transform. Ruffle multiplies them by the device ratio.
+      Object.defineProperties(event, {
+        offsetX: { configurable: true, value: 569.6 },
+        offsetY: { configurable: true, value: 401.6 },
+      });
+      target.dispatchEvent(event);
+    }
+  }
+  expect(seen).toEqual(Array.from({ length: 12 }, () => [356, 251, 2, false]));
+
+  // Pointer capture keeps coordinates outside the canvas. Ruffle's own
+  // controls keep the coordinates of their own element.
+  for (const target of [canvas, overlay]) {
+    target.dispatchEvent(
+      new s.window.PointerEvent("pointermove", {
+        bubbles: true,
+        composed: true,
+        clientX: 180,
+        clientY: 90,
+      }),
+    );
+  }
+  expect(seen.at(-2).slice(0, 2)).toEqual([-20, -10]);
+  expect(seen.at(-1).slice(0, 2)).toEqual([0, 0]);
 });
 
 test("iframe games apply volume on load and have no playback properties", async () => {

@@ -800,6 +800,31 @@ const loadRuffleSWF = (gameId, win) => {
 const mountRuffleSWF = (gameId, win) => {
   const ruffle = window.RufflePlayer.newest();
   const player = ruffle.createPlayer();
+  // Ruffle multiplies offsetX/Y by the device ratio. Under the shell's
+  // supersampling transform, those offsets are in unscaled layout pixels.
+  // Give the movie visible pixels instead, while keeping the original
+  // trusted event and leaving Ruffle's HTML controls alone.
+  const moviePointer = (event) => {
+    const canvas = player.shadowRoot?.querySelector("canvas");
+    const target = event.composedPath()[0];
+    if (!canvas || (target !== canvas && target !== canvas.parentElement))
+      return;
+    const rect = canvas.getBoundingClientRect();
+    Object.defineProperties(event, {
+      offsetX: { configurable: true, value: event.clientX - rect.left },
+      offsetY: { configurable: true, value: event.clientY - rect.top },
+    });
+  };
+  [
+    "pointerenter",
+    "pointermove",
+    "pointerleave",
+    "pointerdown",
+    "pointerup",
+    "wheel",
+  ].forEach((type) =>
+    (player.shadowRoot || player).addEventListener(type, moviePointer, true),
+  );
   player.id = `player-${gameId}`;
   // The game gets the keys when its window becomes active.
   player.dataset.defaultFocus = "";
