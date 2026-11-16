@@ -373,7 +373,7 @@ test("installed Flash games rewrite asset URLs and use native frame rates by def
   expect(players.at(-1).config.volume).toBeGreaterThan(0);
 });
 
-test("Flash input reaches the movie in visible pixels at every display scale", async () => {
+test("Flash movie input uses visible pixels and leaves player controls alone", async () => {
   const { s, players, open } = await flashGame();
   await open("big-truck-adventures");
   const player = players[0];
@@ -403,9 +403,11 @@ test("Flash input reaches the movie in visible pixels at every display scale", a
       ]),
     );
     for (const target of [canvas, container]) {
-      const event = new s.window.PointerEvent(type, {
+      const Event =
+        type === "wheel" ? s.window.MouseEvent : s.window.PointerEvent;
+      const event = new Event(type, {
         bubbles: true,
-        composed: true,
+        composed: type !== "pointerenter" && type !== "pointerleave",
         cancelable: true,
         clientX: 556,
         clientY: 351,
