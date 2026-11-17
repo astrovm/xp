@@ -5,7 +5,7 @@
   "timezone": "America/Argentina/Buenos_Aires",
   "minimumReleaseAge": "3 days",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
-  "lockFileMaintenance": { "enabled": true, "schedule": ["* 0-3 */3 * *"] },
+  "groupSingleUpdates": true,
   "packageRules": [
     {
       "description": "Plain typescript only feeds typescript-eslint, which doesn't support TS 7 yet. Typecheck uses @typescript/native.",
