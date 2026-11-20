@@ -37,7 +37,7 @@
     "@types/istanbul-lib-report": "^3.0.3",
     "@types/istanbul-reports": "^3.0.4",
     "@typescript/native": "npm:typescript@7.0.2",
-    "eslint": "10.14.0",
+    "eslint": "10.15.0",
     "eslint-config-prettier": "10.1.8",
     "fake-indexeddb": "^6.2.5",
     "globals": "17.14.0",
@@ -46,11 +46,11 @@
     "istanbul-lib-instrument": "^6.0.3",
     "istanbul-lib-report": "^3.0.1",
     "istanbul-reports": "^3.2.0",
-    "prettier": "3.9.10",
+    "prettier": "3.10.1",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.72.2",
+    "typescript-eslint": "8.73.0",
     "wawoff2": "2.0.1",
-    "wrangler": "4.159.0"
+    "wrangler": "4.164.0"
   },
   "dependencies": {
     "@nktkas/bmp": "^5.0.0",
