@@ -1,5 +1,5 @@
 {
-  "packageManager": "bun@1.4.4",
+  "packageManager": "bun@1.4.5",
   "scripts": {
     "test": "bun run typecheck && bun test --parallel=4 --timeout 30000 && bun run validate:javascript && bun run validate:icons",
     "test:timezones": "scripts/test-timezones.sh",
@@ -48,13 +48,13 @@
     "istanbul-reports": "^3.2.0",
     "prettier": "3.10.1",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.73.0",
+    "typescript-eslint": "8.74.0",
     "wawoff2": "2.0.1",
-    "wrangler": "4.165.0"
+    "wrangler": "4.168.0"
   },
   "dependencies": {
     "@nktkas/bmp": "^5.0.0",
-    "@ruffle-rs/ruffle": "^0.7.0",
+    "@ruffle-rs/ruffle": "^0.8.0",
     "fflate": "^0.8.3",
     "js-dos": "^8.5.3",
     "sharp": "^0.35.5",
